@@ -1,0 +1,46 @@
+# router_config.yaml
+# version 1.0.3
+
+# Where to send OpenAI-compatible chat completion requests.
+# Typically your llama-swap / llama.cpp OpenAI-ish endpoint.
+llama_swap_url: "http://127.0.0.1:8011/v1/chat/completions"
+
+# Router bind port (when running `python router_fastapi.py`)
+port: 9000
+
+# Model role mapping (router passes `role=`; call_model resolves to these model IDs).
+roles:
+  thinker: "Qwen-3-4B Hivemind"
+  critic: "Phi-4-mini"
+  vision: "qwen-3-4B_VISUAL"
+  coder: "Qwen-3-4B Hivemind"
+  second_op: "Nanbeige 3B"  # not wired yet; placeholder for future
+
+# Vault is Qdrant-only; Mentats uses this kb label when searching Qdrant.
+vault_kb_name: "vault"
+
+# Filesystem KB folders.
+# These are *not* Qdrant. They are folders containing raw docs + SUMM_*.md files.
+kb_paths:
+  c64: "C:/docs/c64"
+  amiga: "C:/moa-kbs/amiga"
+  dogs: "C:/moa-kbs/dogs"
+
+# Optional RAG settings (rag.py is still using its own defaults in v1.0.3).
+rag:
+  qdrant_host: "localhost"
+  qdrant_port: 6333
+  collection: "moa_kb_docs"
+  vector_name: "e5_small_v2"
+
+# Vodka settings (overrides vodka_filter.py defaults)
+vodka:
+  storage_dir: ""  # empty = cwd, or set explicit path
+  base_ttl_days: 3
+  touch_extension_days: 5
+  max_touches: 2
+  debug: false
+  debug_dir: ""
+  n_last_messages: 2
+  keep_first: true
+  max_chars: 1500

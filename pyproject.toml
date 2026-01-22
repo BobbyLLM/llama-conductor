@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llama-conductor"
+version = "1.1.0"
+description = "LLM harness for trust, consistency, and proof"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "BobbyLLM" }]
+keywords = ["llm", "rag", "router", "mentats", "vodka"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+]
+
+dependencies = [
+  "fastapi>=0.104.0",
+  "uvicorn>=0.24.0",
+  "requests>=2.31.0",
+  "pyyaml>=6.0",
+  "pydantic>=2.0.0",
+  "sentence-transformers>=2.2.0",
+  "qdrant-client>=1.7.0",
+]
+
+[project.optional-dependencies]
+pdf = ["pypdf>=3.0.0"]
+dev = ["pytest>=7.0.0", "black>=23.0.0", "ruff>=0.1.0"]
+
+[project.urls]
+Homepage = "https://codeberg.org/BobbyLLM/llama-conductor"
+Repository = "https://codeberg.org/BobbyLLM/llama-conductor"
+
+[project.scripts]
+llama-conductor = "llama_conductor.cli:main"
+
+[tool.setuptools]
+packages = ["llama_conductor"]
+
+[tool.setuptools.package-data]
+llama_conductor = ["*.yaml", "*.md"]
