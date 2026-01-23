@@ -970,3 +970,6 @@ Answer → Vault chunk → SUMM file → Original doc → SHA verification
 - **IMPROVED:** Error messages for mode conflicts
 
 ### Questions? Run `>>help` in-chat or check the command cheat sheet.*
+
+## License
+AGPL-3.0-or-later. See `LICENSE`

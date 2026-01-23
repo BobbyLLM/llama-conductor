@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Local runtime / personal state
+total_recall/
+*.log
+
+# Secrets
+.env
+*.key
+*.pem
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+*.egg-info/
+dist/
+build/
+__pycache__/
+*.pyc
