@@ -1,7 +1,13 @@
 # sidecars.py
-# version 1.0.2
+# version 1.0.3
 """
 Non-LLM utility sidecars for llama-conductor.
+
+CHANGES IN v1.0.3:
+- Weather geocoding switched from Open-Meteo to Nominatim (OpenStreetMap)
+- Better regional coverage: now handles small towns like "Carnarvon Western Australia"
+- No API key required, no rate limiting issues (1 req/sec is fine for chat)
+- Better display names from OSM
 
 CHANGES IN v1.0.2:
 - Wiki summary increased from 200 → 500 chars (full paragraph)
@@ -635,40 +641,42 @@ def _decode_weather_code(code: int) -> str:
 
 def handle_weather_query(location: str) -> str:
     """
-    Fetch current weather via Open-Meteo API (free, no rate limiting).
+    Fetch current weather via Open-Meteo API with Nominatim geocoding (OSM).
     
-    Uses geocoding to find location, then fetches current weather.
-    Example: >>weather Perth
-    Returns: "[weather] Perth: 22°C, Partly cloudy, 65% humidity"
+    Uses Nominatim (OpenStreetMap) for geocoding (better regional coverage),
+    then Open-Meteo for weather forecast.
+    Example: >>weather Carnarvon Western Australia
+    Returns: "[weather] Carnarvon, Western Australia: 22°C, Partly cloudy, 65% humidity"
     """
     location = (location or "").strip()
     if not location:
         return "[weather] No location provided"
 
     try:
-        # Step 1: Geocode the location
-        geo_url = "https://geocoding-api.open-meteo.com/v1/search"
+        # Step 1: Geocode via Nominatim (OpenStreetMap) – better regional coverage
+        geo_url = "https://nominatim.openstreetmap.org/search"
         geo_params = {
-            "name": location,
-            "count": 1,
+            "q": location,
+            "format": "json",
+            "limit": 1,
             "language": "en"
         }
         
-        geo_resp = requests.get(geo_url, params=geo_params, timeout=5)
+        # Add User-Agent (Nominatim requires it)
+        headers = {"User-Agent": "llama-conductor/1.0.2"}
+        geo_resp = requests.get(geo_url, params=geo_params, headers=headers, timeout=5)
         geo_resp.raise_for_status()
         geo_data = geo_resp.json()
         
-        results = geo_data.get("results", [])
-        if not results:
+        if not geo_data:
             return f"[weather] Location '{location}' not found"
         
-        place = results[0]
-        latitude = place.get("latitude")
-        longitude = place.get("longitude")
-        name = place.get("name")
-        country = place.get("country")
+        place = geo_data[0]
+        latitude = float(place.get("lat"))
+        longitude = float(place.get("lon"))
+        display_name = place.get("display_name", location)
         
-        # Step 2: Fetch current weather
+        # Step 2: Fetch current weather via Open-Meteo
         weather_url = "https://api.open-meteo.com/v1/forecast"
         weather_params = {
             "latitude": latitude,
@@ -688,11 +696,6 @@ def handle_weather_query(location: str) -> str:
         wind = current.get("wind_speed_10m")
         
         condition = _decode_weather_code(code)
-        
-        # Format output
-        display_name = name
-        if country and country.lower() != name.lower():
-            display_name = f"{name}, {country}"
         
         return f"[weather] {display_name}: {temp}°C, {condition}, {humidity}% humidity"
     
