@@ -1,5 +1,5 @@
 # fs_rag.py
-# version 1.0.3
+# version 1.0.4
 
 from __future__ import annotations
 

@@ -1,15 +1,6 @@
-```python
 # fun.py
-# version 1.0.7
+# version 1.0.8
 #
-# SAFETY / COMPATIBILITY GOALS (MAX PRECAUTIONS):
-# - Do NOT change any public function signatures.
-# - Do NOT change how external callers invoke this module.
-# - Do NOT modify upstream/downstream modules (router, mentats, vodka, image routing).
-# - Fix the duplicate FUN quote issue (>>f) by ensuring run_fun() returns a seed-quote-only first line.
-# - Prevent router/UI meta messages (e.g., "[router] ...", "[status] ...", "[peek] ...", "Confidence: ...")
-#   from contaminating the model-facing transcript used inside Fun mode, WITHOUT removing them from
-#   the actual chat history (no in-place mutation of messages).
 #
 # NOTE:
 # - This file does NOT implement routing or command handling; it only formats prompts and post-processes outputs.
@@ -536,4 +527,3 @@ def run_fun_rewrite(
         )
 
     return f"{mode_kicker}\n\n{rewritten}"
-```

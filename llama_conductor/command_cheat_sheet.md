@@ -1,14 +1,23 @@
-# MoA Router Command Cheat Sheet (v1.0.3.1)
+#  Router Command Cheat Sheet 
 
-This router exposes an OpenAI-style `/v1/chat/completions` endpoint.
 
-## Core idea
-You are routing **workflows**, not models.
+## Sidecar utilities (deterministic, no LLM) — start with `>>`
 
-- **Serious** is default (boring, reliable).
-- **Mentats** is deliberate reasoning, **Vault-only**, isolated.
-- **Fun** is post-processing style only.
-- **Fun Rewrite (FR)** is style rewrite with a tone-matched seed quote.
+### Calculator
+- `>>calc <expression>` — evaluate math expressions safely
+  - Supports: `+`, `-`, `*`, `/`, `%`, `**`, parentheses, functions (`sqrt`, `sin`, `cos`, `log`, `floor`, `ceil`, `abs`, `round`, `min`, `max`, `pow`)
+  - Natural language: `>>calc 30% of 79.95` → `23.99`
+  - Natural language: `>>calc 14 per 20` → `0.70`
+
+### Memory management
+- `>>list` — list all stored Vodka memories with metadata (TTL, touch count, creation date)
+- `>>flush` — reset the CTC (Cut-The-Crap) message history cache for next turn
+
+### Knowledge search
+- `>>find <query>` — search attached filesystem KBs for exact text matches
+  - Returns file location, line number, and snippet context
+  - Example: `>>find unit price` → finds "unit price" in KB files
+  - Requires: KBs must be attached first with `>>attach <kb>`
 
 ---
 
@@ -26,7 +35,7 @@ You are routing **workflows**, not models.
 - `>>fun_rewrite` / `>>FR` / `>>fr` — enable sticky Fun Rewrite mode
 - `>>fun_rewrite off` / `>>FR off` / `>>fr off` — disable sticky Fun Rewrite mode
 
-**Invariant:** If you invoke `##mentats` while Fun/FR is active, the router will hard-disable Fun/FR and run Mentats in isolation.
+**Nb:** If you invoke `##mentats` while Fun/FR is active, the router will hard-disable Fun/FR and run Mentats in isolation.
 
 ### KB attachment (filesystem KBs)
 - `>>list_kb` — list known KB names + attached KBs
@@ -61,13 +70,32 @@ You keep KBs as **folders of files** on disk.
 
 ---
 
+## Vodka memory commands (per-turn control) — start with `!!` or `??`
+
+### Store & manage
+- `!! <text>` — manually store text as a Vodka memory (highlight for later recall)
+- `!! nuke` / `nuke !!` — **delete all Vodka memories** (hard reset, early return)
+- `!! forget <query>` — delete Vodka memories matching the query text
+
+### Query & expand
+- `?? <query>` — search Vodka memories, rewrite your question using matched facts as context
+  - Model sees stored facts injected into the message
+  - Useful for: follow-ups, referencing prior notes
+- `?? list` — list all stored Vodka memories with metadata (TTL, touch count, creation date)
+
+**Important distinction:**
+- `!! nuke` — deletes **Vodka memory store** (persistent facts you've saved)
+- `>>flush` — resets **CTC cache** (temporary message history trimming); does NOT delete memories
+
+---
+
 ## Per-turn selectors (one message) — start with `##`
 
 ### Mentats (Vault-only)
 - `##mentats <question>`
-- aliases: `##m`, `##zardoz`, `##z`
+- alias: `##m`
 
-Mentats invariants:
+Mentats function:
 - Detaches all KBs.
 - Auto-attaches Vault for the run, then detaches.
 - Must not receive Vodka or chat history.
@@ -79,12 +107,15 @@ Mentats invariants:
 
 ---
 
-## Config (`router_config.yaml`)
+## Vision / Screenshot commands (per-turn; works when an image is present)
 
-- `kb_paths:` map of KB name → folder path
-- `vault_kb_name:` name of the Vault KB (Mentats uses this)
-- `rag:` Qdrant + embedder + reranker settings
-- `vodka:` TTL/touch + context shaping settings
+### Option A: Direct VLM (routes straight to roles.vision)
+- `>>vision` / `>>vl` / `>>v` + <text> -> Direct vision answer (VLM sees the image + your question; answer based on image)
+
+### Option B: OCR/
+- `>>OCR` / `>>read` -> OCR extract text from image (if present) 
+
+- `image present, no vision command given` -> Defaults to caption/OCR first, then runs selected pipeline
 
 ---
 

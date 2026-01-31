@@ -1,5 +1,5 @@
 # ingest.py
-# version 1.0.3
+# version 1.0.4
 """KB summarisation (SUMM) + Vault promotion (Qdrant).
 
 This file replaces the old "ingest everything into Qdrant" behavior.

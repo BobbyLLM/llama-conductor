@@ -1,8 +1,8 @@
 # mentats.py
-# version 1.0.2
+# version 1.0.3
 """Mentats pipeline: 3-pass deep reasoning harness (Draft -> Critique -> Final).
 
-CHANGES IN v1.0.2:
+CHANGES IN v1.0.3:
 - NUCLEAR anti-hallucination enforcement (prompts rewritten to be MUCH more aggressive)
 - Step 1: Explicit REFUSAL instructions when facts insufficient
 - Step 2: Critic actively hunts for ANY mention of entities not in FACTS_USED

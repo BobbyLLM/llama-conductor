@@ -1,7 +1,7 @@
 # vodka_filter.py
-# version 1.0.1
+# version 1.0.2
 """
-Vodka v1.0.1 
+Vodka v1.0.2 
 - Deterministic memory store to JSON (Total Recall)
 - Manual save: "!! ... !!" OR message starts/ends with "!!"
 - Commands:
@@ -136,7 +136,7 @@ class Storage:
     def log(self, msg: str):
         try:
             with open(self.log_file, "a", encoding="utf-8") as f:
-                f.write(f"{_ts()} — {msg}\n")
+                f.write(f"{_ts()} â€” {msg}\n")
         except Exception:
             pass
 
@@ -214,7 +214,7 @@ class FastRecall:
             rec.setdefault("touch_count", 0)
             exp = now + dt.timedelta(days=self.base_ttl_days)
             rec["expires_at"] = self._fmt_ts(exp)
-            self.S.log(f"VODKA_REFRESH_CTX — {ctx_id}")
+            self.S.log(f"VODKA_REFRESH_CTX â€” {ctx_id}")
         else:
             exp = now + dt.timedelta(days=self.base_ttl_days)
             data[ctx_id] = {
@@ -224,7 +224,7 @@ class FastRecall:
                 "touch_count": 0,
                 "type": "vodka_ctx",
             }
-            self.S.log(f"VODKA_ADD_CTX — {ctx_id} — {content[:80].replace(os.linesep, ' ')}")
+            self.S.log(f"VODKA_ADD_CTX â€” {ctx_id} â€” {content[:80].replace(os.linesep, ' ')}")
 
         self.S.save_facts(data)
         return ctx_id
@@ -285,7 +285,7 @@ class FastRecall:
         now = self._now()
         exp = now + dt.timedelta(days=self.touch_extension_days)
         rec["expires_at"] = self._fmt_ts(exp)
-        self.S.log(f"VODKA_TOUCH_CTX — {ctx_id} — touch_count={tc}")
+        self.S.log(f"VODKA_TOUCH_CTX â€” {ctx_id} â€” touch_count={tc}")
 
     def janitor_if_due(self, interval_seconds: int = 3600):
         now = time.time()
@@ -311,7 +311,7 @@ class FastRecall:
                 to_delete.append(k)
         for k in to_delete:
             v_preview = str(data.get(k, {}).get("value", ""))[:80].replace(os.linesep, " ")
-            self.S.log(f"VODKA_JANITOR_EXPIRE — {k} — {v_preview}")
+            self.S.log(f"VODKA_JANITOR_EXPIRE â€” {k} â€” {v_preview}")
             data.pop(k, None)
 
         # cap
@@ -324,7 +324,7 @@ class FastRecall:
             overflow = ctx_keys_sorted[: len(ctx_keys_sorted) - self.max_items]
             for k in overflow:
                 v_preview = str(data.get(k, {}).get("value", ""))[:80].replace(os.linesep, " ")
-                self.S.log(f"VODKA_JANITOR_CAP — {k} — {v_preview}")
+                self.S.log(f"VODKA_JANITOR_CAP â€” {k} â€” {v_preview}")
                 data.pop(k, None)
 
         self.S.save_facts(data)
@@ -349,7 +349,7 @@ class Filter:
         keep_first: bool = Field(default=True, description="Keep the first user+assistant pair.")
         max_chars: int = Field(default=1500, description="Soft cap for non-system message chars (0 disables).")
 
-        # Rolling summary (kept simple; if you don’t want it, disable)
+        # Rolling summary (kept simple; if you donâ€™t want it, disable)
         enable_summary: bool = Field(default=True, description="Enable rolling summary system message.")
         summary_every_n_user_msgs: int = Field(default=4, description="Update summary once >= N user msgs.")
         summary_max_words: int = Field(default=160, description="Max words in summary.")
@@ -370,6 +370,8 @@ class Filter:
         print(f"[Vodka v{FILTER_VERSION}] __init__ called, valves initialized")
         self._storage: Optional[Storage] = None
         self._fr: Optional[FastRecall] = None
+        # Eager-load facts.json on init to eliminate warm-up problem
+        self._get_storage_and_fr()  # Force load storage and FastRecall immediately
 
     def _get_storage_and_fr(self) -> FastRecall:
         base = self.valves.storage_dir or os.getenv("DATA_DIR") or os.getcwd()
@@ -485,8 +487,118 @@ class Filter:
 
         if deleted:
             fr.S.save_facts(data)
-            fr.S.log(f"VODKA_FORGET_QUERY — '{query}' — deleted={deleted}")
+            fr.S.log(f"VODKA_FORGET_QUERY â€” '{query}' â€” deleted={deleted}")
         return deleted
+
+    def _list_all_memories(self, fr: FastRecall, debug_enabled: bool) -> str:
+        """
+        List ALL stored Vodka memories with metadata (TTL, touch count).
+        Used by: ?? list
+        Returns: Formatted pretty-print string suitable for model context.
+        """
+        data = fr.S.load_facts()
+        now = fr._now()
+        
+        # Collect all non-expired memories with metadata
+        entries: List[Tuple[str, str, str, int, int]] = []  # (ctx_id, text, created_at, ttl_days, touch_count)
+        
+        for ctx_id, rec in data.items():
+            if rec.get("type") != "vodka_ctx":
+                continue
+            
+            # Skip expired memories
+            exp_s = rec.get("expires_at")
+            if exp_s:
+                exp_dt = self._parse_ts_safe(exp_s)
+                if exp_dt and exp_dt < now:
+                    continue
+            
+            # Calculate TTL days remaining
+            ttl_days = 0
+            if exp_s:
+                exp_dt = self._parse_ts_safe(exp_s)
+                if exp_dt:
+                    delta = (exp_dt - now).total_seconds()
+                    ttl_days = max(0, int(delta // 86400))
+            
+            text = str(rec.get("value", "")).strip()
+            created_at = str(rec.get("created_at", "")).strip()
+            touch_count = int(rec.get("touch_count", 0))
+            
+            entries.append((ctx_id, text, created_at, ttl_days, touch_count))
+        
+        # Sort by creation date (newest first)
+        entries.sort(key=lambda e: e[2], reverse=True)
+        
+        if not entries:
+            # No memories stored
+            output = (
+                "You have no stored memories. "
+                "Create memories by prefixing your text with '!!' (e.g., '!! my server is at 192.168.1.1').\n"
+            )
+        else:
+            # Format all memories with metadata
+            lines = ["[Vodka Memory Store]", ""]
+            for i, (ctx_id, text, created_at, ttl_days, touch_count) in enumerate(entries, 1):
+                # Truncate long text for preview
+                text_preview = text if len(text) <= 80 else text[:77] + "..."
+                lines.append(
+                    f"{i}. [{ctx_id}]"
+                )
+                lines.append(
+                    f"   Text: {text_preview}"
+                )
+                lines.append(
+                    f"   Created: {created_at}"
+                )
+                lines.append(
+                    f"   TTL: {ttl_days} days remaining | Touches: {touch_count}"
+                )
+                lines.append("")
+            
+            output = "\n".join(lines).strip()
+        
+        if debug_enabled:
+            print(f"[Vodka] listed {len(entries)} memories")
+        
+        return output
+
+    def _parse_ts_safe(self, s: str) -> Optional[dt.datetime]:
+        """
+        Parse timestamp safely, handling both old and new formats.
+        Tries multiple formats to handle timezone variations.
+        """
+        if not s:
+            return None
+        
+        # Try original format first (with timezone code)
+        try:
+            return dt.datetime.strptime(s, "%B %d, %Y at %H:%M:%S %Z").replace(
+                tzinfo=dt.datetime.now().astimezone().tzinfo
+            )
+        except Exception:
+            pass
+        
+        # Fallback: parse without timezone (just date and time)
+        # This handles "January 27, 2026 at 02:34:51 W. Australia Standard Time"
+        try:
+            # Strip the timezone suffix and parse just the datetime part
+            # Format: "Month DD, YYYY at HH:MM:SS TZ_NAME"
+            parts = s.rsplit(" at ", 1)  # Split on the last " at "
+            if len(parts) == 2:
+                date_part = parts[0]  # "January 27, 2026"
+                time_part = parts[1].split(" ", 1)[0]  # "02:34:51"
+                
+                dt_str = f"{date_part} at {time_part}"
+                parsed = dt.datetime.strptime(dt_str, "%B %d, %Y at %H:%M:%S")
+                # Add current timezone
+                return parsed.replace(tzinfo=dt.datetime.now().astimezone().tzinfo)
+        except Exception:
+            pass
+        
+        # If all else fails, return None
+        return None
+
 
     # -------------------------------
     # Control commands + highlights
@@ -516,6 +628,11 @@ class Filter:
         if not isinstance(content, str):
             return messages, None
 
+        # DEFENSIVE: Normalize broken UTF-8 sequences (Â» → ??, Â» → >>)
+        # This handles cases where clients send malformed Unicode
+        content = content.replace("Â»", ">>").replace("Â»", ">>")  # broken guillemet variants
+        content = content.replace("Â¿", "??").replace("Â¿", "??")  # other broken variants
+        
         stripped = content.strip()
         norm = stripped.lower()
 
@@ -547,6 +664,19 @@ class Filter:
         # ?? <query>  -> rewrite last user message into memory-backed block (no early return)
         if stripped.startswith("??"):
             query = stripped[2:].strip()
+            
+            # SPECIAL CASE: ?? list -> list all memories with metadata (HARD COMMAND, no LLM)
+            if query.lower() in ("list", ""):
+                list_output = self._list_all_memories(fr, debug_enabled)
+                # Remove the user command message
+                del messages[idx]
+                # Add assistant reply with the list directly (deterministic, no LLM processing)
+                messages.append({"role": "assistant", "content": list_output})
+                body["messages"] = messages
+                if debug_enabled:
+                    print(f"[Vodka] ?? list executed (hard command, deterministic output)")
+                return messages, body
+            
             matches = self._search_vodka_memories(fr, query, max_results=10)
 
             if matches:

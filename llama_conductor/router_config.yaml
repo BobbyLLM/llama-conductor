@@ -41,6 +41,10 @@ vodka:
   max_touches: 2
   debug: false
   debug_dir: ""
-  n_last_messages: 2
+  n_last_messages: 4
   keep_first: true
-  max_chars: 1500
+  max_chars: 3000
+# Vault chunking (for >>move to vault ingestion)
+vault:
+  chunk_words: 250        # Smaller chunks = better semantic matching for queries
+  chunk_overlap_words: 50  # Overlap prevents losing context at chunk boundaries

@@ -1,6 +1,6 @@
 # router_fastapi.py
-# version 1.0.9-debug
-"""MoA Router (FastAPI) — v1.0.9-debug
+# version 1.1.0
+"""MoA Router (FastAPI) 
 
 CHANGES IN v1.0.9-debug:
 - Fix: Fun/FR blocks after Mentats (checks only recent 5 turns, not all history)
@@ -70,6 +70,30 @@ except Exception:
     build_fs_facts_block = None  # type: ignore
     search_fs = None  # type: ignore
 
+try:
+    from .sidecars import (  # type: ignore
+        parse_and_eval_calc,
+        format_calc_result,
+        list_vodka_memories,
+        format_memory_list,
+        find_quote_in_kbs,
+        format_quote_result,
+        flush_ctc_cache,
+    )
+except Exception:
+    parse_and_eval_calc = None  # type: ignore
+    format_calc_result = None  # type: ignore
+    list_vodka_memories = None  # type: ignore
+    format_memory_list = None  # type: ignore
+    find_quote_in_kbs = None  # type: ignore
+    format_quote_result = None  # type: ignore
+    flush_ctc_cache = None  # type: ignore
+
+try:
+    from .pipelines import run_raw  # type: ignore
+except Exception:
+    run_raw = None  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -136,6 +160,7 @@ class SessionState:
     attached_kbs: Set[str] = field(default_factory=set)
     fun_sticky: bool = False
     fun_rewrite_sticky: bool = False
+    raw_sticky: bool = False
 
     rag_last_query: str = ""
     rag_last_hits: int = 0
@@ -756,13 +781,15 @@ def move_summ_to_vault(source_kbs: Set[str]) -> Dict[str, Any]:
 
 def _is_command(s: str) -> bool:
     """Check if string is a session command (>>). Does NOT match ?? (Vodka recall)."""
-    s = (s or "").lstrip()
+    # DEFENSIVE: Normalize broken UTF-8 sequences
+    s = (s or "").replace("Â»", ">>").replace("Â»", ">>").replace("Â¿", "??").lstrip()
     # Explicitly exclude ?? (Vodka recall)
     if s.startswith("??"):
         return False
     return s.startswith(">>") or s.startswith("»")
 def _strip_command_prefix(s: str) -> str:
-    s = (s or "").lstrip()
+    # DEFENSIVE: Normalize broken UTF-8 sequences
+    s = (s or "").replace("Â»", ">>").replace("Â»", ">>").lstrip()
     if s.startswith("»"):
         return s[1:].strip()
     if s.startswith(">>"):
@@ -977,6 +1004,55 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             msg += "\n" + "\n".join("- " + n for n in notes[:25])
         return msg
 
+    # =========================================================================
+    # SIDECAR COMMANDS (non-LLM utilities)
+    # =========================================================================
+
+    # >>calc <expression>
+    if parts and parts[0].lower() == "calc":
+        if not parse_and_eval_calc:
+            return "[router] calc not available (sidecars.py missing)"
+        expr = cmd[len(parts[0]):].strip()
+        if not expr:
+            return "[calc] usage: >>calc <expression>\nExamples: >>calc 30% of 79.95, >>calc 14*365, >>calc sqrt(16)"
+        result = parse_and_eval_calc(expr)
+        return f"[calc] {expr} = {format_calc_result(result)}"
+
+    # >>list (Vodka memories)
+    if low == "list" and cmd.startswith(">>"):
+        # Note: This is >>list (not ??)
+        if not list_vodka_memories or not state.vodka:
+            return "[list] vodka not available"
+        entries = list_vodka_memories(state.vodka)
+        return format_memory_list(entries)
+
+    # >>find <query> (search KBs)
+    if parts and parts[0].lower() == "find":
+        if not find_quote_in_kbs:
+            return "[router] find not available (sidecars.py missing)"
+        query = cmd[len(parts[0]):].strip()
+        if not query:
+            return "[find] usage: >>find <text to search for>"
+        if not state.attached_kbs:
+            return "[find] No KBs attached. >>attach <kb> first"
+        result = find_quote_in_kbs(query, state.attached_kbs, KB_PATHS)
+        return format_quote_result(result)
+
+    # >>flush (CTC cache)
+    if low == "flush":
+        if not flush_ctc_cache or not state.vodka:
+            return "[router] flush not available"
+        return flush_ctc_cache(state.vodka)
+
+    # >>raw (Raw mode toggle)
+    if low == "raw":
+        state.raw_sticky = True
+        return "[router] raw mode ON (sticky, no Serious formatting)"
+
+    if low == "raw off":
+        state.raw_sticky = False
+        return "[router] raw mode OFF"
+
     return f"[router] unknown command: {cmd}"
 
 
@@ -1022,7 +1098,12 @@ def build_vault_facts(query: str, state: SessionState) -> str:
     except Exception:
         return ""
 
-    txt = build_rag_block(q, attached_kbs={VAULT_KB_NAME})
+    try:
+        txt = build_rag_block(q, attached_kbs={VAULT_KB_NAME})
+    except Exception as e:
+        print(f"[router] build_rag_block failed: {e}")
+        return ""
+    
     if txt:
         # approximate hits
         state.vault_last_hits = max(1, txt.count("\n\n"))
@@ -1173,12 +1254,25 @@ async def v1_chat_completions(req: Request):
         return JSONResponse(_make_openai_response("[router error: no user message]"))
 
     # CRITICAL CHECK: Auto-vision detection
-    # If images are present AND user didn't type a session command (>>), route to vision
-    has_images = has_images_in_messages(raw_messages)
-    is_session_command = _is_command(user_text_raw)
+    # If images are present AND user wrote something (not just image), route to vision
+    # IMPORTANT: Check ONLY the latest user message, not entire history!
+    user_idx = None
+    for i in range(len(raw_messages) - 1, -1, -1):
+        if raw_messages[i].get("role") == "user":
+            user_idx = i
+            break
     
-    if has_images and not is_session_command:
-        # Images force vision mode, disable sticky Fun/FR
+    has_images = False
+    if user_idx is not None:
+        content = raw_messages[user_idx].get("content", "")
+        if isinstance(content, list):
+            has_images = _has_image_blocks(content)
+    
+    is_session_command = _is_command(user_text_raw)
+    has_user_text = bool((user_text_raw or "").strip()) and user_text_raw.strip() != "[image]"
+    
+    if has_images and has_user_text and not is_session_command:
+        # Images + text (no command) → force vision mode, disable sticky Fun/FR
         if state.fun_sticky or state.fun_rewrite_sticky:
             state.fun_sticky = False
             state.fun_rewrite_sticky = False
@@ -1189,21 +1283,26 @@ async def v1_chat_completions(req: Request):
         return JSONResponse(_make_openai_response(text))
 
     # Commands are handled against raw user text.
-    try:
-        cmd_reply = handle_command(user_text_raw, state=state, session_id=session_id)
-    except Exception as e:
-        text = f"[router error: command handler crashed: {e.__class__.__name__}: {e}]"
-        if stream:
-            return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
-        return JSONResponse(_make_openai_response(text))
-
-    if cmd_reply is not None:
-        text = cmd_reply
-        if stream:
-            return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
-        return JSONResponse(_make_openai_response(text))
-
+    # BUT: Check for per-turn selectors (##) FIRST, before session commands (>>)
+    # This prevents ##vision from being treated as >>vision command
     selector, user_text = _split_selector(user_text_raw)
+    
+    # Only treat as session command if NOT a per-turn selector
+    if selector == "":
+        try:
+            cmd_reply = handle_command(user_text_raw, state=state, session_id=session_id)
+        except Exception as e:
+            text = f"[router error: command handler crashed: {e.__class__.__name__}: {e}]"
+            if stream:
+                return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+            return JSONResponse(_make_openai_response(text))
+
+        if cmd_reply is not None:
+            text = cmd_reply
+            if stream:
+                return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+            return JSONResponse(_make_openai_response(text))
+    
     print(f"[DEBUG] selector={selector!r}, user_text={user_text!r}", flush=True)
 
     # Build history for non-vision pipelines
@@ -1237,6 +1336,21 @@ async def v1_chat_completions(req: Request):
         raw_messages = vodka_body.get("messages", raw_messages)
     except Exception as e:
         pass  # Fail-open
+    
+    # ⚠️  CRITICAL: Check if Vodka has already answered (hard commands like ?? list, !! nuke)
+    # If the last message is an assistant reply with Vodka marker, return it directly (no LLM)
+    if raw_messages and raw_messages[-1].get("role") == "assistant":
+        last_msg_content = raw_messages[-1].get("content", "")
+        # Check if this looks like a Vodka hard command response
+        # Hard command indicators: [vodka], [Vodka Memory Store], etc.
+        if isinstance(last_msg_content, str) and (
+            "[vodka]" in last_msg_content.lower() or 
+            "[vodka memory store]" in last_msg_content.lower()
+        ):
+            # This is a Vodka hard command answer - return it directly
+            if stream:
+                return StreamingResponse(_stream_sse(last_msg_content), media_type="text/event-stream")
+            return JSONResponse(_make_openai_response(last_msg_content))
     
     history_text_only = normalize_history(raw_messages)
     # Vision / OCR selectors (explicit ##vision or ##ocr)
@@ -1281,6 +1395,12 @@ async def v1_chat_completions(req: Request):
         def _build_constraints_block(query: str) -> str:
             return ""
 
+        # Wrapper to enforce temperature=0.1 for critic role (step 2 fact-checking)
+        def _call_model_with_critic_temp(*, role: str, prompt: str, max_tokens: int = 256, temperature: float = 0.3, top_p: float = 0.9) -> str:
+            if role == "critic":
+                temperature = 0.1  # Force low temperature for critic to prevent hallucinations
+            return call_model_prompt(role=role, prompt=prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+
         # No chat history / Vodka into Mentats as truth: pass empty history and NoOp vodka.
         class _NoOpVodka:
             def inlet(self, body: dict, user: Optional[dict] = None) -> dict:
@@ -1296,7 +1416,7 @@ async def v1_chat_completions(req: Request):
                 user_text,
                 [],
                 vodka=_NoOpVodka(),
-                call_model=call_model_prompt,
+                call_model=_call_model_with_critic_temp,
                 build_rag_block=_build_rag_block,
                 build_constraints_block=_build_constraints_block,
                 facts_collection=VAULT_KB_NAME,
@@ -1377,7 +1497,7 @@ async def v1_chat_completions(req: Request):
             ).strip()
             tone = _infer_tone(user_text, base_preview)
             qb = _quotes_by_tag()
-            pool = qb.get(tone) or qb.get("default") or []
+            pool = [q for quotes_list in qb.values() for q in quotes_list] if qb else []
 
             styled = run_fun(
                 session_id=session_id,
@@ -1413,6 +1533,22 @@ async def v1_chat_completions(req: Request):
             history=history_text_only,
             vodka=vodka,
             facts_block=facts_block,
+        ).strip()
+        if stream:
+            return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+        return JSONResponse(_make_openai_response(text))
+
+    # RAW mode (bypass Serious formatting, keep CTC + KB grounding)
+    if state.raw_sticky and run_raw:
+        text = run_raw(
+            session_id=session_id,
+            user_text=user_text,
+            history=history_text_only,
+            vodka=vodka,
+            call_model=call_model_prompt,
+            facts_block=facts_block,
+            constraints_block="",
+            thinker_role="thinker",
         ).strip()
         if stream:
             return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
