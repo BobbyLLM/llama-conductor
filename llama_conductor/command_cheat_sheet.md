@@ -21,7 +21,7 @@
   - Returns: `1.0 USD = 0.92 EUR`
   - Supports common currency aliases: USD, EUR, GBP, JPY, AUD, CAD, etc.
   
-- `>>weather <location>` – Current weather (via wttr.in, compact format)
+- `>>weather <location>` – Current weather (via  Open-Meteo, compact format)
   - Examples: `>>weather Perth`, `>>weather London`, `>>weather New York`
   - Works best with: city names or short location names (single word, or "City Country")
   - Returns: `Perth: 22°C, Partly cloudy`
