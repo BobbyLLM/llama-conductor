@@ -112,14 +112,14 @@ Bonus: Your Raspberry Pi can actually run that 4B model and not chug.
 
 ### Required stack
 
-You need these parts. No exceptions.
+You need these parts. 
 
 1. **llama-swap** → https://github.com/mostlygeek/llama-swap (the glue)
 2. **llama.cpp** → https://github.com/ggml-org/llama.cpp (the engine)
-3. **Frontend UI** → https://github.com/open-webui/open-webui (the interface)
-4. **Qdrant** → https://github.com/qdrant/qdrant (the brain, optional but you want it)
+3. **Frontend UI** → https://github.com/open-webui/open-webui (Can use any OpenAI-compatible UI. Eg: Chatbox, Librechat, Jan.ai etc)
+4. **Qdrant** → https://github.com/qdrant/qdrant (the vault brain; optional but needed "Mentats" deep think mode)
 
-**Absolute minimum:** (1) + (2) + (3). Everything else uses defaults.
+**Absolute minimum:** (1) + (2) + (3). 
 
 **For `##mentats`:** You need (4). Without it, Mentats runs degraded (no Vault grounding).
 
@@ -216,13 +216,13 @@ See [FAQ](FAQ.md) for deep technical dives.
 Edit `router_config.yaml`:
 ```yaml
 roles:
-  thinker: "Qwen-3-4B Hivemind"    # Main reasoning
+  thinker: "Qwen-3-4B Hivemind"     # Main reasoning
   critic: "Phi-4-mini"              # Fact-checking in Mentats
   vision: "qwen-3-4B_VISUAL"        # Image understanding
 
 vodka:
   n_last_messages: 2                # Keep last 2 user/assistant pairs
-  max_chars: 1500                   # Hard cap context size
+  max_chars: 3000                   # Hard cap context size
   base_ttl_days: 3                  # How long facts live
 
 vault:
