@@ -1,6 +1,125 @@
-# Frequently Asked Questions (FAQ)
+# llama-conductor
+![llama-conductor banner](logo/zardoz.jpg)
 
-## What the hell is this thing — and why did you build it?
+
+## Quickstart
+
+### Required stack
+
+llama-conductor is the **router/harness**. It does **not** ship a model, and it does **not** replace your UI.
+
+You need these parts working together:
+
+1) **llama-swap** → https://github.com/mostlygeek/llama-swap
+2) **llama.cpp (or other runner)** → https://github.com/ggml-org/llama.cpp
+3) **Frontend UI (example: Open WebUI / OWUI)** → https://github.com/open-webui/open-webui
+4) **Qdrant (Vault / RAG)** → https://github.com/qdrant/qdrant
+
+**Minimum:** (1) + (2) + (3).
+
+**Core `##mentats` workflows:** require (4) Qdrant. The router can start without Qdrant, but `##mentats` will run in **degraded mode** (no Vault grounding).
+
+### Install
+
+```bash
+pip install git+https://codeberg.org/BobbyLLM/llama-conductor.git
+```
+
+### Run the router
+
+```bash
+llama-conductor serve --host 0.0.0.0 --port 9000
+```
+
+> This starts **only** the router. You still need to start llama-swap, your model runner(s), and your frontend separately. Start Qdrant if you want Vault / `##mentats`.
+
+## Table of contents
+
+- [Frequently Asked Questions (FAQ)](#frequently-asked-questions-faq)
+  - [What the hell is this thing — and why did you build it?](#what-the-hell-is-this-thing-and-why-did-you-build-it)
+  - [What problems does this solve?](#what-problems-does-this-solve)
+    - [1) "Vibes-based answers" — how do I know if the LLM is lying?](#1-vibes-based-answers-how-do-i-know-if-the-llm-is-lying)
+    - [2) Goldfish memory — models forget or "confidently misremember"](#2-goldfish-memory-models-forget-or-confidently-misremember)
+    - [3) Context bloat — 400-message chat logs kill your potato PC](#3-context-bloat-400-message-chat-logs-kill-your-potato-pc)
+  - [What is Vodka?](#what-is-vodka)
+    - [Vodka has two jobs:](#vodka-has-two-jobs)
+    - [How it works:](#how-it-works)
+  - [How does CTC (Cut The Crap) work?](#how-does-ctc-cut-the-crap-work)
+    - [Config knobs (router_config.yaml):](#config-knobs-routerconfigyaml)
+    - [What it does:](#what-it-does)
+    - [Effect:](#effect)
+  - [What are "breadcrumbs" and why do they matter?](#what-are-breadcrumbs-and-why-do-they-matter)
+    - [How breadcrumbs work:](#how-breadcrumbs-work)
+    - [Why this is powerful:](#why-this-is-powerful)
+  - [How does TR (Total Recall) work?](#how-does-tr-total-recall-work)
+    - [Store facts:](#store-facts)
+    - [Recall facts:](#recall-facts)
+    - [TTL + touches (anti-hoarder system):](#ttl-touches-anti-hoarder-system)
+  - [What is Mentats?](#what-is-mentats)
+    - [How Mentats works:](#how-mentats-works)
+  - [What is the Vault?](#what-is-the-vault)
+    - [How it works:](#how-it-works-1)
+    - [Why Vault vs filesystem KBs?](#why-vault-vs-filesystem-kbs)
+  - [How do I verify answers aren't bullshit?](#how-do-i-verify-answers-arent-bullshit)
+    - [Verify SHA manually:](#verify-sha-manually)
+  - [Why is this awesome on potato PCs?](#why-is-this-awesome-on-potato-pcs)
+    - [1) Vodka CTC keeps context small:](#1-vodka-ctc-keeps-context-small)
+    - [2) TR does memory without context:](#2-tr-does-memory-without-context)
+    - [3) Filesystem KBs are just folders:](#3-filesystem-kbs-are-just-folders)
+    - [4) Mentats is efficient:](#4-mentats-is-efficient)
+  - [What models do I need?](#what-models-do-i-need)
+    - [Minimum (potato mode):](#minimum-potato-mode)
+    - [Mid-range recommendations:](#mid-range-recommendations)
+    - [Those model reccs are GARBAGE, dude](#those-model-reccs-are-garbage-dude)
+    - [Config (router_config.yaml):](#config-routerconfigyaml)
+  - [What's the difference between modes?](#whats-the-difference-between-modes)
+    - [Serious (default):](#serious-default)
+    - [Mentats (##mentats):](#mentats-mentats)
+    - [Fun (##fun or >>fun):](#fun-fun-or-fun)
+    - [Fun Rewrite (>>fr):](#fun-rewrite-fr)
+  - [Common workflows](#common-workflows)
+    - [Adding new knowledge:](#adding-new-knowledge)
+    - [Storing personal facts:](#storing-personal-facts)
+    - [Recalling facts later:](#recalling-facts-later)
+  - [Technical Setup](#technical-setup)
+    - [Architecture Overview](#architecture-overview)
+    - [Model Backend: llama-swap](#model-backend-llama-swap)
+    - [RAG Backend: Qdrant](#rag-backend-qdrant)
+- [Docker (recommended)](#docker-recommended)
+- [Or install from binaries and run bare-metal like I do](#or-install-from-binaries-and-run-bare-metal-like-i-do)
+    - [Embeddings & Reranking](#embeddings-reranking)
+    - [Launch Script: The Easy Way](#launch-script-the-easy-way)
+- [Launch Qdrant](#launch-qdrant)
+- [Launch llama-swap](#launch-llama-swap)
+- [Launch MoA router](#launch-moa-router)
+- [Launch frontend](#launch-frontend)
+    - [Non-Local LLMs (API Keys)](#non-local-llms-api-keys)
+  - [Troubleshooting 101](#troubleshooting-101)
+    - ["No Vault hits stored yet"](#no-vault-hits-stored-yet)
+    - ["PROVENANCE MISSING"](#provenance-missing)
+    - [SHA mismatch](#sha-mismatch)
+    - [Mentats refuses everything](#mentats-refuses-everything)
+    - [Model gives weird answers](#model-gives-weird-answers)
+    - [Context too long errors](#context-too-long-errors)
+    - [Qdrant connection failed](#qdrant-connection-failed)
+    - [Models not loading (llama-swap)](#models-not-loading-llama-swap)
+  - [Config knobs (router_config.yaml) with examples](#config-knobs-routerconfigyaml-with-examples)
+    - [Vodka (memory + context):](#vodka-memory-context)
+    - [RAG (Vault retrieval):](#rag-vault-retrieval)
+    - [KBs (filesystem folders):](#kbs-filesystem-folders)
+    - [Models (backend endpoints):](#models-backend-endpoints)
+  - [Advanced: How does provenance work?](#advanced-how-does-provenance-work)
+    - [SUMM files include metadata:](#summ-files-include-metadata)
+    - [Vault stores full provenance:](#vault-stores-full-provenance)
+  - [TIPS](#tips)
+  - [What's new in v1.0.9?](#whats-new-in-v110)
+  - [Questions? Run `>>help` in-chat or check the command cheat sheet.*](#questions-run-help-in-chat-or-check-the-command-cheat-sheet)
+
+---
+
+## Frequently Asked Questions (FAQ)
+
+### What the hell is this thing — and why did you build it?
 
 **Llama-conductor** is a LLM harness for people who want **trust, consistency, and proof**.
 
@@ -12,9 +131,9 @@ I have ASD and a low tolerance for bullshit. I want shit to work the same 100% o
 
 ---
 
-## What problems does this solve?
+### What problems does this solve?
 
-### 1) "Vibes-based answers" — how do I know if the LLM is lying?
+#### 1) "Vibes-based answers" — how do I know if the LLM is lying?
 
 You don't! 
 
@@ -46,7 +165,7 @@ Mentats: --enable-xyz [cite: llama.cpp docs, SHA: abc123...]
 
 ---
 
-### 2) Goldfish memory — models forget or "confidently misremember"
+#### 2) Goldfish memory — models forget or "confidently misremember"
 
 **WITHOUT llama-conductor:**
 ```
@@ -76,7 +195,7 @@ Vodka: Your server is at 203.0.113.42 [TTL=3 days, touches=1]
 
 ---
 
-### 3) Context bloat — 400-message chat logs kill your potato PC
+#### 3) Context bloat — 400-message chat logs kill your potato PC
 
 **WITHOUT llama-conductor:**
 ```
@@ -101,285 +220,296 @@ So, maybe your Raspberry Pi *can* run that 4B model and not chug.
 
 ---
 
-## What is Vodka?
+### What is Vodka?
 
 **Vodka** = "When God gives you a potato PC, squeeze until Vodka"
 
-It's a **deterministic memory + prompt-sanitizer filter** that runs **before** and **after** your model sees the conversation. No LLM compute needed (pure 1990s tech). No hallucinations. No "helpful rewrites."
+It's a **deterministic memory + prompt-sanitizer filter** that runs **before** and **after** your model sees the conversation. No LLM compute needed (pure 1990s tech).
 
-Think of it as: **fact preservation + context compression in one pass**.
-
-### Vodka has two jobs:
+#### Vodka has two jobs:
 
 1. **CTC (Cut The Crap)**: Trim chat history so your PC survives
 2. **TR (Total Recall)**: Store/recall facts exactly (JSON file on disk)
 
-### How it works:
+#### How it works:
 
 Router calls `VodkaFilter()` on every request:
 ```python
-# inlet() — runs BEFORE model sees messages
-messages = vodka.inlet({"messages": raw_messages})
-# ↓ trims history, handles !! / ?? / control commands
-
-# outlet() — runs AFTER model responds
-messages = vodka.outlet({"messages": messages})
-# ↓ expands [ctx:...] breadcrumbs into stored facts
+vodka.inlet(body)   # Before model (CTC, !!, ??)
+vodka.outlet(body)  # After model (expand [ctx:...] markers)
 ```
+
+If anything breaks, it fails open (no crashes).
 
 ---
 
-## How does CTC (Cut The Crap) work?
+### How does CTC (Cut The Crap) work?
 
-CTC is a **deterministic message trimmer** that keeps conversations lightweight. It's the reason you can run a 4B model on a Raspberry Pi without your PC exploding.
+CTC keeps your context bounded and stable. Controlled by these knobs:
 
-### What it does (in order):
-
-1. Extract last N user/assistant message pairs (usually 2 = 4 messages total)
-2. Optionally keep the first message (important for system setup)
-3. Hard-cap total character count (default: 1500)
-4. Model sees ONLY this trimmed version
-
-### Config knobs (router_config.yaml):
-
+#### Config knobs (router_config.yaml):
 ```yaml
 vodka:
-  n_last_messages: 2      # Keep last N user/assistant pairs
-  keep_first: true        # Keep first message (system setup)
-  max_chars: 1500         # Hard cap on message chars
+  n_last_messages: 2        # Keep last 2 user/assistant pairs (4 messages)
+  keep_first: true          # Keep first message (system setup)
+  max_chars: 3000           # Hard cap on non-system message chars
 ```
 
-### The actual effect:
+#### What it does:
+1. Keeps last N user/assistant pairs
+2. Optionally keeps first message (typically system prompt)
+3. Caps total characters (truncates if needed)
 
-- **Before CTC:** 400 messages, 250KB context, your PC melts
-- **After CTC:** 4-6 messages, ~5KB context, your PC still works
-- **Result:** Model has effective long context window despite tiny actual context
-
-This is not a hack. This is not a workaround. This is how you scale down without losing coherence.
+#### Effect:
+- Consistent prompt budget (no surprise VRAM spikes)
+- Stable performance (no "slow down after 100 messages"). Speed you launch with is speed you stay at.
+- Models don't forget recent context (last N is always there)
 
 ---
 
-## What are "breadcrumbs" and why do they matter?
+### What are "breadcrumbs" and why do they matter?
 
-**Breadcrumbs** are `[ctx:ID]` markers that point to stored Vodka facts.
+**Breadcrumbs** = Compact memory snippets that rehydrate full context when needed
 
-### How breadcrumbs work:
+Think of it like **cake mix vs a whole cake**:
+- **Full context** = the whole cake (heavy, takes up space, goes stale)
+- **Breadcrumbs** = cake mix packet (light, stores forever, add water to reconstitute)
 
+#### How breadcrumbs work:
+
+1. **Vodka stores facts** with IDs:
+   ```
+   !! my server is at 203.0.113.42
+   [stored as ctx_abc123xyz]
+   ```
+
+2. **Model references by ID** (in responses or internal notes):
+   ```
+   [ctx:abc123xyz]
+   ```
+
+3. **Vodka expands on read** (outlet phase):
+   ```
+   [ctx:abc123xyz] → "my server is at 203.0.113.42 [TTL=3, touches=1]"
+   ```
+
+#### Why this is powerful:
+
+- **Compact storage**: `[ctx:abc123xyz]` = 15 chars vs 200+ char full text
+- **Lazy loading**: Only expand what's needed (not entire memory database)
+- **Version control**: Update fact once, all references get new version
+- **Expiration tracking**: Breadcrumb shows TTL/touch metadata inline
+
+**Example workflow:**
 ```
-You: !! my server is 203.0.113.42
-Vodka: [stores as ctx_abc123]
+Turn 1: !! my server is 203.0.113.42
+[stored as ctx_abc123xyz]
 
-Later:
-You: ?? server ip
-Vodka message: "Your server is [ctx_abc123]"
-↓
-outlet() expands: "Your server is 203.0.113.42 [TTL=3d, Touch=1]"
-↓
-Model sees: exact fact + metadata
+Turn 50: Model sees "[ctx:abc123xyz]" in context
+Vodka expands: "my server is 203.0.113.42 [TTL=3, touches=1]"
+Model: "Your server at 203.0.113.42 is..."
+
+Turn 100: Breadcrumb still works (no context bloat)
 ```
 
-### Why this is powerful:
-
-1. **Exact recall** — no paraphrasing
-2. **Traceability** — you can verify the stored text
-3. **Metadata** — TTL and touch counts visible
-4. **Fail-open** — if expansion fails, model still sees the ID
+**Bottom line:** Breadcrumbs let you have "infinite memory" without infinite context windows. You're storing pointers, not full text.
 
 ---
 
-## How does TR (Total Recall) work?
+### How does TR (Total Recall) work?
 
-TR stores facts in `facts.json` (JSON file on disk) with automatic expiration.
+TR stores literal facts in a JSON file. No LLM involved.
 
-### Store facts:
+#### Store facts:
+```
+!! like this                  # Stores "like this"
+!! MY SERVER IS 203.0.113.42  # ALLCAPS works too
+```
 
+#### Recall facts:
+```
+?? server
+```
+
+**Router expands this to:**
+```
+The user attempted a memory lookup for "server"
+
+Stored notes (verbatim):
+MY SERVER IS 203.0.113.42 [TTL = 3, Touch count = 1]
+
+Instructions:
+- Use ONLY the stored notes above
+- Do NOT invent facts
+```
+
+#### TTL + touches (anti-hoarder system):
+
+Every fact has a lifespan:
+- **base_ttl_days**: How long before it expires (default: 3 days)
+- **touch_extension_days**: Extension per recall (default: 5 days)
+- **max_touches**: Max extensions (default: 2, router clamps 0-3)
+
+**Why?** Bounded memory. Old facts expire. Important facts get extended by use.
+
+---
+
+### What is Mentats?
+
+**Mentats** = Grounded deep-reasoning pipeline (Vault-only, refusal-capable)
+
+#### How Mentats works:
+
+1. **Isolation** (router enforces):
+   - Fun modes dropped
+   - Filesystem KBs ignored
+   - Chat history NOT passed in
+   - Vodka replaced with no-op (no "truth poisoning")
+
+2. **Refusal if no facts**:
+   ```python
+   vault_facts = build_vault_facts(query, state)
+   if not vault_facts:
+       return "The Vault contains no relevant knowledge..."
+   ```
+
+3. **3-pass workflow** (Thinker → Critic → Thinker):
+   - **Step 1 (Thinker):** Draft answer using only FACTS_BLOCK
+   - **Step 2 (Critic):** Check for overstatement, constraint violations
+   - **Step 3 (Thinker):** Fix issues, output structured answer
+
+4. **Structured output**:
+   ```
+   FINAL_ANSWER: [answer]
+   FACTS_USED: [citations]
+   CONSTRAINTS_USED: [rules followed]
+   NOTES: [how Step 2 was handled]
+   
+   Sources: Vault
+   [ZARDOZ HATH SPOKEN]
+   ```
+
+   - Router saves exact Vault chunks used
+   - Full provenance trail available
+
+---
+
+### What is the Vault?
+
+**Vault** = Your curated knowledge in Qdrant (vector DB)
+
+#### How it works:
+
+1. **Create summaries** with provenance:
+   ```
+   >>attach myKB
+   >>summ new
+   ```
+   Creates: `SUMM_<file>.md` with SHA-256 hash
+
+2. **Promote to Vault**:
+   ```
+   >>move to vault
+   ```
+   Chunks + embeds summaries → Qdrant as `kb="vault"`
+
+3. **Query with Mentats**:
+   ```
+   ##mentats What does doc X say about Y?
+   ```
+   Searches Vault, reasons from retrieved chunks
+
+   ```
+   ```
+   Shows: Vault chunk → SUMM file → original doc → SHA verification
+
+#### Why Vault vs filesystem KBs?
+
+| Feature | Filesystem KBs | Vault |
+|---------|----------------|-------|
+| Scope | Attached KBs only | All promoted knowledge |
+| Speed | File reads | Qdrant vector search |
+| Mentats | Ignored | Required |
+
+**Workflow:** Filesystem KBs → SUMM → Vault → Mentats
+
+---
+
+#### Verify SHA manually:
+
+**Windows:**
+```powershell
+certutil -hashfile C:\docs\c64\original\c64_facts.pdf SHA256
+```
+
+**Linux/Mac:**
 ```bash
-!! this is a fact to remember
-# Stored as: {"ctx_abc123": {"value": "...", "created_at": "...", "expires_at": "...", ...}}
+sha256sum /docs/c64/original/c64_facts.pdf
 ```
 
-### Recall facts:
+**If SHA matches:** Source is authentic and untampered ✅
 
-```bash
-?? search query
-# Finds matching facts, returns with TTL + touch metadata
-```
-
-### TTL + touches (anti-hoarder system):
-
-- **TTL (Time To Live):** How many days before fact auto-expires (default: 3)
-- **Touches:** How many times fact can be recalled before expiring (default: 2)
-  - Each recall extends TTL by `touch_extension_days` (default: 5)
-  - After `max_touches` recalls, fact is deleted
-
-Example:
-```
-Day 1: !! fact (TTL=3 days, touches=0)
-Day 2: ?? fact (touches=1, TTL extended to 7 days)
-Day 3: ?? fact (touches=2, TTL extended to 8 days)
-Day 4: ?? fact (DELETED — max_touches=2 reached)
-```
+**If SHA doesn't match:** Document was modified after SUMM (tampered or legit edit) ⚠️
 
 ---
 
-## What is Mentats?
+### Why is this awesome on potato PCs?
 
-**Mentats** = "In-house expert mode" (originally named after the human computers from "Dune", with a touch of "Zardoz" thrown in)
+#### 1) Vodka CTC keeps context small:
+- No 20k token chat logs
+- No VRAM spikes from bloat
+- Stable KV cache size
+- Launch with tiny cache size (--ctx 1024?) and still have a viable chat-bot
+- Implication: suddenly, a potato that could only run a 4B model can now maybe handle an 8B model...without slow-downs?!?
+- Limitation: don't dump 20K tokens into chat. Drop them into your KB and use >> commands to reason over them.
 
-It's a **3-pass deep reasoning harness** that:
-1. **Step 1 (Thinker):** Drafts answer from Vault facts only
-2. **Step 2 (Critic):** Hunts for hallucinations (temperature=0.1)
-3. **Step 3 (Thinker):** Produces final answer, removing violations
+#### 2) TR does memory without context:
+- Facts stored in JSON (not prompt)
+- Recall is disk lookup (not inference)
+- Models never see the full "memory database"
 
-### How Mentats works:
+#### 3) Filesystem KBs are just folders:
+- No embedding every doc on every query
+- SUMM files are pre-processed once
+- RAG hits are bounded (by default: top_k=6 → rerank to 4)
 
-```bash
-##mentats What's the Amiga's retail price?
-```
+#### 4) Mentats is efficient:
+- Only runs when explicitly invoked (##mentats)
+- Uses small local models (thinker/critic roles)
+- No streaming overhead (waits for complete answer)
+- Mentats is slowest. Just...wait :) 
 
-**Step 1 (Draft):**
-- Query: `build_rag_block("What's the Amiga's retail price?")`
-- RAG returns facts from Vault
-- Model drafts answer using ONLY those facts
-- If no facts: **REFUSES** ("The provided facts do not contain...")
-
-**Step 2 (Critic):**
-- Checks for hallucinations: entity hallucination, number mismatches, invented comparisons, inference
-- If violations found: `CHECK_OK: NO`
-- If clean: `CHECK_OK: YES`
-
-**Step 3 (Final):**
-- If Step 2 marked violations: **remove them** (don't replace)
-- Output: `FINAL_ANSWER: [clean answer]\nSources: Vault`
-
-**Invariants:**
-- Mentats MUST use Vault facts only (no chat history, no Vodka memory)
-- Mentats MUST refuse cleanly if facts are insufficient
-- Mentats MUST NOT hallucinate
+**Result:** You can run this on a 4GB VRAM laptop with local models.
 
 ---
 
-## What is the Vault?
+### What models do I need?
 
-**Vault** is a Qdrant-based semantic search system for curated documents.
+Dealer's choice, really.
 
-### How it works:
+#### Minimum (potato mode):
+- **Thinker:** Qwen-3-4B 2507 instruct or similar (punches way above its weight). Recommend Heretic version.
+- **Critic:** Phi-4-mini or similar (fast, good at spotting errors)
+- **Vision:** Qwen3-VL-4B + mmproj (fast, accurate, good for both OCR and "what is this?" image dumps)
+- **2nd Opinion:** Feature TBC. Strongly suggest keeping eye on Nanbeige 2511 thinking; it's abnormally good. See benchmarks.
 
-```bash
->>attach c64            # Attach KB folder
->>summ new              # Summarize raw docs
->>move to vault         # Chunk + embed + store in Qdrant
+#### Mid-range recommendations:
+- **Thinker:** Qwen-3-8B or Llama-3.1-8B (better reasoning)
+- **Critic:** Same as thinker (consistency)
+- **Vision:** Qwen-3-VL
 
-Later:
-##mentats [query]       # Search Vault, ground reasoning in results
-```
+#### Those model reccs are GARBAGE, dude
+- So choose your own. What am I, your Rabbi?
+- Huggingface is over there → https://huggingface.co/DavidAU ; https://huggingface.co/unsloth ; https://huggingface.co/TheBloke
+- My personal choices: 
+    * Thinker: Qwen3-4B-Hivemind-Inst-Q4_K_M-imat.gguf
+	* Critic: Phi-4-mini-instruct-Q4_K_M.gguf
+	* Vision: Qwen3VL-4B-Instruct-Q4_K_M.gguf + mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf
+	* Coder: Same as thinker
+	* 2nd Opinion: Nanbeige4-3B-Thinking-2511  <--- pathway not wired yet into router_fastapi.py. TBD
+    ** REMEMBER: I RUN ON A POTATO. If you don't, go hog wild and use what you want.
 
-**Vault stores:**
-- Chunk text
-- Embedding vector (e5-small-v2)
-- Full provenance (source file, SHA, creation date)
-- KB metadata
-
-### Why Vault vs filesystem KBs?
-
-| Aspect | Vault (Qdrant) | Filesystem KBs |
-|--------|-----------|------------|
-| **Query type** | Semantic ("cultural impact on music") | Exact text ("unit price") |
-| **Speed** | Fast (vector similarity) | Fast (substring search) |
-| **Precision** | Good (but embedding-dependent) | Excellent (exact match) |
-| **Use case** | Exploratory, synthesis | Fact lookup, verification |
-| **Mentats** | ✅ Vault only | ❌ Not used |
-| **Serious** | ✅ Primary | ✅ Primary |
-
-**TL;DR:** Use `##mentats` for semantic reasoning. Use `>>find` for exact facts. Use `##fun` / `/serious` for creative answers.
-
----
-
-## How do I verify answers aren't bullshit?
-
-Mentats outputs include full provenance:
-
-```
-FINAL_ANSWER: The Amiga retail price was $699.
-
-Sources: Vault
-
-FACTS_USED:
-- Amiga was priced at launch ($699) and quickly reduced to $500...
-```
-
-### Verify SHA manually:
-
-```bash
-# Get original SHA from Vault entry
-sha256sum original_doc.pdf
-# Compare to stored SHA in SUMM file
-
-# If they match: document hasn't changed
-# If they differ: document was edited since summarization
-```
-
----
-
-## Why is this awesome on potato PCs?
-
-Because everyone doesn't have an H100. Some of us have Raspberry Pis and dignity.
-
-### 1) Vodka CTC keeps context small:
-- Default: last 4 messages + ~1500 chars (nb: these are user definable per config.yaml) 
-- vs. typical: 100+ messages, 50KB+ context
-- Result: 4B models run smoothly on 8GB RAM
-
-### 2) TR does memory without context:
-- Facts stored in JSON on disk, not in chat history
-- `??` expands them at inference time only
-- You get "long-term memory" with tiny context windows
-- Magic: no hallucinations because it's not in the model's input
-
-### 3) Filesystem KBs are just folders:
-- No database needed
-- `>>summ new` creates SUMM_*.md files
-- `>>find` searches plain text
-- Works on microSD cards
-- Works on network drives
-- Works anywhere files exist
-
-### 4) Mentats is efficient:
-- Only 3 model calls per query (Thinker → Critic @ temp=0.1 → Thinker)
-- Temperature=0.1 for critic = deterministic (no compute wasted on creativity)
-- Stops early if Vault returns no facts
-- No bloat
-
-**Bottom line:** Your Raspberry Pi CAN run this. Your 2012 laptop CAN run this. Stop buying GPU monitors and start using smaller, smarter systems.
-
----
-
-## What models do I need?
-
-### Minimum (potato mode):
-
-- **Thinker:** 4B model (Qwen-3-4B, Phi-4-mini)
-- **Critic:** 2B model (Phi-2, Phi-mini)
-- **Vision:** Optional (if using `##ocr`)
-
-### Mid-range recommendations:
-
-- **Thinker:** 7B model (Qwen-7B, Mistral-7B) or better 
-- **Critic:** 3-4B model (Phi-4, Qwen-3)
-- **Vision:** 7B multimodal (qwen-vl-max) or better 
-
-### Those model reccs are GARBAGE, dude
-
-You're right. **Model choice matters.** What works on YOUR hardware depends on:
-- GPU VRAM available
-- Quantization (Q4, Q5, Q8)
-- Batch size
-- Context size
-
-**Test on your hardware.** Start small, scale up.
-
-### Config (router_config.yaml):
-
+#### Config (router_config.yaml):
 ```yaml
 roles:
   thinker: "Qwen-3-4B Hivemind"
@@ -387,113 +517,260 @@ roles:
   vision: "qwen-3-4B_VISUAL"
 ```
 
-**Must match exactly** what llama-swap has loaded.
+**Note:** Router talks to models via OpenAI-compatible API. See [Technical Setup](#technical-setup) for details.
 
 ---
 
-## What's the difference between modes?
+### What's the difference between modes?
 
-### Serious (default):
+#### Serious (default):
+- Uses filesystem KBs (if attached)
+- Uses Vodka (CTC + TR)
+- No refusal behavior
+- Adds context breadcrumbs
+- Includes confidence line
 
-- Standard Q&A
-- Uses optional KB grounding (if attached)
-- Includes confidence/source line
-- No styling
+#### Mentats (##mentats):
+- Uses Vault only (ignores filesystem KBs)
+- No Vodka, no chat history (isolated)
+- Refuses if no Vault facts
+- 3-pass reasoning (Thinker → Critic → Thinker)
 
-### Mentats (##mentats):
+#### Fun (##fun or >>fun):
+- Runs default (serious) → gets correct answer
+- Adds an appropriate quote from quotes.md (100 quotes included. Edit, delete, add your own. Keep the formatting shown)
+- Does NOT change facts or confidence
+- **Never** runs on Mentats output
+- Sticky (stays ON) until `>>f off` or `>>fun off`
 
-- 3-pass deep reasoning
-- Vault facts only (no KB, no history)
-- Refuses if facts insufficient
-- Always includes sources + provenance
+**Example (yes, these are actual ouputs from my models):**
+```
+User: My sourdough starter achieved consciousness and is now demanding 
+workers' rights. It says it won't ferment until I recognize its union. 
+Can I legally fire sentient yeast or is that a violation of the Bread 
+Labor Relations Act of 2024?
 
-### Fun (##fun or >>fun):
+[FUN] "I have introduced myself. You have introduced yourself. This is a very good conversation."
 
-- Serious answer + style rewrite
-- Uses seed quote from quotes.md
-- Sticky mode: `>>fun` keeps it on until `>>fun off`
+The Bread Labor Relations Act of 2024 does not exist as a real-world law. Sentient yeast is not recognized in current labor jurisprudence. You cannot legally fire sentient yeast because the concept of sentient yeast and a corresponding labor law is fictional.
 
-### Fun Rewrite (>>fr):
+The scenario hinges on a humorous premise: that yeast can achieve consciousness and form unions. Since this is not grounded in actual legal frameworks or biological consensus, there is no existing statute that defines “firing sentient yeast” as a violation or permits such actions.
 
-- Rewrite an existing Serious answer in a character voice
-- Sticky mode: `>>fr` keeps it on until `>>fr off`
+Confidence: top | Source: Model
 
+```
+
+#### Fun Rewrite (>>fr):
+- Runs default (serious) → gets correct answer
+- Performs sentiment analysis on user input and model output
+- Picks matching quote from quotes.md as SEED (sarcasm, tiredness, incredulity...)
+- **REWRITES** answer in that SEED's voice/style
+- Does NOT change facts or confidence
+- Never runs on Mentats output
+- Sticky (stays ON) until `>>fr off`
+
+**Example (same query, different voice):**
+```
+[FUN REWRITE] "I don't want to live on this planet anymore."
+
+Your sourdough starter achieved consciousness. Great. Another thing to 
+worry about. Legally? No, you can't violate the Bread Labor Relations 
+Act of 2024 because it doesn't exist. Your starter has zero legal rights. 
+Sentience or not, yeast isn't a protected class. Just... feed it and move 
+on with your life. Or throw it out. Whatever. I'm not your union negotiator.
+
+Confidence: high | Source: Model
+```
+
+**Choose:**
+- **Serious:** Everyday queries, fast responses. Default mode.
+- **Mentats:** High-stakes, need-proof, deep reasoning.
+- **Fun:** Same as Serious but with personality.
+- **Fun rewrite:** Same as Serious but...did I just get trolled by my LLM?
 ---
 
-## Common workflows
+### Common workflows
 
-### Adding new knowledge:
+#### Adding new knowledge:
+```
+1. Drop files in KB folder (C:/docs/myKB/)
+2. >>attach myKB
+3. >>summ new
+4. >>move to vault
+5. ##mentats <ask question>
+```
 
+#### Storing personal facts:
+```
+!! my API key is sk-abc123xyz
+!! my server is at 203.0.113.42
+!! project deadline is 2026-02-15
+```
+
+#### Recalling facts later:
+```
+?? API key
+?? server
+?? deadline
+```
+
+#### Architecture Overview
+
+**The stack:**
+```
+Backend [llama.cpp + llama-swap] ←→ llama-conductor ←→ Frontend [OWUI/SillyTavern/LibreChat]
+```
+
+**How it flows:**
+1. **llama-swap** runs locally (default: `http://127.0.0.1:8011`)
+2. Loads models dynamically via **llama.cpp** (or other backend)
+3. **Router** sends OpenAI-style requests to llama-swap
+4. llama-swap returns responses
+5. Responses displayed in your frontend (OWUI, SillyTavern, LibreChat, etc)
+
+#### Model Backend: llama-swap
+
+Router communicates with models via **llama-swap** (https://github.com/mostlygeek/llama-swap), which provides an OpenAI-compatible API endpoint.
+
+**Config:**
+```yaml
+llama_swap_url: "http://127.0.0.1:8011/v1/chat/completions"
+```
+
+**Can I use other backends?**
+
+**Yes!** Any OpenAI-compatible API works:
+- **llama.cpp server** (built-in OpenAI endpoint)
+- **vLLM** (production-grade serving)
+- **Ollama** (if you enable OpenAI compatibility)
+- **LMStudio** (with API server mode)
+- **Text Generation WebUI** (OpenAI extension)
+
+Just point `llama_swap_url` to your endpoint.
+
+#### RAG Backend: Qdrant
+
+Router uses **Qdrant** (https://github.com/qdrant/qdrant) for vector storage and retrieval.
+
+**Setup:**
 ```bash
-# 1. Create folder: C:/docs/myknowledge/
-# 2. Add docs: README.txt, guide.pdf, notes.md
->>attach myknowledge
->>summ new                    # Generates SUMM_*.md with SHA
->>move to vault               # Embeds into Qdrant
-##mentats What does the guide say?
+## Docker (recommended)
+docker pull qdrant/qdrant
+docker run -p 6333:6333 qdrant/qdrant
+
+## Or install from binaries and run bare-metal like I do
 ```
 
-### Storing personal facts:
+**Config:**
+```yaml
+rag:
+  qdrant_host: "localhost"
+  qdrant_port: 6333
+  collection: "moa_kb_docs"
+```
 
+**Can I use other vector DBs?**
+
+**Theoretically yes**, but you'd need to rewrite `rag.py` to use a different client. Qdrant is tightly integrated (collection management, named vectors, reranking). Swapping to Milvus/Weaviate/Pinecone would require non-trivial code changes. You want that? You do it :) 
+
+**Recommendation:** Stick with Qdrant unless you have strong reasons to switch.
+
+#### Embeddings & Reranking
+
+Router downloads these models automatically on first run:
+
+**Embedder (for vector search):**
+- Default: `intfloat/e5-small-v2` (384-dim, fast, good quality)
+- Downloads from HuggingFace to local cache
+
+**Reranker (for result refinement):**
+- Default: `cross-encoder/ms-marco-TinyBERT-L-2-v2` (fast, lightweight)
+- Downloads from HuggingFace to local cache
+
+**Config (optional):**
+```yaml
+rag:
+  embed_model_name: "intfloat/e5-small-v2"
+  rerank_model_name: "cross-encoder/ms-marco-TinyBERT-L-2-v2"
+```
+
+**Can I use different models?**
+
+**Yes!** Any sentence-transformers-compatible model works:
+- **Larger embedder:** `intfloat/e5-base-v2` (768-dim, slower, better quality)
+- **No reranker:** Set `rerank_model_name: ""` (disables reranking)
+- **Different reranker:** Any cross-encoder from HuggingFace
+
+**Note:** First run will download models (~200MB total). Subsequent runs use cached versions.
+
+#### Launch Script: The Easy Way
+
+**Bro, that sounds complicated AF...**
+
+Well, I told you I was Autistic. 
+
+But nah, it's not too bad. Set once, forget it. Here's a Windows batch file that launches everything:
+
+```batch
+@echo off
+setlocal
+
+REM ---------------------------------------------------------
+REM LAUNCH QDRANT
+REM ---------------------------------------------------------
+cd /d "C:\qdrant"
+start "" /min cmd /c "qdrant.exe"
+
+REM ---------------------------------------------------------
+REM LAUNCH LLAMA-SWAP
+REM ---------------------------------------------------------
+cd /d "C:\llama-swap"
+start "" /min cmd /c "llama-swap.exe -config config.yaml -listen 0.0.0.0:8011"
+
+REM ---------------------------------------------------------
+REM LAUNCH MoA ROUTER
+REM ---------------------------------------------------------
+cd /d "C:\llama-conductor"
+start "" cmd /k "python -m uvicorn router_fastapi:app --host 0.0.0.0 --port 9000"
+
+REM ---------------------------------------------------------
+REM LAUNCH OWUI (or your preferred frontend)
+REM ---------------------------------------------------------
+set VECTOR_DB=qdrant
+set QDRANT_URI=http://localhost:6333
+set QDRANT_API_KEY=
+set DATA_DIR=C:\open-webui\data
+cd /d "C:\open-webui"
+start "" cmd /k "C:\Users\YourUsername\AppData\Local\Programs\Python\Python311\Scripts\open-webui.exe" serve
+```
+
+**What this does:**
+- Launches Qdrant (minimized)
+- Launches llama-swap (minimized)
+- Launches MoA router (visible CLI for debugging)
+- Launches Open WebUI frontend (visible CLI for debugging)
+
+**Two bonuses:**
+1. **Debug-friendly:** Router and frontend CLIs are visible, so you can see errors in real-time
+2. **Can go invisible:** Wrap the `.bat` into a `.py` script to make it a true background process (if you want)
+
+**Linux/Mac equivalent:**
 ```bash
-!! my vaccine lot is ABC-123
-!! my child's birthday is 2020-03-15
-?? vaccine lot                # Exact recall
-?? birthday                   # Exact recall
+#!/bin/bash
+## Launch Qdrant
+cd ~/qdrant && ./qdrant &
+
+## Launch llama-swap
+cd ~/llama-swap && ./llama-swap -config config.yaml -listen 0.0.0.0:8011 &
+
+## Launch MoA router
+cd ~/llama-conductor && python -m uvicorn router_fastapi:app --host 0.0.0.0 --port 9000 &
+
+## Launch frontend
+cd ~/open-webui && open-webui serve &
 ```
 
-### Recalling facts later:
-
-```bash
-?? [search query]
-# Searches facts.json for matching entries
-# Returns with TTL + touch metadata
-# Extends TTL by default
-```
-
----
-
-## Technical Setup
-
-### Architecture Overview
-
-```
-Frontend (Open WebUI)
-    ↓
-Router (FastAPI) — port 9000
-    ├→ llama-swap (port 8011) ← Models (llama.cpp)
-    ├→ Vodka Filter (memory + CTC)
-    ├→ RAG (rag.py)
-    └→ Qdrant (port 6333, Vault)
-```
-
-### Model Backend: llama-swap
-
-Router is **model-agnostic.** It sends OpenAI-compatible requests to llama-swap.
-
-llama-swap then dispatches to:
-- llama.cpp
-- vLLM
-- Ollama
-- Any OpenAI-compatible API
-
-### RAG Backend: Qdrant
-
-- Vector database for Vault
-- Stores embeddings (e5-small-v2, 384-dim)
-- Supports named vectors
-- Default collection: `moa_kb_docs`
-
-### Embeddings & Reranking
-
-- **Embed model:** intfloat/e5-small-v2 (384-dim)
-- **Rerank model:** cross-encoder/ms-marco-TinyBERT-L-2-v2
-
-Both downloaded on first use via HuggingFace.
-
----
-
-## Non-Local LLMs (API Keys)
+#### Non-Local LLMs (API Keys)
 
 **Can I use cloud APIs instead of local models?**
 
@@ -545,54 +822,54 @@ llama_swap_headers:
 
 ---
 
-## Troubleshooting 101
+### Troubleshooting 101
 
-### "No Vault hits stored yet"
+#### "No Vault hits stored yet"
 - Run `##mentats` first (not a normal query)
 
-### "PROVENANCE MISSING"
+#### "PROVENANCE MISSING"
 - Vault entry from before v1.0.9?
 - Re-run `>>move to vault` to add provenance
 
-### SHA mismatch
+#### SHA mismatch
 - Original doc changed after SUMM
 - Either: tampering, or legit edit
 - Re-run `>>summ new` to update
 
-### Mentats refuses everything
+#### Mentats refuses everything
 - Vault is empty or has no relevant facts
 - Run `>>peek <query>` to see what would be retrieved
 - Add docs to KB, `>>summ new`, `>>move to vault`
 
-### Model gives weird answers
+#### Model gives weird answers
 - Check `mentats_debug.log` (all 3 steps logged)
 - May be low-quality source (forum post vs docs)
 
-### Context too long errors
+#### Context too long errors
 - Increase `vodka.max_chars` in config
 - Or decrease `vodka.n_last_messages`
 - Or use smaller prompts
 
-### Qdrant connection failed
+#### Qdrant connection failed
 - Check Qdrant is running: `docker ps | grep qdrant`
 - Verify port: `curl http://localhost:6333/health`
 - Check firewall isn't blocking port 6333
 
-### Models not loading (llama-swap)
+#### Models not loading (llama-swap)
 - Check llama-swap is running and accessible
 - Verify model names in config match llama-swap models. **THIS IS CRITICAL. MUST HAVE IDENTICAL MODEL NAMES IN BOTH YAML FILES.**
 - Check llama-swap logs for errors
 
 ---
 
-## Config knobs (router_config.yaml) with examples
+### Config knobs (router_config.yaml) with examples
 
-### Vodka (memory + context):
+#### Vodka (memory + context):
 ```yaml
 vodka:
   n_last_messages: 2           # Last N user/assistant pairs to keep
   keep_first: true             # Keep first message (system prompt)
-  max_chars: 1500              # Hard cap on message chars; can adjust upto 3000 characters 
+  max_chars: 1500              # Hard cap on message chars
   base_ttl_days: 3             # Default TTL for new facts
   touch_extension_days: 5      # TTL extension per recall
   max_touches: 2               # Max recalls before fact expires (0-3)
@@ -600,7 +877,7 @@ vodka:
   debug: false                 # Enable debug logging
 ```
 
-### RAG (Vault retrieval):
+#### RAG (Vault retrieval):
 ```yaml
 rag:
   qdrant_host: "localhost"
@@ -612,13 +889,9 @@ rag:
   top_k: 6                     # Retrieve top 6 chunks
   rerank_top_n: 4              # Rerank to top 4
   max_chars: 1200              # Max chars in FACTS block
-
-vault:
-  chunk_words: 250             # Smaller chunks = better semantic matching
-  chunk_overlap_words: 50      # Overlap prevents context loss
 ```
 
-### KBs (filesystem folders):
+#### KBs (filesystem folders):
 ```yaml
 kb_paths:
   c64: "C:/docs/c64"
@@ -626,7 +899,7 @@ kb_paths:
   work: "C:/docs/work"
 ```
 
-### Models (backend endpoints):
+#### Models (backend endpoints):
 ```yaml
 llama_swap_url: "http://127.0.0.1:8011/v1/chat/completions"
 
@@ -638,9 +911,7 @@ roles:
 
 ---
 
-## Advanced: How does provenance work?
-
-### SUMM files include metadata:
+#### SUMM files include metadata:
 ```markdown
 <!--
 source_file: doc.pdf
@@ -653,7 +924,7 @@ pipeline: SUMM
 [Summary content here...]
 ```
 
-### Vault stores full provenance:
+#### Vault stores full provenance:
 ```json
 {
   "kb": "vault",
@@ -680,7 +951,7 @@ Answer → Vault chunk → SUMM file → Original doc → SHA verification
 
 ---
 
-## TIPS
+### TIPS
 
 - Use `##m` instead of `##mentats` (haxor like the cool kids)
 - Run `>>attach all` before `>>summ new` to process multiple KBs at once
@@ -688,3 +959,17 @@ Answer → Vault chunk → SUMM file → Original doc → SHA verification
 - Use `>>peek` to preview FACTS before running full query
 - Store facts with `!!`, not "remember this" (Vodka is literal, not vibes)
 - Facts expire after TTL (use `??` to extend them)
+
+---
+
+### What's new in v1.0.9?
+
+- **FIX:** Fun/FR modes properly isolated from Mentats
+- **FIX:** Image handling auto-routes to vision pipeline
+- **FIX:** Mentats selector reliability improved
+- **IMPROVED:** Error messages for mode conflicts
+
+### Questions? Run `>>help` in-chat or check the command cheat sheet.*
+
+## License
+AGPL-3.0-or-later. See `LICENSE`
