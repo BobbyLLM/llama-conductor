@@ -15,29 +15,94 @@ I have ASD and a low tolerance for bullshit. I want shit to work the same 100% o
 
 📖 **[What's New](NEW.md)** — Latest fixes & what we broke along the way  
 ❓ **[FAQ](FAQ.md)** — Deep dives on how this actually works  
-⌨️ **[Command Cheat Sheet](llama_conductor/command_cheat_sheet.md)** — Learn all the incantations
+⌨️ **[Command Cheat Sheet](command_cheat_sheet.md)** — All the incantations  
 
 ---
 
-## The Problem
+## Three Problems This Actually Solves
+
+### 1) "Vibes-based answers" — how do I know if the LLM is lying?
+
+You don't! 
 
 **WITHOUT llama-conductor:**
 ```
-You: What's the answer?
-Model: [confident bullshit]
-You: That didn't work.
-Model: [different confident bullshit]
-You: [flips desk]
+You: What's the flag for XYZ in llama.cpp?
+Model: It's --xyz-mode! (confident bullshit)
+You: [tries it] → doesn't work
+Model: Oh sorry! Try --enable-xyz! (more bullshit)
 ```
 
 **WITH llama-conductor:**
 ```
-You: ##mentats What's the answer?
-Mentats: I don't know. The Vault has no relevant facts.
-You: [attaches docs, summarizes, promotes to Vault]
-You: ##mentats What's the answer?
-Mentats: [answer] [SHA verified] [source: your doc]
-You: [no desk flipping required]
+You: ##mentats What's the flag for XYZ in llama.cpp?
+Mentats: [queries Vault only]
+Mentats: REFUSAL — "The Vault contains no relevant knowledge for this query."
+
+[later, after you >>summ the llama.cpp docs]
+You: ##mentats What's the flag for XYZ in llama.cpp?
+Mentats: --enable-xyz [cite: llama.cpp docs, SHA: abc123...]
+[verifies: came from llama.cpp README.md, SHA matches]
+```
+
+**How it works:**
+1. `>>attach <kb>` — attach your curated docs
+2. `>>summ new` — generate summaries with SHA-256 provenance
+3. `>>move to vault` — promote into Qdrant RAG
+4. `##mentats <query>` — deep reasoning, grounded in Vault only
+
+---
+
+### 2) Goldfish memory — models forget or "confidently misremember"
+
+**WITHOUT llama-conductor:**
+```
+You: Remember my server is at 203.0.113.42
+Model: Got it!
+[100 messages later]
+You: What's my server IP?
+Model: 127.0.0.1 🥰
+```
+
+**WITH llama-conductor:**
+```
+You: !! my server is at 203.0.113.42
+Vodka: [stored, TTL=5 days, touches=0]
+
+[later]
+You: ?? server ip
+Vodka: Your server is at 203.0.113.42 [TTL=3 days, touches=1]
+```
+
+**How it works:**
+- `!!` stores facts verbatim (no "helpful rewrites")
+- `??` retrieves facts verbatim (with TTL/touch metadata)
+- Facts expire after TTL (default: 5 days, configurable)
+- Facts can be extended on recall (default: 2 touches max)
+- None of this is stored in the LLM. Pure 1990s JSON magic.
+
+---
+
+### 3) Context bloat — 400-message chat logs kill your potato PC
+
+**WITHOUT llama-conductor:**
+```
+[Message 1] System setup
+[Message 2-399] Debugging, jokes, tangents, arguments
+[Message 400] Actual question
+Model: [OOM] or [slow as hell] or [forgot Message 1]
+```
+
+**WITH llama-conductor:**
+```
+Vodka CTC (Cut The Crap):
+- Keeps last N messages (default: 2 pairs = 4 messages)
+- Optionally keeps first message (system setup)
+- Hard caps total chars (default: 1500)
+- Drops the middle bloat automatically
+
+Result: Consistent prompt size, stable performance.
+Bonus: Your Raspberry Pi can actually run that 4B model and not chug.
 ```
 
 ---
