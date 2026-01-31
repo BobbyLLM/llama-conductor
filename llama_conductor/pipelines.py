@@ -1,15 +1,106 @@
 # pipelines.py
-# version 1.0.0
+# version 1.0.1
 """
 Specialized reasoning pipelines for llama-conductor.
 
+CHANGES IN v1.0.1:
+- RAW mode now includes CONTEXT block (conversation history) so queries like "what have we discussed?"
+  work correctly instead of hallucinating. Model now has access to prior turns for disambiguation.
+
 Currently implements:
-  - RAW mode: bypass Serious formatting prompt, keep harness constraints (CTC, KB grounding)
+  - RAW mode: bypass Serious formatting prompt, keep harness constraints (CTC, KB grounding, CONTEXT)
 """
 
 from __future__ import annotations
 
-from typing import List, Dict, Any, Callable, Optional
+from typing import List, Dict, Any, Callable, Optional, Tuple
+
+
+# ============================================================================
+# Context Building (shared utility from serious.py)
+# ============================================================================
+
+
+def _extract_chat_summary(messages: List[Dict[str, Any]]) -> str:
+    """Grab the most recent Vodka summary message if present."""
+    for m in reversed(messages or []):
+        if m.get("role") == "system":
+            c = m.get("content", "")
+            if isinstance(c, str) and c.strip().startswith("[CHAT_SUMMARY]"):
+                return c.strip()
+    return ""
+
+
+def _compact_turn_text(s: str, max_len: int) -> str:
+    """Compact text to max_len with ellipsis."""
+    s = " ".join((s or "").split()).strip()
+    if not s:
+        return ""
+    if max_len > 0 and len(s) > max_len:
+        return s[: max(0, max_len - 1)].rstrip() + "…"
+    return s
+
+
+def _build_context_block(
+    messages: List[Dict[str, Any]],
+    *,
+    include_summary: bool = True,
+    max_turn_pairs: int = 4,
+    max_chars: int = 900,
+    per_turn_max_chars: int = 240,
+) -> str:
+    """
+    Build a small CONTEXT block from trimmed+expanded messages.
+    - Includes latest summary (if present) and last N user/assistant turns (excluding final user turn).
+    - Keeps output tightly bounded so raw/serious stay "low-context".
+    """
+    if not messages:
+        return ""
+
+    # Exclude current user message from context turns
+    last_user_idx = None
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            last_user_idx = i
+            break
+
+    prior = messages[:last_user_idx] if last_user_idx is not None else messages[:]
+
+    summary = _extract_chat_summary(prior) if include_summary else ""
+    
+    # Collect last N user/assistant messages from prior
+    turns: List[Tuple[str, str]] = []
+    for m in reversed(prior):
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        c = m.get("content", "")
+        if not isinstance(c, str) or not c.strip():
+            continue
+        turns.append((role, c.strip()))
+        if len(turns) >= max(0, max_turn_pairs) * 2:
+            break
+    turns.reverse()
+
+    pieces: List[str] = []
+    if summary:
+        pieces.append(summary)
+
+    if turns:
+        # Present as compact transcript lines
+        for role, content in turns:
+            label = "User" if role == "user" else "Assistant"
+            compact = _compact_turn_text(content, per_turn_max_chars)
+            if compact:
+                pieces.append(f"{label}: {compact}")
+
+    ctx = "\n".join(pieces).strip()
+    if not ctx:
+        return ""
+
+    if max_chars > 0 and len(ctx) > max_chars:
+        ctx = ctx[: max(0, max_chars - 1)].rstrip() + "…"
+    return ctx
 
 
 # ============================================================================
@@ -36,6 +127,7 @@ def run_raw(
     
     Still uses:
       - Vodka (inlet/outlet for CTC trimming + memory expansion)
+      - CONTEXT (conversation history for questions requiring prior context)
       - KB grounding (FACTS block if attached)
       - Constraints (if provided)
     
@@ -44,10 +136,10 @@ def run_raw(
       - Fun/FR transforms
       - Any styling
     
-    Result is model output as-is, with minimal scaffolding.
+    Result is model output as-is, with minimal scaffolding but full context awareness.
     """
 
-    # 1) Apply Vodka inlet for CTC trimming (same as Serious)
+    # 1) Apply Vodka inlet for CTC trimming
     body = {"messages": history}
     try:
         body = vodka.inlet(body)
@@ -59,11 +151,26 @@ def run_raw(
     # 2) Extract effective user text (possibly rewritten by Vodka if ?? was used)
     effective_user_text = _extract_last_user_message(messages, user_text)
 
-    # 3) Build a minimal prompt (no Serious system prompt)
+    # 3) Build CONTEXT block (v1.0.1 addition: needed for summary queries)
+    context_block = _build_context_block(
+        messages,
+        include_summary=True,
+        max_turn_pairs=4,
+        max_chars=900,
+        per_turn_max_chars=240,
+    )
+
+    # 4) Build minimal prompt (no Serious system prompt, but include context)
     fb = (facts_block or "").strip()
     cb = (constraints_block or "").strip()
 
     prompt_parts: List[str] = []
+
+    # Add CONTEXT if present
+    if context_block:
+        prompt_parts.append("CONTEXT:")
+        prompt_parts.append(context_block)
+        prompt_parts.append("")
 
     # Add FACTS block if present
     if fb:
@@ -82,7 +189,7 @@ def run_raw(
 
     prompt = "\n".join(prompt_parts).strip()
 
-    # 4) Call model directly (minimal framing)
+    # 5) Call model directly (minimal framing)
     answer = call_model(
         role=thinker_role,
         prompt=prompt,
@@ -110,6 +217,6 @@ def _extract_last_user_message(messages: List[Dict[str, Any]], fallback: str) ->
 
 # Additional specialized pipelines can be added here in the future.
 # Examples:
-#   - run_coder() — code generation with constraints
-#   - run_research() — deep retrieval + synthesis
-#   - run_creative() — creative writing with worldbuilding
+#   - run_coder() – code generation with constraints
+#   - run_research() – deep retrieval + synthesis
+#   - run_creative() – creative writing with worldbuilding

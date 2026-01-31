@@ -1,6 +1,12 @@
 # router_fastapi.py
-# version 1.1.0
+# version 1.1.1
 """MoA Router (FastAPI) 
+
+CHANGES IN v1.1.1:
+- Added >>wiki <topic> sidecar (Wikipedia summary via free JSON API)
+- Added >>exchange <query> sidecar (Currency conversion via Frankfurter API)
+- Added >>weather <location> sidecar (Current weather via wttr.in)
+- All three are context-light, no-auth deterministic tools
 
 CHANGES IN v1.0.9-debug:
 - Fix: Fun/FR blocks after Mentats (checks only recent 5 turns, not all history)
@@ -79,6 +85,9 @@ try:
         find_quote_in_kbs,
         format_quote_result,
         flush_ctc_cache,
+        handle_wiki_query,
+        handle_exchange_query,
+        handle_weather_query,
     )
 except Exception:
     parse_and_eval_calc = None  # type: ignore
@@ -88,6 +97,9 @@ except Exception:
     find_quote_in_kbs = None  # type: ignore
     format_quote_result = None  # type: ignore
     flush_ctc_cache = None  # type: ignore
+    handle_wiki_query = None  # type: ignore
+    handle_exchange_query = None  # type: ignore
+    handle_weather_query = None  # type: ignore
 
 try:
     from .pipelines import run_raw  # type: ignore
@@ -1043,6 +1055,33 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         if not flush_ctc_cache or not state.vodka:
             return "[router] flush not available"
         return flush_ctc_cache(state.vodka)
+
+    # >>wiki <topic> (Wikipedia summary)
+    if parts and parts[0].lower() == "wiki":
+        if not handle_wiki_query:
+            return "[router] wiki not available (sidecars.py missing)"
+        topic = cmd[len(parts[0]):].strip()
+        if not topic:
+            return "[wiki] usage: >>wiki <topic>\nExample: >>wiki Albert Einstein"
+        return handle_wiki_query(topic)
+
+    # >>exchange <query> (Currency conversion)
+    if parts and parts[0].lower() == "exchange":
+        if not handle_exchange_query:
+            return "[router] exchange not available (sidecars.py missing)"
+        query = cmd[len(parts[0]):].strip()
+        if not query:
+            return "[exchange] usage: >>exchange <query>\nExamples: >>exchange 1 USD to EUR, >>exchange GBP to JPY"
+        return handle_exchange_query(query)
+
+    # >>weather <location> (Current weather)
+    if parts and parts[0].lower() == "weather":
+        if not handle_weather_query:
+            return "[router] weather not available (sidecars.py missing)"
+        location = cmd[len(parts[0]):].strip()
+        if not location:
+            return "[weather] usage: >>weather <location>\nExample: >>weather Perth"
+        return handle_weather_query(location)
 
     # >>raw (Raw mode toggle)
     if low == "raw":
