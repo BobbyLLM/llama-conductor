@@ -105,7 +105,9 @@ So, maybe your Raspberry Pi *can* run that 4B model and not chug.
 
 **Vodka** = "When God gives you a potato PC, squeeze until Vodka"
 
-It's a **deterministic memory + prompt-sanitizer filter** that runs **before** and **after** your model sees the conversation. No LLM compute needed (pure 1990s tech).
+It's a **deterministic memory + prompt-sanitizer filter** that runs **before** and **after** your model sees the conversation. No LLM compute needed (pure 1990s tech). No hallucinations. No "helpful rewrites."
+
+Think of it as: **fact preservation + context compression in one pass**.
 
 ### Vodka has two jobs:
 
@@ -129,29 +131,31 @@ messages = vodka.outlet({"messages": messages})
 
 ## How does CTC (Cut The Crap) work?
 
-CTC is a **deterministic message trimmer** that keeps conversations lightweight.
+CTC is a **deterministic message trimmer** that keeps conversations lightweight. It's the reason you can run a 4B model on a Raspberry Pi without your PC exploding.
+
+### What it does (in order):
+
+1. Extract last N user/assistant message pairs (usually 2 = 4 messages total)
+2. Optionally keep the first message (important for system setup)
+3. Hard-cap total character count (default: 1500)
+4. Model sees ONLY this trimmed version
 
 ### Config knobs (router_config.yaml):
 
 ```yaml
 vodka:
-  n_last_messages: 4      # Keep last N user/assistant pairs
+  n_last_messages: 2      # Keep last N user/assistant pairs
   keep_first: true        # Keep first message (system setup)
-  max_chars: 3000         # Hard cap on message chars
+  max_chars: 1500         # Hard cap on message chars
 ```
 
-### What it does:
+### The actual effect:
 
-1. Extract last N user/assistant message pairs (usually 2 = 4 messages)
-2. Optionally keep the first message
-3. Hard-cap total character count
-4. Model sees only this trimmed version
+- **Before CTC:** 400 messages, 250KB context, your PC melts
+- **After CTC:** 4-6 messages, ~5KB context, your PC still works
+- **Result:** Model has effective long context window despite tiny actual context
 
-### Effect:
-
-- **Before CTC:** 400 messages, 250KB context
-- **After CTC:** 4-6 messages, ~5KB context
-- **Result:** Same effective prompt size on tiny context windows
+This is not a hack. This is not a workaround. This is how you scale down without losing coherence.
 
 ---
 
@@ -220,7 +224,7 @@ Day 4: ?? fact (DELETED — max_touches=2 reached)
 
 ## What is Mentats?
 
-**Mentats** = "In-house expert mode" (named after the human computers from Dune)
+**Mentats** = "In-house expert mode" (originally named after the human computers from "Dune", with a touch of "Zardoz" thrown in)
 
 It's a **3-pass deep reasoning harness** that:
 1. **Step 1 (Thinker):** Drafts answer from Vault facts only
@@ -285,7 +289,7 @@ Later:
 | **Precision** | Good (but embedding-dependent) | Excellent (exact match) |
 | **Use case** | Exploratory, synthesis | Fact lookup, verification |
 | **Mentats** | ✅ Vault only | ❌ Not used |
-| **Serious** | ✅ Optional | ✅ Primary |
+| **Serious** | ✅ Primary | ✅ Primary |
 
 **TL;DR:** Use `##mentats` for semantic reasoning. Use `>>find` for exact facts. Use `##fun` / `/serious` for creative answers.
 
@@ -296,12 +300,12 @@ Later:
 Mentats outputs include full provenance:
 
 ```
-FINAL_ANSWER: The Amiga retail price was $1295.
+FINAL_ANSWER: The Amiga retail price was $699.
 
 Sources: Vault
 
 FACTS_USED:
-- Amiga was priced at launch ($1295) and quickly reduced to $700...
+- Amiga was priced at launch ($699) and quickly reduced to $500...
 ```
 
 ### Verify SHA manually:
@@ -319,26 +323,34 @@ sha256sum original_doc.pdf
 
 ## Why is this awesome on potato PCs?
 
+Because everyone doesn't have an H100. Some of us have Raspberry Pis and dignity.
+
 ### 1) Vodka CTC keeps context small:
-- Default: last 4 messages + ~1500 chars
+- Default: last 4 messages + ~1500 chars (nb: these are user definable per config.yaml) 
 - vs. typical: 100+ messages, 50KB+ context
 - Result: 4B models run smoothly on 8GB RAM
 
 ### 2) TR does memory without context:
-- Facts stored in JSON, not chat history
-- `??` expands them at inference time
+- Facts stored in JSON on disk, not in chat history
+- `??` expands them at inference time only
 - You get "long-term memory" with tiny context windows
+- Magic: no hallucinations because it's not in the model's input
 
 ### 3) Filesystem KBs are just folders:
 - No database needed
 - `>>summ new` creates SUMM_*.md files
 - `>>find` searches plain text
 - Works on microSD cards
+- Works on network drives
+- Works anywhere files exist
 
 ### 4) Mentats is efficient:
-- Only 3 model calls per query
-- Temperature=0.1 for critic (deterministic)
+- Only 3 model calls per query (Thinker → Critic @ temp=0.1 → Thinker)
+- Temperature=0.1 for critic = deterministic (no compute wasted on creativity)
 - Stops early if Vault returns no facts
+- No bloat
+
+**Bottom line:** Your Raspberry Pi CAN run this. Your 2012 laptop CAN run this. Stop buying GPU monitors and start using smaller, smarter systems.
 
 ---
 
@@ -352,9 +364,9 @@ sha256sum original_doc.pdf
 
 ### Mid-range recommendations:
 
-- **Thinker:** 7B model (Qwen-7B, Mistral-7B)
+- **Thinker:** 7B model (Qwen-7B, Mistral-7B) or better 
 - **Critic:** 3-4B model (Phi-4, Qwen-3)
-- **Vision:** 7B multimodal (qwen-vl-max)
+- **Vision:** 7B multimodal (qwen-vl-max) or better 
 
 ### Those model reccs are GARBAGE, dude
 
@@ -580,7 +592,7 @@ llama_swap_headers:
 vodka:
   n_last_messages: 2           # Last N user/assistant pairs to keep
   keep_first: true             # Keep first message (system prompt)
-  max_chars: 1500              # Hard cap on message chars
+  max_chars: 1500              # Hard cap on message chars; can adjust upto 3000 characters 
   base_ttl_days: 3             # Default TTL for new facts
   touch_extension_days: 5      # TTL extension per recall
   max_touches: 2               # Max recalls before fact expires (0-3)
