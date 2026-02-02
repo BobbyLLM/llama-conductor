@@ -1,7 +1,9 @@
 # vodka_filter.py
-# version 1.0.2
+# version 1.0.4
 """
-Vodka v1.0.2 
+Vodka v1.0.4 (no code changes - version bump for alignment)
+- Debug logging support (debug_log method, v1.0.3)
+- Graceful %Z timestamp parsing with fallback 
 - Deterministic memory store to JSON (Total Recall)
 - Manual save: "!! ... !!" OR message starts/ends with "!!"
 - Commands:
@@ -22,7 +24,7 @@ import re
 import time
 import datetime as dt
 
-FILTER_VERSION = "1.0.1"
+FILTER_VERSION = "1.0.3"
 SUMMARY_PREFIX = "[CHAT_SUMMARY] "
 
 # -------------------------------
@@ -122,6 +124,7 @@ class Storage:
         self.base = _ensure_dir(os.path.join(base_dir, "total_recall"))
         self.facts_file = os.path.join(self.base, "facts.json")
         self.log_file = os.path.join(self.base, "activity.log")
+        self.debug_file = os.path.join(self.base, "vodka_debug.log") if debug else None
         self.debug = debug
 
         if not os.path.exists(self.facts_file):
@@ -137,6 +140,16 @@ class Storage:
         try:
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(f"{_ts()} â€” {msg}\n")
+        except Exception:
+            pass
+
+    def debug_log(self, msg: str):
+        """Write to debug log if debug mode is enabled."""
+        if not self.debug or not self.debug_file:
+            return
+        try:
+            with open(self.debug_file, "a", encoding="utf-8") as f:
+                f.write(f"{_ts()} [DEBUG] {msg}\n")
         except Exception:
             pass
 
@@ -215,6 +228,7 @@ class FastRecall:
             exp = now + dt.timedelta(days=self.base_ttl_days)
             rec["expires_at"] = self._fmt_ts(exp)
             self.S.log(f"VODKA_REFRESH_CTX â€” {ctx_id}")
+            self.S.debug_log(f"REFRESH: {ctx_id}")
         else:
             exp = now + dt.timedelta(days=self.base_ttl_days)
             data[ctx_id] = {
@@ -225,8 +239,10 @@ class FastRecall:
                 "type": "vodka_ctx",
             }
             self.S.log(f"VODKA_ADD_CTX â€” {ctx_id} â€” {content[:80].replace(os.linesep, ' ')}")
+            self.S.debug_log(f"ADD: {ctx_id} value_len={len(content)}")
 
         self.S.save_facts(data)
+        self.S.debug_log(f"SAVE_FACTS: {len(data)} entries")
         return ctx_id
 
     def retrieve_group(self, ctx_id: str) -> Optional[str]:
@@ -243,6 +259,7 @@ class FastRecall:
 
         self._touch(ctx_id, rec, data)
         self.S.save_facts(data)
+        self.S.debug_log(f"SAVE_FACTS: {len(data)} entries")
         return str(rec.get("value", "") or "")
 
     def retrieve_group_with_meta(self, ctx_id: str):
@@ -264,6 +281,7 @@ class FastRecall:
         # Apply touch side-effects
         self._touch(ctx_id, rec, data)
         self.S.save_facts(data)
+        self.S.debug_log(f"SAVE_FACTS: {len(data)} entries")
 
         # Compute TTL days remaining from expires_at
         ttl_days = 0
@@ -286,6 +304,7 @@ class FastRecall:
         exp = now + dt.timedelta(days=self.touch_extension_days)
         rec["expires_at"] = self._fmt_ts(exp)
         self.S.log(f"VODKA_TOUCH_CTX â€” {ctx_id} â€” touch_count={tc}")
+        self.S.debug_log(f"TOUCH: {ctx_id} count={tc}")
 
     def janitor_if_due(self, interval_seconds: int = 3600):
         now = time.time()
@@ -312,6 +331,7 @@ class FastRecall:
         for k in to_delete:
             v_preview = str(data.get(k, {}).get("value", ""))[:80].replace(os.linesep, " ")
             self.S.log(f"VODKA_JANITOR_EXPIRE â€” {k} â€” {v_preview}")
+            self.S.debug_log(f"JANITOR: {k}")
             data.pop(k, None)
 
         # cap
@@ -325,9 +345,11 @@ class FastRecall:
             for k in overflow:
                 v_preview = str(data.get(k, {}).get("value", ""))[:80].replace(os.linesep, " ")
                 self.S.log(f"VODKA_JANITOR_CAP â€” {k} â€” {v_preview}")
+                self.S.debug_log(f"JANITOR: {k}")
                 data.pop(k, None)
 
         self.S.save_facts(data)
+        self.S.debug_log(f"SAVE_FACTS: {len(data)} entries")
 
     def nuke(self):
         data = self.S.load_facts()
@@ -335,6 +357,7 @@ class FastRecall:
         for k in keys:
             data.pop(k, None)
         self.S.save_facts(data)
+        self.S.debug_log(f"SAVE_FACTS: {len(data)} entries")
         self.S.log("VODKA_NUKE_ALL")
 
 

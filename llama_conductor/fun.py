@@ -1,6 +1,10 @@
 # fun.py
-# version 1.0.8
+# version 1.0.9
 #
+# CHANGES IN v1.0.9:
+# - Removed redundant vodka.inlet/outlet calls (router already applies Vodka; was idempotent duplication)
+# - Fixed unbounded quote cache: switched from Dict[str, List[str]] to Dict[str, deque(maxlen=6)]
+#   Prevents memory leak from accumulating quotes indefinitely across sessions
 #
 # NOTE:
 # - This file does NOT implement routing or command handling; it only formats prompts and post-processes outputs.
@@ -20,6 +24,7 @@
 from __future__ import annotations
 
 from typing import List, Dict, Any, Callable, Optional, Tuple
+from collections import deque
 import random
 import os
 
@@ -92,7 +97,8 @@ Rules:
 # Helpers
 # -----------------------------
 
-_RECENT_KICKERS: Dict[str, List[str]] = {}
+# Bounded recent kickers cache (maxlen=6 prevents unbounded growth)
+_RECENT_KICKERS: Dict[str, deque] = {}
 
 
 def _is_mentats_output(text: str) -> bool:
@@ -105,11 +111,13 @@ def _pick_kicker(quotes: List[str], session_id: str, cooldown: int = 6) -> str:
     if not quotes:
         return "Good news, everyone!"
 
-    recent = set(q.lower() for q in _RECENT_KICKERS.get(session_id, [])[-cooldown:])
+    # Get or create bounded deque for this session
+    recent_deque = _RECENT_KICKERS.setdefault(session_id, deque(maxlen=cooldown))
+    recent = set(str(q).lower() for q in recent_deque)
     pool = [q for q in quotes if q.lower() not in recent] or quotes
     kicker = random.choice(pool)
 
-    _RECENT_KICKERS.setdefault(session_id, []).append(kicker)
+    recent_deque.append(kicker)  # Auto-evicts oldest when maxlen exceeded
     return kicker
 
 
@@ -372,16 +380,8 @@ def run_fun(
     - Body contains only the styled answer (no repeated kicker line).
     """
 
-    # --- Continuity (do not mutate history) ---
-    body = {"messages": history}
-    # Keep existing behavior: this module still calls vodka inlet/outlet as in v1.0.5.
-    # (We do not change upstream contracts; callers may rely on this trimming.)
-    body = vodka.inlet(body)
-    body = vodka.outlet(body)
-    trimmed = body.get("messages", history)
-
-    # IMPORTANT: model-facing transcript is sanitized to remove router/UI meta assistant lines
-    transcript = _pack_history(trimmed)
+    # Router already applied Vodka (CTC + breadcrumb expansion), use trimmed history directly
+    transcript = _pack_history(history)
 
     # --- THINKER (correct content) ---
     thinker_prompt = (

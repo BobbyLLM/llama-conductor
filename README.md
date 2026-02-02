@@ -13,11 +13,11 @@ I have ASD and a low tolerance for bullshit. I want shit to work the same 100% o
 
 ## Quick Links
 
-📖 **[What's New](NEW.md)** — Latest fixes & what we broke along the way  
+📖 **[What's New](NEW.md)** — Latest fixes & what I borked along the way  
 ❓ **[FAQ](FAQ.md)** — Deep dives on how this actually works  
 ⌨️ **[Command Cheat Sheet](llama_conductor/command_cheat_sheet.md)** — All the incantations  
 🚀 **[Quickstart](#quickstart)** — Get it running in 5 minutes  
-
+🤨 **[Y u do dis?](DESIGN.md)** - Design fool-sophy and Q&A 
 ---
 
 ## Three Problems This Actually Solves

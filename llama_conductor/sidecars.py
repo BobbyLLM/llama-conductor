@@ -1,10 +1,28 @@
 # sidecars.py
-# version 1.0.0
+# version 1.0.3
 """
 Non-LLM utility sidecars for llama-conductor.
 
+CHANGES IN v1.0.3:
+- Weather geocoding switched from Open-Meteo to Nominatim (OpenStreetMap)
+- Better regional coverage: now handles small towns like "Carnarvon Western Australia"
+- No API key required, no rate limiting issues (1 req/sec is fine for chat)
+- Better display names from OSM
+
+CHANGES IN v1.0.2:
+- Wiki summary increased from 200 → 500 chars (full paragraph)
+- Weather API switched from wttr.in to Open-Meteo (no rate limiting, more reliable)
+- Added WMO weather code decoder for human-readable conditions
+- Weather now includes location geocoding, temp, condition, humidity, wind speed
+
+CHANGES IN v1.0.1:
+- Added >>wiki <topic> sidecar (Wikipedia summary via free JSON API)
+- Added >>exchange <query> sidecar (Currency conversion via Frankfurter API)
+- Added >>weather <location> sidecar (Weather via wttr.in)
+
 These are deterministic, inspectable tools that don't require model inference.
-Provides: calc, list (Vodka memories), find (quotes in KBs), flush (CTC cache).
+Provides: calc, list (Vodka memories), find (quotes in KBs), flush (CTC cache),
+          wiki (Wikipedia), exchange (Frankfurter FX), weather (wttr.in).
 """
 
 from __future__ import annotations
@@ -13,6 +31,7 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 import math
+import requests
 
 # ============================================================================
 # Data Classes
@@ -45,6 +64,32 @@ class QuoteResult:
     kb: str
     snippet: str
     location: str  # "line X" or similar context
+
+
+@dataclass
+class WikiResult:
+    """Result of >>wiki query."""
+    title: Optional[str] = None
+    summary: str = ""
+    error: Optional[str] = None
+
+
+@dataclass
+class ExchangeResult:
+    """Result of >>exchange query."""
+    amount: Optional[float] = None
+    from_ccy: Optional[str] = None
+    to_ccy: Optional[str] = None
+    converted: Optional[float] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class WeatherResult:
+    """Result of >>weather query."""
+    location: Optional[str] = None
+    condition: str = ""
+    error: Optional[str] = None
 
 
 # ============================================================================
@@ -413,6 +458,256 @@ def flush_ctc_cache(vodka: Optional[object]) -> str:
 
 
 # ============================================================================
+# Wikipedia (>>wiki)
+# ============================================================================
+
+
+def _normalize_wiki_topic(topic: str) -> str:
+    """Normalize topic for Wikipedia URL: 'Boris Becker' → 'Boris_Becker'."""
+    return (topic or "").strip().replace(" ", "_")
+
+
+def handle_wiki_query(topic: str, max_chars: int = 500) -> str:
+    """
+    Fetch Wikipedia summary via JSON API.
+    
+    Example: >>wiki Albert Einstein
+    Returns: "[wiki] Albert Einstein: A German-born theoretical physicist..."
+    Fetches full paragraph (up to 500 chars).
+    """
+    topic = (topic or "").strip()
+    if not topic:
+        return "[wiki] No topic provided"
+
+    try:
+        normalized = _normalize_wiki_topic(topic)
+        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{normalized}"
+        
+        # Wikipedia requires User-Agent header (blocks default requests UA)
+        headers = {"User-Agent": "llama-conductor/1.0.1"}
+        resp = requests.get(url, headers=headers, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        title = data.get("title") or normalized.replace("_", " ")
+        summary = (data.get("extract") or "").strip()
+        
+        if not summary:
+            return f"[wiki] '{title}' not found"
+        
+        # Trim to context budget
+        if len(summary) > max_chars:
+            summary = summary[:max_chars].rsplit(" ", 1)[0] + "…"
+        
+        return f"[wiki] {title}: {summary}"
+    
+    except requests.exceptions.Timeout:
+        return "[wiki] Request timeout"
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            return f"[wiki] '{topic}' not found"
+        return f"[wiki] HTTP error: {e.response.status_code}"
+    except Exception as e:
+        return f"[wiki] Error: {e}"
+
+
+# ============================================================================
+# Currency Exchange (>>exchange)
+# ============================================================================
+
+
+def _normalize_currency_token(token: str) -> str:
+    """Map common currency names to ISO 4217 codes."""
+    if not token:
+        return ""
+    t = token.upper()
+    aliases = {
+        "YEN": "JPY",
+        "EURO": "EUR",
+        "EUROS": "EUR",
+        "POUND": "GBP",
+        "POUNDS": "GBP",
+        "DOLLAR": "USD",
+        "DOLLARS": "USD",
+    }
+    return aliases.get(t, t)
+
+
+def _parse_exchange_query(text: str) -> Optional[Tuple[float, str, str]]:
+    """
+    Parse exchange query: "1 USD to EUR" → (1.0, 'USD', 'EUR')
+    Handles: "10 aud to jpy", "usd to eur", "convert aud to jpy"
+    """
+    raw = text.strip()
+    lo = raw.lower()
+
+    # Quick filter
+    if not any(k in lo for k in [" to ", " in ", "exchange rate", "convert "]):
+        return None
+
+    # Pattern with amount: "10 usd to eur"
+    m = re.search(
+        r"(?i)\b(\d+(?:\.\d+)?)\s*([A-Z]{3}|[a-z]{3}|yen|euro|euros|pound|pounds|dollar|dollars)\s+"
+        r"(?:to|in)\s+([A-Z]{3}|[a-z]{3}|yen|euro|euros|pound|pounds|dollar|dollars)\b",
+        raw,
+    )
+    if m:
+        amount = float(m.group(1))
+        from_ccy = _normalize_currency_token(m.group(2))
+        to_ccy = _normalize_currency_token(m.group(3))
+        return amount, from_ccy, to_ccy
+
+    # Pattern without amount: "usd to eur"
+    m = re.search(
+        r"(?i)\b([A-Z]{3}|[a-z]{3}|yen|euro|euros|pound|pounds|dollar|dollars)\s+"
+        r"(?:to|in)\s+([A-Z]{3}|[a-z]{3}|yen|euro|euros|pound|pounds|dollar|dollars)\b",
+        raw,
+    )
+    if m:
+        amount = 1.0
+        from_ccy = _normalize_currency_token(m.group(1))
+        to_ccy = _normalize_currency_token(m.group(2))
+        return amount, from_ccy, to_ccy
+
+    return None
+
+
+def handle_exchange_query(query: str) -> str:
+    """
+    Fetch currency exchange rate via Frankfurter API.
+    
+    Example: >>exchange 1 USD to EUR
+    Returns: "[exchange] 1.0 USD = 0.92 EUR"
+    """
+    parsed = _parse_exchange_query(query)
+    if not parsed:
+        return "[exchange] Not a currency query (e.g. '1 USD to EUR')"
+    
+    amount, from_ccy, to_ccy = parsed
+
+    try:
+        url = f"https://api.frankfurter.app/latest?amount={amount}&from={from_ccy}&to={to_ccy}"
+        resp = requests.get(url, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        rate = data.get("rates", {}).get(to_ccy)
+        if rate:
+            return f"[exchange] {amount} {from_ccy} = {rate:.2f} {to_ccy}"
+        return f"[exchange] Currency pair {from_ccy}/{to_ccy} not supported"
+    
+    except requests.exceptions.Timeout:
+        return "[exchange] Request timeout"
+    except requests.exceptions.HTTPError:
+        return f"[exchange] Cannot convert {from_ccy} to {to_ccy}"
+    except Exception as e:
+        return f"[exchange] Error: {e}"
+
+
+# ============================================================================
+# Weather (>>weather) – Open-Meteo API
+# ============================================================================
+
+def _decode_weather_code(code: int) -> str:
+    """Decode WMO weather code to human-readable description."""
+    # WMO Weather interpretation codes (simplified)
+    codes = {
+        0: "Clear sky",
+        1: "Mainly clear",
+        2: "Partly cloudy",
+        3: "Overcast",
+        45: "Foggy",
+        48: "Depositing rime fog",
+        51: "Light drizzle",
+        53: "Moderate drizzle",
+        55: "Dense drizzle",
+        61: "Slight rain",
+        63: "Moderate rain",
+        65: "Heavy rain",
+        71: "Slight snow",
+        73: "Moderate snow",
+        75: "Heavy snow",
+        80: "Slight rain showers",
+        81: "Moderate rain showers",
+        82: "Violent rain showers",
+        85: "Slight snow showers",
+        86: "Heavy snow showers",
+        95: "Thunderstorm",
+        96: "Thunderstorm with hail",
+        99: "Thunderstorm with hail",
+    }
+    return codes.get(code, f"Weather code {code}")
+
+
+def handle_weather_query(location: str) -> str:
+    """
+    Fetch current weather via Open-Meteo API with Nominatim geocoding (OSM).
+    
+    Uses Nominatim (OpenStreetMap) for geocoding (better regional coverage),
+    then Open-Meteo for weather forecast.
+    Example: >>weather Carnarvon Western Australia
+    Returns: "[weather] Carnarvon, Western Australia: 22°C, Partly cloudy, 65% humidity"
+    """
+    location = (location or "").strip()
+    if not location:
+        return "[weather] No location provided"
+
+    try:
+        # Step 1: Geocode via Nominatim (OpenStreetMap) – better regional coverage
+        geo_url = "https://nominatim.openstreetmap.org/search"
+        geo_params = {
+            "q": location,
+            "format": "json",
+            "limit": 1,
+            "language": "en"
+        }
+        
+        # Add User-Agent (Nominatim requires it)
+        headers = {"User-Agent": "llama-conductor/1.0.2"}
+        geo_resp = requests.get(geo_url, params=geo_params, headers=headers, timeout=5)
+        geo_resp.raise_for_status()
+        geo_data = geo_resp.json()
+        
+        if not geo_data:
+            return f"[weather] Location '{location}' not found"
+        
+        place = geo_data[0]
+        latitude = float(place.get("lat"))
+        longitude = float(place.get("lon"))
+        display_name = place.get("display_name", location)
+        
+        # Step 2: Fetch current weather via Open-Meteo
+        weather_url = "https://api.open-meteo.com/v1/forecast"
+        weather_params = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "current": "temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m",
+            "temperature_unit": "celsius"
+        }
+        
+        weather_resp = requests.get(weather_url, params=weather_params, timeout=5)
+        weather_resp.raise_for_status()
+        weather_data = weather_resp.json()
+        
+        current = weather_data.get("current", {})
+        temp = current.get("temperature_2m")
+        code = current.get("weather_code")
+        humidity = current.get("relative_humidity_2m")
+        wind = current.get("wind_speed_10m")
+        
+        condition = _decode_weather_code(code)
+        
+        return f"[weather] {display_name}: {temp}°C, {condition}, {humidity}% humidity"
+    
+    except requests.exceptions.Timeout:
+        return "[weather] Request timeout"
+    except requests.exceptions.HTTPError:
+        return f"[weather] Error fetching weather for '{location}'"
+    except Exception as e:
+        return f"[weather] Error: {e}"
+
+
+# ============================================================================
 # Testing / Standalone Usage
 # ============================================================================
 
@@ -425,12 +720,14 @@ if __name__ == "__main__":
     result = parse_and_eval_calc("14*365")
     print(f"14*365: {format_calc_result(result)}")
 
-    result = parse_and_eval_calc("sqrt(16)")
-    print(f"sqrt(16): {format_calc_result(result)}")
+    # Test wiki
+    print("\n=== Testing >>wiki ===")
+    print(handle_wiki_query("Albert Einstein"))
 
-    result = parse_and_eval_calc("1/0")
-    print(f"1/0: {format_calc_result(result)}")
+    # Test exchange
+    print("\n=== Testing >>exchange ===")
+    print(handle_exchange_query("1 USD to EUR"))
 
-    print("\n=== Testing >>find ===")
-    # Would need actual KB paths to test
-    print("(Requires active KBs to test)")
+    # Test weather
+    print("\n=== Testing >>weather ===")
+    print(handle_weather_query("Perth"))

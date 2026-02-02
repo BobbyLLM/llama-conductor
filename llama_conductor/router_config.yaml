@@ -35,12 +35,12 @@ rag:
 
 # Vodka settings (overrides vodka_filter.py defaults)
 vodka:
-  storage_dir: ""  # empty = cwd, or set explicit path
+  storage_dir: "."  # empty = cwd, or set explicit path
   base_ttl_days: 3
   touch_extension_days: 5
   max_touches: 2
-  debug: false
-  debug_dir: ""
+  debug: true
+  debug_dir: "."
   n_last_messages: 4
   keep_first: true
   max_chars: 3000

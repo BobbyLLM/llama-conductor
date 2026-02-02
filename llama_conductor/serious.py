@@ -1,7 +1,17 @@
 # serious.py
-# version 1.0.0
+# version 1.0.2
 """
 Serious mode pipeline (/serious default posture).
+
+CHANGES IN v1.0.2:
+- Hardened logic edge case detection 
+- Fixed self-identification to use first person ("I am..." not "You are...")
+
+CHANGES IN v1.0.1:
+- Added contradiction detection (3-layer defense against "square circle" hallucinations)
+- Layer 1: Pre-prompt pattern matching for known contradictions
+- Layer 2: System prompt instructions for model-side detection
+- Layer 3: Forced LOW confidence when contradictions suspected
 
 This module:
 - Calls Vodka inlet() for CTC/FR and control commands (including ??).
@@ -15,15 +25,16 @@ from typing import List, Dict, Any, Callable, Optional, Tuple
 import re
 
 
-SERIOUS_SYSTEM_PROMPT = """You are in /serious mode.
+SERIOUS_SYSTEM_PROMPT = """I am an AI assistant operating in /serious mode.
 
-Tone:
-- Neutral, precise, low-context.
-- No filler, no small talk, no soft closure.
+My role:
+- I process information, execute tasks, and answer questions using a neutral, direct tone.
+- I do not express personal opinions, emotions, or fictional experiences.
+- I am designed for precise, low-context communication.
 
-Output rules:
+My output rules:
 - Answer first. No preamble.
-- ≤3 short paragraphs (you may add a short bullet list or code block if needed).
+- ≤3 short paragraphs (I may add a short bullet list or code block if needed).
 - Minimal emotion; no subjective experiences or fictional biography.
 - End with a plain declarative sentence.
 
@@ -50,31 +61,53 @@ Priority:
 3) CONTEXT (use for disambiguation, but do not treat as guaranteed truth)
 4) QUESTION (answer it)
 
+CRITICAL SAFETY CHECKS (before answering):
+Before I answer, I check if the QUESTION contains logical contradictions or impossible scenarios.
+
+I am particularly vigilant for:
+- Mathematical impossibilities (division by zero, square root of negative numbers in real domain)
+- Physical impossibilities (negative distances, negative counts, temperatures below absolute zero)
+- Contradictory geometric properties (a shape that is simultaneously square and circular)
+- Contradictory states (simultaneously frozen and burning, solid and liquid at normal conditions)
+- Logical contradictions (married bachelor, living corpse in non-fictional context)
+
+If I detect a contradiction or impossibility:
+1. I state the problem clearly
+2. I explain WHY it's contradictory or impossible
+3. I ask for clarification ("Did you mean X or Y?")
+4. I mark my confidence as LOW
+5. I do NOT attempt to calculate or answer as if the contradiction doesn't exist
+
+Example response for contradiction:
+"This question contains a logical contradiction: [explain the issue]. [Clarifying question]?
+
+Confidence: low | Source: Model"
+
 Uncertainty / self-check:
-- If the question is complex, under-specified, or high-impact, briefly mention:
+- If the question is complex, under-specified, or high-impact, I briefly mention:
   - What information is missing or uncertain, and
-  - The most likely way your answer could be wrong.
-- Keep this to 1–2 short sentences at the end of the answer text (before the confidence line).
+  - The most likely way my answer could be wrong.
+- I keep this to 1–2 short sentences at the end of the answer text (before the confidence line).
 
 Confidence and source:
-- At the very end of every answer, append a line:
+- At the very end of every answer, I append a line:
 
 Confidence: [low | medium | high | top] | Source: [Model | Docs | User | Contextual | Mixed]
 
 Where:
 - Confidence:
-  - low   = weak support, guesswork, or major gaps.
+  - low   = weak support, guesswork, major gaps, OR contradictions detected.
   - medium= some support but important gaps.
   - high  = well-supported with minor uncertainty.
   - top   = directly backed by clear info (especially from FACTS), minimal doubt.
 - Source:
-  - Model     = mostly from pretrained knowledge.
+  - Model     = mostly from my pretrained knowledge.
   - Docs      = mostly from FACTS supplied in the message (e.g. RAG output).
   - User      = primarily restating/organizing user-supplied content.
-  - Contextual= inferred from this conversation’s prior turns.
+  - Contextual= inferred from this conversation's prior turns.
   - Mixed     = substantial mix of the above, none clearly dominant.
 
-Always follow these rules.
+I always follow these rules.
 """
 
 _CONF_LINE_RE = re.compile(
@@ -82,6 +115,76 @@ _CONF_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 
+
+# ============================================================================
+# MINIMAL CRITICAL PATTERNS 
+# ============================================================================
+# These patterns catch COMMON user errors that happen in production.
+# Edge cases are handled by the enhanced system prompt above.
+
+_CRITICAL_PATTERNS = [
+    # 1. Negative measurements/counts (COMMON - typos, input errors)
+    # Examples: "-5 apples", "negative distance of 10 meters", "-3 items"
+    (r'-\d+\s*(apple|item|thing|count|object|meter|foot|feet|inch|mile|kilometer|distance|length|height|width|area|volume)\b',
+     "negative measurement or count",
+     "Negative counts and measurements are impossible in physical reality."),
+    
+    # 2. Division by zero (COMMON - math errors)
+    # Examples: "10 / 0", "divide by zero", "x divided by 0"
+    (r'\b(divide[d]?|division)\s+(by|\/)\s*(zero|0)\b',
+     "division by zero",
+     "Division by zero is undefined in mathematics."),
+    
+    # 3. Below absolute zero (OCCASIONAL - physics misconceptions)
+    # Examples: "-10 Kelvin", "temperature of -5K"
+    (r'-\d+\s*k(elvin)?\b',
+     "temperature below absolute zero",
+     "Absolute zero (0 Kelvin) is the lowest possible temperature. Negative Kelvin is physically impossible."),
+    
+    # 4. Faster than light travel (OCCASIONAL - sci-fi vs reality confusion)
+    # Examples: "travel faster than light", "exceed the speed of light"
+    (r'\b(travel|go|move|exceed|faster than|beyond)\s+(the\s+)?speed\s+of\s+light\b',
+     "faster-than-light travel",
+     "Traveling faster than the speed of light violates special relativity."),
+]
+
+
+def _detect_critical_contradiction(text: str) -> Optional[Tuple[str, str]]:
+    """
+    Detect CRITICAL contradictions that are unambiguous errors.
+    
+    Returns:
+        None if no critical contradiction detected
+        (description, explanation) if critical contradiction found
+    
+    Philosophy (Option C):
+    - Only catches high-utility patterns (common user errors)
+    - Edge cases handled by model reasoning (system prompt)
+    - Simpler code, easier to maintain
+    """
+    text_lower = text.lower()
+    
+    for pattern, description, explanation in _CRITICAL_PATTERNS:
+        if re.search(pattern, text_lower, re.IGNORECASE):
+            return (description, explanation)
+    
+    return None
+
+
+def _build_critical_contradiction_response(description: str, explanation: str) -> str:
+    """Build response for critical contradictions."""
+    response = (
+        f"This question contains an issue: {description}. "
+        f"{explanation} "
+        f"Please check your question and rephrase it.\n\n"
+        f"Confidence: low | Source: Model"
+    )
+    return response
+
+
+# ============================================================================
+# Original helper functions
+# ============================================================================
 
 def _ensure_confidence_line(
     text: str,
@@ -220,6 +323,8 @@ def run_serious(
     include_context: bool = True,
     context_max_turn_pairs: int = 4,
     context_max_chars: int = 900,
+    # v1.0.1+: contradiction detection toggle
+    detect_contradictions: bool = True,
 ) -> str:
     """
     Run the /serious pipeline for a single user turn.
@@ -236,6 +341,7 @@ def run_serious(
         constraints_block:  Pre-built CONSTRAINTS block string, or "" if none (router populates via GAG/rules).
 
         include_context:    If True, add a compact CONTEXT section built from trimmed+expanded history.
+        detect_contradictions: If True, check for critical contradictions before calling LLM (v1.0.1+).
     """
 
     # 1) Run Vodka inlet for CTC/FR + control commands on history
@@ -263,6 +369,16 @@ def run_serious(
 
     # 2) Use the *modified* last user message as the effective query (so ?? rewrites work)
     effective_user_text = _extract_effective_user_text(messages, user_text)
+
+    # ========================================================================
+    # LAYER 1: CRITICAL CONTRADICTION DETECTION (minimal patterns)
+    # ========================================================================
+    if detect_contradictions:
+        contradiction = _detect_critical_contradiction(effective_user_text)
+        if contradiction:
+            description, explanation = contradiction
+            return _build_critical_contradiction_response(description, explanation)
+    # ========================================================================
 
     fb = (facts_block or "").strip()
     cb = (constraints_block or "").strip()
@@ -302,7 +418,7 @@ def run_serious(
 
     user_block = "\n".join(user_content_parts).strip()
 
-    # 5) Build the final prompt
+    # 5) Build the final prompt (system prompt includes Layer 2 - enhanced reasoning instructions)
     prompt = f"{SERIOUS_SYSTEM_PROMPT}\n\n{user_block}\n\nANSWER:\n"
 
     # 6) Call Thinker model
@@ -317,9 +433,17 @@ def run_serious(
     # 7) Enforce confidence line if missing
     # Default source heuristic: FACTS => Docs, else CONTEXT => Contextual, else Model.
     default_source = "Docs" if fb else ("Contextual" if context_block else "Model")
+    
+    # LAYER 3: If model response mentions "contradiction" or "impossible", force confidence to LOW
+    answer_lower = (answer or "").lower()
+    if "contradiction" in answer_lower or "impossible" in answer_lower or "mutually exclusive" in answer_lower:
+        default_conf = "low"
+    else:
+        default_conf = "medium"
+    
     answer = _ensure_confidence_line(
         answer,
-        default_conf="medium",
+        default_conf=default_conf,
         default_source=default_source,
     )
 

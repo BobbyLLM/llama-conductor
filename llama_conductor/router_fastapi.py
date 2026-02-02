@@ -1,6 +1,30 @@
 # router_fastapi.py
-# version 1.1.0
+# version 1.1.5
 """MoA Router (FastAPI) 
+
+CHANGES IN v1.1.5:
+- Added >>trust mode - tool recommendation sidecar (invariants-compliant)
+- >>trust analyzes queries and suggests appropriate tools (calc, mentats, wiki, etc.)
+- User chooses recommendation (A, B, C) explicitly - no auto-execution
+- Preserves all invariants: explicit control, router stays dumb, no auto-escalation
+
+CHANGES IN v1.1.4 (CRITICAL FIX):
+- SECURITY FIX: >>attach vault now properly rejected with helpful error
+- Previously allowed attaching "vault" (Qdrant) as filesystem KB, causing silent failures
+- Serious mode would filter out vault, resulting in empty FACTS_BLOCK and hallucinations
+- Now vault can only be accessed via ##mentats (as designed)
+
+CHANGES IN v1.1.3:
+- Removed legacy code for fun.py and reduced duplicate calls
+
+CHANGES IN v1.1.2:
+- Added keepalive code to prevent streaming time outs
+
+CHANGES IN v1.1.1:
+- Added >>wiki <topic> sidecar (Wikipedia summary via free JSON API)
+- Added >>exchange <query> sidecar (Currency conversion via Frankfurter API)
+- Added >>weather <location> sidecar (Current weather via wttr.in)
+- All three are context-light, no-auth deterministic tools
 
 CHANGES IN v1.0.9-debug:
 - Fix: Fun/FR blocks after Mentats (checks only recent 5 turns, not all history)
@@ -79,6 +103,9 @@ try:
         find_quote_in_kbs,
         format_quote_result,
         flush_ctc_cache,
+        handle_wiki_query,
+        handle_exchange_query,
+        handle_weather_query,
     )
 except Exception:
     parse_and_eval_calc = None  # type: ignore
@@ -88,11 +115,23 @@ except Exception:
     find_quote_in_kbs = None  # type: ignore
     format_quote_result = None  # type: ignore
     flush_ctc_cache = None  # type: ignore
+    handle_wiki_query = None  # type: ignore
+    handle_exchange_query = None  # type: ignore
+    handle_weather_query = None  # type: ignore
 
 try:
     from .pipelines import run_raw  # type: ignore
 except Exception:
     run_raw = None  # type: ignore
+
+try:
+    from .trust_pipeline import (  # type: ignore
+        handle_trust_command,
+        generate_recommendations,
+    )
+except Exception:
+    handle_trust_command = None  # type: ignore
+    generate_recommendations = None  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -168,11 +207,16 @@ class SessionState:
     vault_last_query: str = ""
     vault_last_hits: int = 0
 
-    # Cached Vodka instance per session (avoid re-init spam / preserve state across turns)
-    vodka: Any = None
-
     # One Vodka per session (reduces noise + preserves stateful debug counters)
     vodka: Optional[VodkaFilter] = None
+
+    # Trust mode: pending recommendations for A/B/C response
+    pending_trust_query: str = ""
+    pending_trust_recommendations: List[Dict[str, str]] = field(default_factory=list)
+    
+    # Auto-execute query after >>attach all from trust
+    auto_query_after_attach: str = ""
+    auto_detach_after_response: bool = False
 
 
 _SESSIONS: Dict[str, SessionState] = {}
@@ -865,10 +909,34 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
     if low == "help":
         return _help_text()
 
+    # trust mode (tool recommendation)
+    if parts and parts[0].lower() == "trust":
+        if not handle_trust_command:
+            return "[router] trust_pipeline not available"
+        
+        query = " ".join(parts[1:]).strip()
+        if not query:
+            return "[router] usage: >>trust <query>"
+        
+        recommendations = generate_recommendations(
+            query=query,
+            attached_kbs=state.attached_kbs,
+            kb_paths=KB_PATHS,
+            vault_kb_name=VAULT_KB_NAME
+        )
+        
+        # Store recommendations for A/B/C response handling
+        state.pending_trust_query = query
+        state.pending_trust_recommendations = recommendations
+        
+        # Format and return recommendations
+        from .trust_pipeline import format_recommendations
+        return "[trust] " + format_recommendations(recommendations, query=query)
+
     # attach/detach/list
     if parts and parts[0].lower() in ("attach", "a"):
         if len(parts) < 2:
-            return "[router] usage: >>attach <kb|all|vault>"
+            return "[router] usage: >>attach <kb|all>"
 
         target = parts[1].strip().lower()
 
@@ -879,7 +947,22 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
                     state.attached_kbs.add(k)
             return f"[router] attached ALL: {sorted(state.attached_kbs)}"
 
-        if target in KB_PATHS or target == VAULT_KB_NAME:
+        # Special error for vault (Qdrant collection, not filesystem KB)
+        if target == VAULT_KB_NAME:
+            return (
+                f"[error] '{VAULT_KB_NAME}' is the Qdrant collection, not a filesystem KB.\n"
+                f"\n"
+                f"To search Vault:\n"
+                f"  • Use ##mentats <query> (automatically searches Qdrant)\n"
+                f"\n"
+                f"Available filesystem KBs:\n"
+                f"  • {', '.join(sorted(KB_PATHS.keys()))}\n"
+                f"\n"
+                f"Use >>attach <kb> to attach a filesystem KB."
+            )
+
+        # Only allow filesystem KBs
+        if target in KB_PATHS:
             state.attached_kbs.add(target)
             return f"[router] attached: {sorted(state.attached_kbs)}"
 
@@ -1044,6 +1127,33 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             return "[router] flush not available"
         return flush_ctc_cache(state.vodka)
 
+    # >>wiki <topic> (Wikipedia summary)
+    if parts and parts[0].lower() == "wiki":
+        if not handle_wiki_query:
+            return "[router] wiki not available (sidecars.py missing)"
+        topic = cmd[len(parts[0]):].strip()
+        if not topic:
+            return "[wiki] usage: >>wiki <topic>\nExample: >>wiki Albert Einstein"
+        return handle_wiki_query(topic)
+
+    # >>exchange <query> (Currency conversion)
+    if parts and parts[0].lower() == "exchange":
+        if not handle_exchange_query:
+            return "[router] exchange not available (sidecars.py missing)"
+        query = cmd[len(parts[0]):].strip()
+        if not query:
+            return "[exchange] usage: >>exchange <query>\nExamples: >>exchange 1 USD to EUR, >>exchange GBP to JPY"
+        return handle_exchange_query(query)
+
+    # >>weather <location> (Current weather)
+    if parts and parts[0].lower() == "weather":
+        if not handle_weather_query:
+            return "[router] weather not available (sidecars.py missing)"
+        location = cmd[len(parts[0]):].strip()
+        if not location:
+            return "[weather] usage: >>weather <location>\nExample: >>weather Perth"
+        return handle_weather_query(location)
+
     # >>raw (Raw mode toggle)
     if low == "raw":
         state.raw_sticky = True
@@ -1193,9 +1303,10 @@ def _make_openai_response(text: str, model: str = "moa-router") -> Dict[str, Any
 
 
 def _stream_sse(text: str, model: str = "moa-router") -> Iterable[bytes]:
-    """OpenAI-style SSE streamer.
+    """OpenAI-style SSE streamer with keepalive pings.
 
     Open WebUI expects JSON payloads per `data:` line and a terminal `data: [DONE]`.
+    Keepalive comments prevent OWUI from timing out on slow responses.
     """
     chunk = 48
     for i in range(0, len(text), chunk):
@@ -1208,6 +1319,7 @@ def _stream_sse(text: str, model: str = "moa-router") -> Iterable[bytes]:
             "choices": [{"index": 0, "delta": {"content": part}, "finish_reason": None}],
         }
         yield ("data: " + json.dumps(payload, ensure_ascii=False) + "\n\n").encode("utf-8")
+        yield b": keepalive\n\n"
     payload = {
         "id": f"chatcmpl-{int(time.time()*1000)}",
         "object": "chat.completion.chunk",
@@ -1286,6 +1398,91 @@ async def v1_chat_completions(req: Request):
     # BUT: Check for per-turn selectors (##) FIRST, before session commands (>>)
     # This prevents ##vision from being treated as >>vision command
     selector, user_text = _split_selector(user_text_raw)
+    
+    # CRITICAL: Check if user is responding to pending trust recommendations (A/B/C/D/E)
+    # This must happen BEFORE normal command processing
+    if state.pending_trust_recommendations:
+        user_choice = user_text_raw.strip().upper()
+        if user_choice in ['A', 'B', 'C', 'D', 'E'] and len(user_text_raw.strip()) == 1:
+            # Find the chosen recommendation
+            chosen_rec = None
+            for rec in state.pending_trust_recommendations:
+                if rec['rank'] == user_choice:
+                    chosen_rec = rec
+                    break
+            
+            if chosen_rec:
+                command = chosen_rec['command']
+                original_query = state.pending_trust_query
+                
+                # Clear pending state FIRST
+                state.pending_trust_query = ""
+                state.pending_trust_recommendations = []
+                
+                # Special handling for >>attach all - auto-run query afterward
+                if command == '>>attach all' and original_query:
+                    state.auto_query_after_attach = original_query
+                    state.auto_detach_after_response = True  # Clean up after response
+                
+                # Execute the chosen command
+                if command.startswith('>>'):
+                    # It's a session command - execute via handle_command
+                    try:
+                        cmd_reply = handle_command(command, state=state, session_id=session_id)
+                        if cmd_reply is not None:
+                            # Check if we should auto-run a query after this command
+                            if state.auto_query_after_attach:
+                                auto_query = state.auto_query_after_attach
+                                state.auto_query_after_attach = ""
+                                
+                                # Inject auto query and continue processing
+                                user_text_raw = auto_query
+                                selector, user_text = _split_selector(user_text_raw)
+                                
+                                # Update raw_messages
+                                for i in range(len(raw_messages) - 1, -1, -1):
+                                    if raw_messages[i].get("role") == "user":
+                                        raw_messages[i]["content"] = auto_query
+                                        break
+                                
+                                # Don't return - continue to normal pipeline processing
+                                # First, send the attach confirmation as a message
+                                # (We can't do this in streaming mode cleanly, so we'll just skip to the query)
+                            else:
+                                # No auto query - return the command result
+                                if stream:
+                                    return StreamingResponse(_stream_sse(cmd_reply), media_type="text/event-stream")
+                                return JSONResponse(_make_openai_response(cmd_reply))
+                    except Exception as e:
+                        text = f"[router error: {e.__class__.__name__}: {e}]"
+                        if stream:
+                            return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+                        return JSONResponse(_make_openai_response(text))
+                elif command.startswith('##'):
+                    # It's a per-turn selector - override user_text_raw and continue processing
+                    user_text_raw = command
+                    selector, user_text = _split_selector(user_text_raw)
+                    # Update raw_messages so model sees the actual command
+                    for i in range(len(raw_messages) - 1, -1, -1):
+                        if raw_messages[i].get("role") == "user":
+                            raw_messages[i]["content"] = command
+                            break
+                else:
+                    # It's a regular query - override user_text_raw and continue processing
+                    user_text_raw = command
+                    selector, user_text = _split_selector(user_text_raw)
+                    # Update raw_messages so model sees the actual query
+                    for i in range(len(raw_messages) - 1, -1, -1):
+                        if raw_messages[i].get("role") == "user":
+                            raw_messages[i]["content"] = command
+                            break
+            else:
+                # Invalid choice
+                valid_choices = ', '.join(r['rank'] for r in state.pending_trust_recommendations)
+                text = f"[router] Invalid choice. Valid options: {valid_choices}"
+                if stream:
+                    return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+                return JSONResponse(_make_openai_response(text))
     
     # Only treat as session command if NOT a per-turn selector
     if selector == "":
@@ -1522,6 +1719,17 @@ async def v1_chat_completions(req: Request):
             else:
                 text = "[FUN]"
 
+        # Add disclaimer if KBs were attached but model used training data
+        if state.attached_kbs and "Source: Model" in text:
+            kb_list = ', '.join(sorted(state.attached_kbs))
+            disclaimer = f"[Note: No relevant information found in attached KBs ({kb_list}). Answer based on pre-trained data.]\n\n"
+            text = disclaimer + text
+        
+        # Auto-detach if this was a trust >>attach all operation
+        if state.auto_detach_after_response:
+            state.attached_kbs.clear()
+            state.auto_detach_after_response = False
+
         if stream:
             return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
         return JSONResponse(_make_openai_response(text))
@@ -1534,6 +1742,18 @@ async def v1_chat_completions(req: Request):
             vodka=vodka,
             facts_block=facts_block,
         ).strip()
+        
+        # Add disclaimer if KBs were attached but model used training data
+        if state.attached_kbs and "Source: Model" in text:
+            kb_list = ', '.join(sorted(state.attached_kbs))
+            disclaimer = f"[Note: No relevant information found in attached KBs ({kb_list}). Answer based on pre-trained data.]\n\n"
+            text = disclaimer + text
+        
+        # Auto-detach if this was a trust >>attach all operation
+        if state.auto_detach_after_response:
+            state.attached_kbs.clear()
+            state.auto_detach_after_response = False
+        
         if stream:
             return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
         return JSONResponse(_make_openai_response(text))
@@ -1550,6 +1770,18 @@ async def v1_chat_completions(req: Request):
             constraints_block="",
             thinker_role="thinker",
         ).strip()
+        
+        # Add disclaimer if KBs were attached but model used training data
+        if state.attached_kbs and "Source: Model" in text:
+            kb_list = ', '.join(sorted(state.attached_kbs))
+            disclaimer = f"[Note: No relevant information found in attached KBs ({kb_list}). Answer based on pre-trained data.]\n\n"
+            text = disclaimer + text
+        
+        # Auto-detach if this was a trust >>attach all operation
+        if state.auto_detach_after_response:
+            state.attached_kbs.clear()
+            state.auto_detach_after_response = False
+        
         if stream:
             return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
         return JSONResponse(_make_openai_response(text))
@@ -1565,6 +1797,18 @@ async def v1_chat_completions(req: Request):
         constraints_block="",
         thinker_role="thinker",
     ).strip()
+
+    # Add disclaimer if KBs were attached but model used training data
+    # Check for "Source: Model" marker (serious.py adds this when facts aren't useful)
+    if state.attached_kbs and "Source: Model" in text:
+        kb_list = ', '.join(sorted(state.attached_kbs))
+        disclaimer = f"[Note: No relevant information found in attached KBs ({kb_list}). Answer based on pre-trained data.]\n\n"
+        text = disclaimer + text
+    
+    # Auto-detach AFTER disclaimer check (so attached_kbs is still available for the check)
+    if state.auto_detach_after_response:
+        state.attached_kbs.clear()
+        state.auto_detach_after_response = False
 
     if stream:
         return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
