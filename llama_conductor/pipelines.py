@@ -1,19 +1,51 @@
 # pipelines.py
-# version 1.0.1
+# version 1.0.2
 """
 Specialized reasoning pipelines for llama-conductor.
+
+CHANGES IN v1.0.2:
+- RAW mode now has minimal system prompt to prevent:
+  * Annoying preambles ("Raw mode active—no stiff formatting. I'm listening.")
+  * Mid-sentence cutoffs causing loops when user says "go on"
+  * Mode announcements and meta-commentary
+- System prompt keeps RAW conversational but gives structure to prevent failure modes
+- Increased recommended CTC limits for RAW (see vodka_filter.py settings below)
 
 CHANGES IN v1.0.1:
 - RAW mode now includes CONTEXT block (conversation history) so queries like "what have we discussed?"
   work correctly instead of hallucinating. Model now has access to prior turns for disambiguation.
 
 Currently implements:
-  - RAW mode: bypass Serious formatting prompt, keep harness constraints (CTC, KB grounding, CONTEXT)
+  - RAW mode: conversational with minimal structure, keeps harness constraints (CTC, KB grounding, CONTEXT)
+  - Serious mode: structured output with confidence lines (see serious.py)
 """
 
 from __future__ import annotations
 
 from typing import List, Dict, Any, Callable, Optional, Tuple
+
+
+# ============================================================================
+# RAW Mode System Prompt (NEW in v1.0.2)
+# ============================================================================
+
+RAW_SYSTEM_PROMPT = """Conversational mode.
+
+Core rules:
+- Answer naturally and directly (no preambles, no mode announcements)
+- Complete your thoughts (don't cut off mid-sentence)
+- If user says "continue" or "go on", pick up EXACTLY where you left off
+- Use the CONTEXT section to understand prior conversation turns
+- Use the FACTS section when present (treat as ground truth)
+- Use the CONSTRAINTS section when present (must obey)
+
+DO NOT:
+- Announce "Raw mode active" or similar
+- Use phrases like "I'm listening" or "no stiff formatting"
+- Repeat previous message fragments when continuing
+- Cut off mid-sentence (complete your current thought)
+
+Just talk naturally like a human would."""
 
 
 # ============================================================================
@@ -123,7 +155,11 @@ def run_raw(
     top_p: float = 0.9,
 ) -> str:
     """
-    RAW mode: answer the user without the Serious formatting prompt.
+    RAW mode: conversational answer with minimal system prompt for structure.
+    
+    v1.0.2 changes:
+      - Added RAW_SYSTEM_PROMPT to prevent preamble spam and continuation loops
+      - Model now knows to complete thoughts and handle "go on" correctly
     
     Still uses:
       - Vodka (inlet/outlet for CTC trimming + memory expansion)
@@ -134,9 +170,9 @@ def run_raw(
     Does NOT use:
       - Serious system prompt (no confidence/source line appended)
       - Fun/FR transforms
-      - Any styling
+      - Heavy formatting
     
-    Result is model output as-is, with minimal scaffolding but full context awareness.
+    Result is conversational model output with just enough structure to prevent failure modes.
     """
 
     # 1) Apply Vodka inlet for CTC trimming
@@ -151,7 +187,7 @@ def run_raw(
     # 2) Extract effective user text (possibly rewritten by Vodka if ?? was used)
     effective_user_text = _extract_last_user_message(messages, user_text)
 
-    # 3) Build CONTEXT block (v1.0.1 addition: needed for summary queries)
+    # 3) Build CONTEXT block (needed for summary queries and conversation continuity)
     context_block = _build_context_block(
         messages,
         include_summary=True,
@@ -160,11 +196,15 @@ def run_raw(
         per_turn_max_chars=240,
     )
 
-    # 4) Build minimal prompt (no Serious system prompt, but include context)
+    # 4) Build prompt with RAW system prompt + sections
     fb = (facts_block or "").strip()
     cb = (constraints_block or "").strip()
 
     prompt_parts: List[str] = []
+    
+    # Add system prompt (NEW in v1.0.2)
+    prompt_parts.append(RAW_SYSTEM_PROMPT)
+    prompt_parts.append("")
 
     # Add CONTEXT if present
     if context_block:
@@ -189,7 +229,7 @@ def run_raw(
 
     prompt = "\n".join(prompt_parts).strip()
 
-    # 5) Call model directly (minimal framing)
+    # 5) Call model with structured prompt
     answer = call_model(
         role=thinker_role,
         prompt=prompt,
