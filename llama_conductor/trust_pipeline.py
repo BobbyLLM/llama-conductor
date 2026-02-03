@@ -1,5 +1,5 @@
 # trust_pipeline.py
-# version 1.1.0
+# version 1.1.1
 """
 >>trust mode - Tool recommendation pipeline (invariants-compliant)
 
@@ -12,10 +12,12 @@ Design principles:
 - No auto-execution, no implicit routing, no escalation
 - Router stays dumb (just routes to this pipeline)
 
-v1.1.0 changes (surgical, backwards-compatible):
+v1.1.1 changes (surgical, backwards-compatible):
 - Recognize encyclopedia / wiki-shaped queries and recommend >>wiki
 - Improve currency/exchange detection (e.g., "1 AUD to USD") and recommend >>exchange
 - Keep deterministic regex/heuristic matching (no model calls, no external lookups)
+- Improve >>wiki usability: suggest article-title commands for question-shaped queries
+- Recognize single-token lowercase encyclopedia lookups (e.g., 'deathclaw')
 """
 
 from typing import List, Dict, Any, Set
@@ -45,6 +47,14 @@ _REASONING_MARKERS = (
     "compare", "analyze", "evaluate", "assess", "pros and cons", "argue", "debate", "justify",
     "why", "how does", "how do", "explain"
 )
+
+# Single-token queries that should NOT trigger >>wiki suggestions.
+# Deterministic denylist to avoid wiki-spam on chatter / acknowledgements.
+_WIKI_SINGLE_TOKEN_DENYLIST = {
+    "hi", "hello", "hey", "help", "thanks", "thank", "ok", "okay", "yes", "no",
+    "lol", "lmao", "test", "testing"
+}
+
 
 
 def classify_query(query: str) -> Dict[str, Any]:
@@ -132,6 +142,55 @@ def _extract_math_expression(query: str) -> str:
     # Strip trailing punctuation that commonly appears in questions
     clean = re.sub(r"[\?\.!]+$", "", clean).strip()
     return clean
+
+def _suggest_wiki_title(query: str) -> str:
+    """Suggest an article-title style query for >>wiki.
+
+    Deterministic, conservative transformation:
+      - strips common encyclopedia lead phrases (e.g., "what is", "who is", "origin of")
+      - strips leading articles ("a", "an", "the")
+      - trims trailing context clauses (e.g., "in fallout", "from x") when they are clearly contextual
+      - lightly normalizes casing for single-token all-lowercase terms (capitalize first letter)
+
+    This is ONLY used to format a suggested command shown to the user.
+    It does NOT auto-execute anything and does not modify the user's query itself.
+    """
+    q = (query or "").strip()
+    if not q:
+        return q
+
+    ql = q.lower().strip()
+
+    # Remove common lead phrases
+    for lead in sorted(_ENCYCLOPEDIA_LEADS, key=len, reverse=True):
+        if ql.startswith(lead):
+            q = q[len(lead):].strip()
+            break
+
+    # Remove leading articles
+    q = re.sub(r"^(a|an|the)\s+", "", q, flags=re.I).strip()
+
+    # If query contains a clear context clause, keep the left-hand subject.
+    # Examples: "deathclaw in fallout" -> "deathclaw"
+    q = re.split(r"\s+(in|from|within|inside|universe|series)\s+", q, maxsplit=1, flags=re.I)[0].strip()
+
+    # Trim common trailing franchise/context words when query is exactly 2 tokens.
+    # Example: "deathclaw fallout" -> "deathclaw"
+    toks = re.findall(r"[A-Za-z0-9'/\-]+", q)
+    if len(toks) == 2:
+        tail = toks[1].lower()
+        if tail in {"fallout", "universe", "game", "series", "franchise", "lore"}:
+            q = toks[0]
+
+    # Light casing normalization for single-token all-lowercase alphabetic terms:
+    # "deathclaw" -> "Deathclaw" (helps title lookup; still deterministic)
+    toks2 = re.findall(r"[A-Za-z0-9'/\-]+", q)
+    if len(toks2) == 1 and toks2[0].isalpha() and toks2[0].islower():
+        q = toks2[0].capitalize()
+
+    q = re.sub(r"[\?\.!]+$", "", q).strip()
+    return q
+
 
 
 def _is_exchange_query(query: str) -> bool:
@@ -242,6 +301,14 @@ def _is_encyclopedia_query(query: str) -> bool:
             # Example: "new york city", "world war ii" (roman numerals allowed via tokens)
             return True
 
+
+    # Single-token lowercase entity lookups should still offer >>wiki (as an option),
+    # since users commonly type bare nouns (e.g., "deathclaw", "linux").
+    # Deterministic: require alphabetic token, not in denylist, and not a reasoning prompt.
+    if len(tokens) == 1:
+        t0 = tokens[0]
+        if t0.isalpha() and t0.islower() and len(t0) >= 3 and t0 not in _WIKI_SINGLE_TOKEN_DENYLIST:
+            return True
     return False
 
 
@@ -370,7 +437,8 @@ def generate_recommendations(
                 "tool": ">>wiki",
                 "confidence": "HIGH",
                 "reason": "Encyclopedia-style lookup (stable public reference)",
-                "command": f">>wiki {query}"
+                "command": f">>wiki {_suggest_wiki_title(query)}",
+                "note": "Use the entity/article title (not the full question)."
             })
             r += 1
 
@@ -479,7 +547,8 @@ def generate_recommendations(
             "tool": ">>wiki",
             "confidence": "HIGH",
             "reason": "Encyclopedia-style lookup (stable public reference)",
-            "command": f">>wiki {query}"
+            "command": f">>wiki {_suggest_wiki_title(query)}",
+            "note": "Use the entity/article title (not the full question)."
         })
         recommendations.append({
             "rank": "B",
@@ -548,7 +617,13 @@ def format_recommendations(recommendations: List[Dict[str, str]], query: str = "
         command = rec["command"]
         lines.append(f"{rank}) **{tool}** (confidence: {confidence})")
         lines.append(f"   {reason}")
-        lines.append(f"   Command: `{command}`")
+        label = "Command"
+        if tool == ">>wiki":
+            label = "Suggested command"
+        lines.append(f"   {label}: `{command}`")
+        note = rec.get("note", "")
+        if note:
+            lines.append(f"   Note: {note}")
         lines.append("")
     lines.append("**Choose an option (A, B, C...) or type your own command.**")
     return "\n".join(lines)
@@ -586,7 +661,7 @@ def handle_trust_command(
 
 
 if __name__ == "__main__":
-    print("=== Testing trust_pipeline.py v1.1.0 ===\n")
+    print("=== Testing trust_pipeline.py v1.1.1 ===\n")
 
     mock_kbs = set()
     mock_kb_paths = {"amiga": "/path/to/amiga", "c64": "/path/to/c64", "dogs": "/path/to/dogs"}

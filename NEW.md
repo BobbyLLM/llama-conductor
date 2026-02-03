@@ -1,6 +1,23 @@
 # What's New
 
-## Latest (v1.1.5)
+*** V1.1.6 (latest)
+
+Trust Pipeline Enhancements (Wiki & Exchange Routing)
+
+This release refines the trust pipeline to correctly surface authoritative sidecars for encyclopedic and exchange-style queries, without violating any project invariants.
+
+The trust pipeline has been extended to:
+
+Recommend >>wiki for encyclopedia-shaped questions (people, places, concepts, lore)
+
+Recommend >>exchange for currency conversion / FX-rate queries
+
+Preserve all existing behavior for >>calc, >>weather, ##mentats, KB attachment, and serious mode
+
+No auto-execution was added. All changes remain recommendation-only and fully explicit.
+
+
+## (v1.1.5)
 
 ### 🎯 New Feature: >>trust Mode (Tool Recommendation)
 
