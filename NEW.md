@@ -1,6 +1,44 @@
 # What's New
 
-*** V1.1.6 (latest)
+*** V1.2.0 (latest)
+
+V1.2.0: monolithic code base turned modular
+
+- V1.1.6 was centered around a large monolithic router file.
+- V1.2.0 is organized into focused modules (commands, config, session state, helpers, model calls, streaming, vault ops), with a lean orchestration router.
+- Practical impact:
+  - clearer command behavior
+  - safer/faster iteration when adding or changing features
+  - lower regression risk and easier troubleshooting
+- End result: more stability, less borkability
+
+New in V1.2.0: Scratchpad (ephemeral grounded context)
+
+Scratchpad is a session-level, temporary capture store that can be attached as context and used for grounded reasoning during the current session.
+This means that you can activate the scratchpad and reason/compare etc over contents thereof. The scratchpad is auto-deleted every 60 minutes.
+
+What users can do:
+
+- Turn on / off:
+  - `>>attach scratchpad` (or `>>scratch`)
+  - `>>detach scratchpad` (or `>>detach scratch`)
+
+- Inspect and manage captured context:
+  - `>>scratch status`
+  - `>>scratch list`
+  - `>>scratch show [query]`
+  - `>>scratch clear` / `>>scratch flush`
+  - `>>scratch add <text>`
+  - `>>scratch delete <index|query>`
+
+- Operational behavior:
+  - selected tool outputs are auto-captured while scratchpad is attached
+  - raw captures are stored at `total_recall/session_kb/<session_id>.jsonl`
+  - inline command hints now point users to `>>help` for the full list
+
+---
+
+*** V1.1.6
 
 Trust Pipeline Enhancements (Wiki & Exchange Routing)
 

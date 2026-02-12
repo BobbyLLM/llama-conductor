@@ -21,3 +21,17 @@ dist/
 build/
 __pycache__/
 *.pyc
+
+# Personal workspace files/folders
+/WORK-DONE-SO-FAR.md
+/.vscode/
+/ChatGPT/
+
+# Local/private project content
+/llama_conductor/exercise_libraries/
+/llama_conductor/test tools/
+/llama_conductor/__pycache__/
+
+# Cliniko-related local/private artifacts
+*cliniko*
+*CLINIKO*

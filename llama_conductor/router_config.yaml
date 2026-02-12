@@ -1,5 +1,5 @@
 # router_config.yaml
-# version 1.0.3
+# version 1.0.5 - CORRECTED
 
 # Where to send OpenAI-compatible chat completion requests.
 # Typically your llama-swap / llama.cpp OpenAI-ish endpoint.
@@ -14,7 +14,7 @@ roles:
   critic: "Phi-4-mini"
   vision: "qwen-3-4B_VISUAL"
   coder: "Qwen-3-4B Hivemind"
-  second_op: "Nanbeige 3B"  # not wired yet; placeholder for future
+  second_op: "Nanbeige 3B"
 
 # Vault is Qdrant-only; Mentats uses this kb label when searching Qdrant.
 vault_kb_name: "vault"
@@ -41,10 +41,21 @@ vodka:
   max_touches: 2
   debug: true
   debug_dir: "."
-  n_last_messages: 4
+  n_last_messages: 10
   keep_first: true
   max_chars: 3000
+
 # Vault chunking (for >>move to vault ingestion)
 vault:
   chunk_words: 250        # Smaller chunks = better semantic matching for queries
   chunk_overlap_words: 50  # Overlap prevents losing context at chunk boundaries
+
+# Scratchpad sidecar (ephemeral session-grounding)
+scratchpad:
+  storage_dir: "."         # base dir for total_recall/session_kb
+  max_entries: 12          # max captures retained per session file
+  max_capture_chars: 12000 # per-capture hard clip
+  top_k: 3                 # retrieval hits merged into facts block
+  max_chars: 1200          # max chars contributed to facts block
+  max_age_minutes: 60      # hard expiry; pruned on scratchpad access
+  exhaustive_response_mode: "raw"  # raw|llm; raw bypasses LLM for "all facts/everything" intents

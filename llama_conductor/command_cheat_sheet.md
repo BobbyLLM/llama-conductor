@@ -1,153 +1,130 @@
-#  Router Command Cheat Sheet 
+# Router Command Cheat Sheet
 
+## Core command prefixes
+- `>>` router/system commands
+- `!!` Vodka memory write/manage
+- `??` Vodka memory query/rewrite
+- `##` one-turn selectors (Mentats/Fun)
+Tips:
+- Prefixes are strict and non-interchangeable.
+- Same keyword under different prefixes can do different things.
 
-## Sidecar utilities (deterministic, no LLM) — start with `>>`
+## Quick utilities (`>>`)
+- `>>help` show this sheet
+- `>>status` show session state
+- `>>calc <expression>` calculator (`+ - * / %`, `**` = power), parentheses, functions (`sqrt/log/sin/cos`)
+- `>>wiki <topic>` Wikipedia summary fetch
+- `>>exchange <query>` currency conversion (via Frankfurter API, real-time rates)
+- `>>weather <location>` current weather (via Open-Meteo API; use single word or "City Country")
+- `>>find <query>` search attached KB files
+- `>>peek <query>` preview KB retrieval chunks for the query
+- `>>flush` clear CTC history cache
+Tips:
+- Use these when you want a direct tool result rather than a free-form chat answer.
+- API-backed commands (`wiki`, `exchange`, `weather`) can fail if upstream services are unavailable.
 
-### Calculator
-- `>>calc <expression>` — evaluate math expressions safely
-  - Supports: `+`, `-`, `*`, `/`, `%`, `**`, parentheses, functions (`sqrt`, `sin`, `cos`, `log`, `floor`, `ceil`, `abs`, `round`, `min`, `max`, `pow`)
-  - Natural language: `>>calc 30% of 79.95` → `23.99`
-  - Natural language: `>>calc 14 per 20` → `0.70`
+## KB attachment (`>>`)
+- `>>list_kb` list known and attached KBs
+- `>>attach <kb>` attach KB
+- `>>attach all` attach all KBs
+- `>>detach <kb>` detach KB
+- `>>detach all` detach all KBs
+Tips:
+- After `>>attach <kb>`, normal chat queries are grounded against attached KB content until you detach it.
+- Attachments persist for the session (sticky), so use `>>detach <kb>` or `>>detach all` to stop grounding.
 
-### Knowledge lookup (free APIs, no auth)
-- `>>wiki <topic>` — Wikipedia summary (via free JSON API, max 500 chars)
-  - Example: `>>wiki Albert Einstein` → opening paragraph + title
-  - Works best with: single topics or well-known names
-  - Deterministic (no hallucination), context-light
-  - Note: Requires valid Wikipedia article name (e.g. "Albert Einstein" not "albert einstein physicist")
-  
-- `>>exchange <query>` — Currency conversion (via Frankfurter API, real-time rates)
-  - Examples: `>>exchange 1 USD to EUR`, `>>exchange GBP to JPY`, `>>exchange convert AUD to CAD`
-  - Returns: `1.0 USD = 0.92 EUR`
-  - Supports common currency aliases: USD, EUR, GBP, JPY, AUD, CAD, etc.
-  
-- `>>weather <location>` — Current weather (via Open-Meteo, compact format)
-  - Examples: `>>weather Perth`, `>>weather London`, `>>weather New York`
-  - Works best with: city names or short location names (single word, or "City Country")
-  - Returns: `Perth: 22°C, Partly cloudy`
-  - Note: Long location strings may timeout. Use city name only if possible.
+## Scratchpad (`>>`)
+Attach first:
+- `>>attach scratchpad`
+- `>>detach scratchpad`
 
-### Memory & search
-- `>>list` — list all stored Vodka memories with metadata (TTL, touch count, creation date)
-- `>>flush` — reset the CTC (Cut-The-Crap) message history cache for next turn
-- `>>find <query>` — search attached filesystem KBs for exact text matches
-  - Returns file location, line number, and snippet context
-  - Example: `>>find unit price` → finds "unit price" in KB files
-  - Requires: KBs must be attached first with `>>attach <kb>`
+Full commands:
+- `>>scratchpad status`
+- `>>scratchpad list`
+- `>>scratchpad show [query]`
+- `>>scratchpad clear` (alias: `>>scratchpad flush`)
+- `>>scratchpad add <text>`
+- `>>scratchpad delete <index|query>`
 
----
+Aliases:
+- `>>scratch` attaches scratchpad
+- `>>scratch ...` is an alias root for all `>>scratchpad ...` commands
+- `>>attach scratch` / `>>detach scratch` map to `scratchpad`
+- `>>list scratchpad` -> `>>scratchpad list`
+- When scratchpad is attached:
+  - `>>add <text>` -> `>>scratchpad add <text>`
+  - `>>list` shows scratchpad captures
+- When scratchpad is not attached:
+  - `>>list` shows known KBs
 
-## Session commands (sticky) — start with `>>`
+Tips:
+- Scratchpad is session-ephemeral and used for grounded reasoning when attached.
+- Selected tool outputs are auto-captured while attached.
+- `>>list` is context-sensitive: scratchpad list when attached, KB list when not attached.
+- Raw captures are stored at `total_recall/session_kb/<session_id>.jsonl`.
 
-### Help & tool selection
-- `>>help` — show this cheat sheet in-chat
-- `>>status` — show session state (sticky modes, attachments, last RAG stats)
-- `>>trust <query>` — **tool recommendation** (analyzes query, suggests best tools)
-  - Shows ranked options (A, B, C) with confidence levels
-  - Type A/B/C to execute chosen recommendation
-  - Example: `>>trust What's 15% of 80?` → suggests `>>calc` (A) or serious mode (B)
-  - Helps you choose the right tool without guessing
+## Sticky modes (`>>`)
+- `>>fun` / `>>f` / `>>F` enable Fun mode
+- `>>fun off` / `>>f off` / `>>F off` disable Fun mode
+- `>>fr` / `>>FR` / `>>fun_rewrite` enable Fun Rewrite
+- `>>fr off` / `>>FR off` / `>>fun_rewrite off` disable Fun Rewrite
+- `>>raw` enable Raw mode
+- `>>raw off` disable Raw mode
+Tips:
+- Sticky modes persist until turned off.
+- Per-turn selectors can bypass sticky behavior for that turn.
 
-### Fun modes (sticky)
-- `>>fun` / `>>f` / `>>F` — enable sticky Fun mode
-- `>>fun off` / `>>f off` / `>>F off` — disable sticky Fun mode
+## SUMM and Vault (`>>`)
+- `>>summ new` summarize new raw files in attached KB folders
+- `>>move to vault` embed attached KB summaries into Vault
+Tips:
+- `>>summ new` processes new raw docs in currently attached KB folders.
+- `>>move to vault` promotes summaries for Vault retrieval; it does not make Vault attachable via `>>attach`.
 
-### Fun Rewrite (FR) modes (sticky)
-- `>>fun_rewrite` / `>>FR` / `>>fr` — enable sticky Fun Rewrite mode
-- `>>fun_rewrite off` / `>>FR off` / `>>fr off` — disable sticky Fun Rewrite mode
+## Tool recommendation (`>>`)
+- `>>trust <query>` suggests best tool path (A/B/C)
+Tips:
+- `>>trust` is a router guide step; choose A/B/C to execute.
+- Pending recommendation state is transient and replaced by newer routing actions.
 
-**Nb:** If you invoke `##mentats` while Fun/FR is active, the router will hard-disable Fun/FR and run Mentats in isolation.
+## Vodka memory (`!!` / `??`)
+Write/manage:
+- `!! <text>` store memory
+- `!! forget <query>` delete matching memories
+- `!! nuke` delete all Vodka memories
 
-### Raw mode (sticky)
-- `>>raw` — enable sticky Raw mode (answers without Serious formatting, includes context)
-- `>>raw off` — disable sticky Raw mode
+Query:
+- `?? <query>` retrieve memories and rewrite question with matched context
+- `?? list` list Vodka memories (TTL, touch count, creation date)
+Tips:
+- `!!` writes/manages memory; `??` reads/rewrites with memory context.
+- `!! nuke` clears Vodka memory only; `>>flush` clears CTC cache only.
 
-### KB attachment (filesystem KBs)
-- `>>list_kb` — list known KB names + attached KBs
-- `>>attach <kb>` — attach a KB for this session
-- `>>attach all` — attach all known KBs
-- `>>detach <kb>` — detach a specific KB
-- `>>detach all` — detach all KBs
+## One-turn selectors (`##`)
+- `##mentats <question>` Vault-only run
+- `##m <question>` alias
+- `##fun <question>` / `##f <question>` one-turn Fun
+Tips:
+- Selectors apply to the current turn only.
+- Use selectors for explicit pipeline control when sticky modes are active.
 
-### SUMM workflow (KB curation)
-You keep KBs as **folders of files** on disk.
+## Vision/OCR
+- `>>vision` / `>>vl` / `>>v` with image: direct vision answer
+- `>>ocr` / `>>read` with image: OCR text extraction
+Tips:
+- `>>vision`/`>>ocr` and `##vision`/`##ocr` route to the same vision pathway.
+- You can simply attach an image and ask your question in natural language; the router will auto-run vision.
+- Use `>>vision`/`>>ocr` (or `##vision`/`##ocr`) when you want to force a specific image-processing path.
 
-**Supported raw file types for summarization:** `.md`, `.txt`, `.pdf`, `.htm`, `.html`
-
-**What happens when you SUMM:**
-- Raw files in the KB folder are summarized using `SUMM.md`.
-- A `SUMM_<filename>.md` is produced in the KB folder.
-- The original raw file is moved into `<kb_folder>/original/`.
-- Retrieval from KBs uses `SUMM_*.md` (not the raw docs).
-
-**Commands:**
-- `>>summ new` (recommended; command matching is case-insensitive) — summarize NEW raw files in all currently attached KBs
-  - "new" means: files that are **not** already named `SUMM_*`.
-  - Uses provenance + SHA-based dedupe rules from the pipeline.
-
-> Note: Mentats does **not** stream status. Await response, mortal!
-
-### Vault promotion (Qdrant)
-- `>>move to vault` — take `SUMM_*.md` from **all attached KBs**, chunk+embed, and write them into Qdrant as `kb="vault"`.
-
-### KB peek (assumes KBs attached)
-- `>>peek <query>` — preview the would-be FACTS block (debugging)
-
----
-
-## Vodka memory commands (per-turn control) — start with `!!` or `??`
-
-### Store & manage
-- `!! <text>` — manually store text as a Vodka memory (highlight for later recall)
-- `!! nuke` / `nuke !!` — **delete all Vodka memories** (hard reset, early return)
-- `!! forget <query>` — delete Vodka memories matching the query text
-
-### Query & expand
-- `?? <query>` — search Vodka memories, rewrite your question using matched facts as context
-  - Model sees stored facts injected into the message
-  - Useful for: follow-ups, referencing prior notes
-- `?? list` — list all stored Vodka memories with metadata (TTL, touch count, creation date)
-
-**Important distinction:**
-- `!! nuke` — deletes **Vodka memory store** (persistent facts you've saved)
-- `>>flush` — resets **CTC cache** (temporary message history trimming); does NOT delete memories
-
----
-
-## Per-turn selectors (one message) — start with `##`
-
-### Mentats (Vault-only)
-- `##mentats <question>`
-- alias: `##m`
-
-Mentats function:
-- Detaches all KBs.
-- Auto-attaches Vault for the run, then detaches.
-- Must not receive Vodka or chat history.
-- If Vault returns no facts for the query, Mentats refuses cleanly.
-- Mentats always logs raw step outputs to `mentats_debug.log` (in the router working directory).
-
-### Fun (one turn)
-- `##fun <question>` / `##f <question>` — answer in Serious, then style it.
-
----
-
-## Vision / Screenshot commands (per-turn; works when an image is present)
-
-### Option A: Direct VLM (routes straight to roles.vision)
-- `>>vision` / `>>vl` / `>>v` + <text> -> Direct vision answer (VLM sees the image + your question; answer based on image)
-
-### Option B: OCR
-- `>>OCR` / `>>read` -> OCR extract text from image (if present) 
-
-- `image present, no vision command given` -> Defaults to caption/OCR first, then runs selected pipeline
-
----
-
-## Output markers
-
-- `[trust]` — Tool recommendations from >>trust mode
-- `[FUN]` — Fun mode outputs (with seed quote)
-- `[FUN REWRITE]` — Fun Rewrite outputs (with seed quote)
-- `[ZARDOZ HATH SPOKEN]` — Mentats outputs (with Sources: Vault)
-- `[calc]`, `[wiki]`, `[exchange]`, `[weather]`, `[find]`, `[list]`, `[flush]` — Sidecar outputs
+## Status fields (`>>status`)
+- `session_id` current chat/session identifier used by the router
+- `attached_kbs` KBs currently attached for retrieval grounding
+- `fun_sticky` whether sticky Fun mode is currently enabled
+- `fun_rewrite_sticky` whether sticky Fun Rewrite mode is currently enabled
+- `last_query` most recent filesystem-KB retrieval query
+- `last_hits` retrieval hit indicator (`0`=no matches; `>0`=matches found)
+- `vault_last_query` most recent Vault retrieval query
+- `vault_last_hits` same idea, but for Vault retrieval
+Tips:
+- If an answer is weak and hits are `0`, the issue is likely missing retrieval; if hits are non-zero, the issue is more likely synthesis/interpretation quality.
+- Hit counts are a quick clue, not a quality grade.

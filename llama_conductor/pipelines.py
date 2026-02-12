@@ -1,7 +1,43 @@
 # pipelines.py
-# version 1.0.2
+# version 1.0.6
 """
 Specialized reasoning pipelines for llama-conductor.
+
+CHANGES IN v1.0.6:
+- CRITICAL: Synced CONTEXT window with Vodka settings for efficiency
+  * max_turn_pairs: 12→10 (matches vodka n_last_messages=10 = 20 messages)
+  * max_chars: 2400→2000 (tighter budget, still plenty of room)
+  * per_turn_max_chars: 400 (unchanged - preserves full responses)
+- FIXED: v1.0.5 was requesting 24 messages from vodka's pool of 20 (wasteful)
+- NOW: Perfect 1:1 sync - no wasted cycles, no mismatched expectations
+- RESULT: True CTC compliance for 4GB VRAM systems (Quadro P1000, etc.)
+- Total CONTEXT: ~2KB (vs 50KB bloat) - potato PC friendly
+- Prevents loops up to 20 turns while respecting hardware limits
+
+CHANGES IN v1.0.5:
+- FIX: Increased CONTEXT window AGAIN to prevent 12-18 turn loops
+  * max_turn_pairs: 8→12 (shows 24 messages instead of 16)
+  * max_chars: 1800→2400 (increases context size, still <3KB, CTC-compliant)
+  * Tested against EMOTIONAL_DAMAGE.md (looped at turn 18 with v1.0.4)
+  * Should prevent loops up to ~20 turns
+- Per-turn limit unchanged (400 chars preserves full responses)
+- Total CONTEXT still under 3KB - respects Vodka CTC philosophy
+
+CHANGES IN v1.0.4:
+- CRITICAL FIX: Added "User:" label to current message in prompt
+  * Without label, model thought unlabeled text was continuation of its own output
+  * Caused immediate parroting/looping (repeating previous response + echoing user input)
+  * Now formats current user message as "User: {text}" to match CONTEXT format
+- Kept v1.0.3 context window increase (prevents 6-8 turn loops)
+- Both fixes required to prevent all loop patterns
+
+CHANGES IN v1.0.3:
+- FIX: Increased RAW mode CONTEXT window to prevent loop issue
+  * max_turn_pairs: 4→8 (last 16 messages instead of 8)
+  * max_chars: 900→1800 (doubles context size, still CTC-compliant)
+  * per_turn_max_chars: 240→400 (preserves full responses)
+- This prevents model from repeating verbatim output when it can't see recent turns
+- Total CONTEXT still under 2KB - respects Vodka CTC philosophy
 
 CHANGES IN v1.0.2:
 - RAW mode now has minimal system prompt to prevent:
@@ -188,12 +224,20 @@ def run_raw(
     effective_user_text = _extract_last_user_message(messages, user_text)
 
     # 3) Build CONTEXT block (needed for summary queries and conversation continuity)
+    # SYNCED v1.0.6: Match Vodka's n_last_messages=10 for perfect efficiency
+    # - max_turn_pairs: 10 (shows exactly 20 messages - matches Vodka's pool)
+    # - max_chars: 2000 (tight budget, CTC-compliant for 4GB VRAM)
+    # - per_turn_max_chars: 400 (preserves full responses)
+    # v1.0.5 requested 24 messages from pool of 20 (wasteful mismatch)
+    # v1.0.6 requests 20 messages from pool of 20 (perfect 1:1 sync)
+    # Result: No wasted cycles, true CTC compliance, prevents 20-turn loops
+    # Total CONTEXT: ~2KB (potato PC friendly, Quadro P1000 tested)
     context_block = _build_context_block(
         messages,
         include_summary=True,
-        max_turn_pairs=4,
-        max_chars=900,
-        per_turn_max_chars=240,
+        max_turn_pairs=10,
+        max_chars=2000,
+        per_turn_max_chars=400,
     )
 
     # 4) Build prompt with RAW system prompt + sections
@@ -224,8 +268,12 @@ def run_raw(
         prompt_parts.append(cb)
         prompt_parts.append("")
 
-    # Add the question
-    prompt_parts.append(effective_user_text if effective_user_text else "[no question provided]")
+    # Add the current user question with role label
+    # CRITICAL FIX v1.0.4: Without "User:" prefix, model thinks unlabeled text
+    # is a continuation of its own previous response, causing immediate parroting.
+    # CONTEXT shows "User: ... / Assistant: ..." format, so current message must match.
+    user_question = effective_user_text if effective_user_text else "[no question provided]"
+    prompt_parts.append(f"User: {user_question}")
 
     prompt = "\n".join(prompt_parts).strip()
 
