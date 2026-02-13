@@ -554,10 +554,12 @@ class Filter:
         entries.sort(key=lambda e: e[2], reverse=True)
         
         if not entries:
-            # No memories stored
+            # Keep the same deterministic header so router hard-return logic is consistent.
             output = (
-                "You have no stored memories. "
-                "Create memories by prefixing your text with '!!' (e.g., '!! my server is at 192.168.1.1').\n"
+                "[Vodka Memory Store]\n\n"
+                "No stored memories.\n"
+                "Create memories by prefixing your text with '!!' "
+                "(e.g., '!! my server is at 192.168.1.1').\n"
             )
         else:
             # Format all memories with metadata
@@ -658,9 +660,10 @@ class Filter:
         
         stripped = content.strip()
         norm = stripped.lower()
+        norm_no_ws = re.sub(r"\s+", "", norm)
 
         # !! nuke / nuke !!
-        if norm in ("!! nuke", "nuke !!"):
+        if norm_no_ws in ("!!nuke", "nuke!!"):
             fr.nuke()
             fr.S.log("VODKA_NUKE_CMD")
             # remove the user command message
@@ -673,8 +676,9 @@ class Filter:
             return messages, body
 
         # !! forget <query>
-        if norm.startswith("!! forget"):
-            query = stripped[len("!! forget"):].strip()
+        forget_match = re.match(r"^!!\s*forget(?:\s+(.*))?$", stripped, flags=re.IGNORECASE)
+        if forget_match:
+            query = (forget_match.group(1) or "").strip()
             deleted = self._delete_vodka_memories(fr, query, max_results=50)
             # remove the user command message
             del messages[idx]
@@ -765,7 +769,9 @@ class Filter:
         # Don't store highlights for explicit control commands (nuke/forget/??)
         s = content.strip()
         low = s.lower()
-        if low in ("!! nuke", "nuke !!") or low.startswith("!! forget") or s.startswith("??"):
+        low_no_ws = re.sub(r"\s+", "", low)
+        is_forget_cmd = re.match(r"^!!\s*forget(?:\s+.*)?$", s, flags=re.IGNORECASE) is not None
+        if low_no_ws in ("!!nuke", "nuke!!") or is_forget_cmd or s.startswith("??"):
             return
 
         highlights = _extract_manual_highlights(content)
