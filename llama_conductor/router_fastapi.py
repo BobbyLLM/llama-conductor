@@ -301,6 +301,14 @@ def _soft_alias_command(text: str, state: SessionState) -> Optional[str]:
         return None
 
     low = t.lower()
+    if low.startswith("scratchpad show "):
+        q = t[len("scratchpad show ") :].strip()
+        if q:
+            return f">>scratchpad show {q}"
+    if low.startswith("scratch show "):
+        q = t[len("scratch show ") :].strip()
+        if q:
+            return f">>scratchpad show {q}"
     if low in ("list", "list scratchpad"):
         return ">>scratchpad list"
     if low.startswith("delete "):
