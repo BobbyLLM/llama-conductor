@@ -36,12 +36,13 @@ Tips:
 ## Scratchpad (`>>`)
 Attach first:
 - `>>attach scratchpad`
-- `>>detach scratchpad`
+- `>>detach scratchpad` (detaches and deletes current session scratchpad data)
 
 Full commands:
 - `>>scratchpad status`
 - `>>scratchpad list`
 - `>>scratchpad show [query]`
+- `>>scratchpad show all` (full dump of all stored scratchpad records for this session)
 - `>>scratchpad clear` (alias: `>>scratchpad flush`)
 - `>>scratchpad add <text>`
 - `>>scratchpad delete <index|query>`
@@ -60,8 +61,21 @@ Aliases:
 Tips:
 - Scratchpad is session-ephemeral and used for grounded reasoning when attached.
 - Selected tool outputs are auto-captured while attached.
+- `>>detach all` also deletes scratchpad data when scratchpad is attached.
 - `>>list` is context-sensitive: scratchpad list when attached, KB list when not attached.
+- `>>list` may show more records than a normal follow-up reasoning turn uses; to query against all contents (eg: "compare xyz to abc"), run `>>scratchpad show all` first, then ask the question.
 - Raw captures are stored at `total_recall/session_kb/<session_id>.jsonl`.
+
+## Cliniko (`>>`)
+Two-step workflow:
+1. `>>cliniko` + paste raw clinical note payload
+2. `>>cliniko review` (optional LLM polish of last scaffold)
+
+Other:
+- `>>cliniko parse` parse-only diagnostics
+Tips:
+- `>>cliniko review` requires a prior successful `>>cliniko` in the same session.
+- Deterministic scaffold first, then optional stochastic polish.
 
 ## Sticky modes (`>>`)
 - `>>fun` / `>>f` / `>>F` enable Fun mode

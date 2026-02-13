@@ -1,6 +1,18 @@
 # What's New
 
-*** V1.2.0 (latest)
+*** V1.2.1 (latest)
+
+Scratchpad reliability and safety updates:
+
+- `>>detach scratchpad` now detaches and deletes session scratchpad data, with record count in the response.
+- `>>detach all` now also deletes scratchpad data when scratchpad is attached.
+- `>>scratchpad delete <query>` now uses token-aware matching (prevents substring over-delete, e.g. `help` no longer deletes `helping`).
+- Reasoning over scratchpad now uses full-context mode when a query narrows to exactly one matching record, even if other unrelated records exist.
+- Existing exhaustive behavior (`show all` / `all facts`) remains unchanged.
+
+---
+
+*** V1.2.0
 
 V1.2.0: monolithic code base turned modular
 

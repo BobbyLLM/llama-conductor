@@ -323,9 +323,25 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         if target == "scratch":
             target = "scratchpad"
         if target == "all":
+            scratchpad_deleted = False
+            scratchpad_count = 0
+            if "scratchpad" in state.attached_kbs and list_scratchpad_records and clear_scratchpad:
+                recs = list_scratchpad_records(session_id, limit=1000000)
+                scratchpad_count = len(recs)
+                scratchpad_deleted = bool(clear_scratchpad(session_id))
             state.attached_kbs.clear()
+            if scratchpad_deleted:
+                return f"[router] detached ALL and deleted scratchpad data ({scratchpad_count} records dumped)"
             return "[router] detached ALL"
         if target in state.attached_kbs:
+            if target == "scratchpad" and list_scratchpad_records and clear_scratchpad:
+                recs = list_scratchpad_records(session_id, limit=1000000)
+                n = len(recs)
+                deleted = bool(clear_scratchpad(session_id))
+                state.attached_kbs.remove(target)
+                if not deleted:
+                    return "[router] detached 'scratchpad' (warning: scratchpad delete failed)"
+                return f"[router] detached 'scratchpad' and deleted scratchpad data ({n} records dumped)"
             state.attached_kbs.remove(target)
             return f"[router] detached '{target}'"
         return f"[router] kb not attached: '{target}'"

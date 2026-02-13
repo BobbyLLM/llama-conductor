@@ -333,18 +333,21 @@ def delete_scratchpad_by_index(session_id: str, index_1based: int) -> bool:
 
 
 def delete_scratchpad_by_query(session_id: str, query: str) -> int:
-    """Delete all records whose text or preview contains query (case-insensitive)."""
-    q = (query or "").strip().lower()
-    if not q:
+    """Delete records by token-aware query match (prevents substring over-deletes)."""
+    q = (query or "").strip()
+    q_tokens = _tokenize(q)
+    if not q_tokens:
         return 0
     path = get_session_scratchpad_path(session_id)
     records = _load_pruned_records(path)
     keep: List[Dict[str, Any]] = []
     removed = 0
+    q_token_set = set(q_tokens)
     for rec in records:
         t = str(rec.get("text", "") or "").lower()
         p = str(rec.get("preview", "") or "").lower()
-        if q in t or q in p:
+        rec_tokens = _tokenize(f"{t} {p}")
+        if q_token_set.issubset(rec_tokens):
             removed += 1
             continue
         keep.append(rec)
@@ -420,7 +423,7 @@ def build_scratchpad_facts_block(
     q_tokens = _tokenize(q)
     semantic_q_tokens = _semantic_query_tokens(q)
     exhaustive = _wants_exhaustive_query(q)
-    scored: List[tuple[float, Dict[str, Any]]] = []
+    scored: List[tuple[float, bool, Dict[str, Any]]] = []
 
     for idx, rec in enumerate(records):
         txt = str(rec.get("text", "") or "")
@@ -437,6 +440,7 @@ def build_scratchpad_facts_block(
             t_tokens = _tokenize(txt)
             match_tokens = semantic_q_tokens if semantic_q_tokens else q_tokens
             overlap = len(match_tokens & t_tokens)
+            is_match = overlap > 0
             if overlap <= 0:
                 # Keep weak recency-only fallback but at low weight
                 score = 0.05 + (0.20 * recency)
@@ -444,8 +448,9 @@ def build_scratchpad_facts_block(
                 score = (overlap / float(max(1, len(match_tokens)))) + (0.25 * recency)
         else:
             score = 0.20 + (0.30 * recency)
+            is_match = False
 
-        scored.append((score, rec))
+        scored.append((score, is_match, rec))
 
     if not scored:
         return ""
@@ -454,9 +459,39 @@ def build_scratchpad_facts_block(
     if exhaustive:
         # Explicit "all facts/everything" intent: bypass top_k/max_chars clipping.
         # Keep deterministic order by score (desc), then natural record order.
-        chosen = [rec for _, rec in scored]
+        chosen = [rec for _, _, rec in scored]
     else:
-        chosen = [rec for _, rec in scored[: max(1, int(top_k))]]
+        chosen = [rec for _, _, rec in scored[: max(1, int(top_k))]]
+
+    # Single-record safety path:
+    # If there is only one usable scratchpad record, reason over its full content
+    # instead of a short snippet so follow-up synthesis is not starved.
+    usable_records = [
+        rec for rec in records
+        if str(rec.get("text", "") or "").strip()
+        and not _is_low_signal_record(
+            str(rec.get("source_command", "") or ""),
+            str(rec.get("text", "") or ""),
+        )
+    ]
+    matched_records = [rec for _, is_match, rec in scored if is_match]
+    # Primary rule: if the query narrows to exactly one matching record,
+    # reason over that full record even if other unrelated records exist.
+    query_single_match_mode = (not exhaustive) and bool(q_tokens) and (len(matched_records) == 1)
+    if query_single_match_mode:
+        chosen = [matched_records[0]]
+
+    single_full_mode = (
+        (not exhaustive)
+        and (
+            query_single_match_mode
+            or ((len(usable_records) == 1) and (len(chosen) == 1))
+        )
+    )
+    single_record_cap = max(1, int(cfg_get("scratchpad.max_capture_chars", 12000)))
+    effective_max_chars = max_chars
+    if single_full_mode:
+        effective_max_chars = max(int(max_chars), int(single_record_cap))
 
     pieces: List[str] = []
     used = 0
@@ -464,7 +499,7 @@ def build_scratchpad_facts_block(
         source = str(rec.get("source_command", "unknown"))
         ts = str(rec.get("ts_utc", ""))
         sha = str(rec.get("sha256", ""))[:12]
-        if exhaustive:
+        if exhaustive or single_full_mode:
             snippet = str(rec.get("text", "") or "").strip()
         else:
             snippet = _extract_query_snippet(str(rec.get("text", "")), q_tokens, max_len=420)
@@ -472,7 +507,12 @@ def build_scratchpad_facts_block(
             continue
 
         line = f"- [scratchpad cmd={source} ts={ts} sha={sha}] {snippet}"
-        if (not exhaustive) and max_chars > 0 and used + len(line) + 2 > max_chars:
+        if (not exhaustive) and effective_max_chars > 0 and used + len(line) + 2 > effective_max_chars:
+            remaining = effective_max_chars - used - 2
+            if remaining > 12:
+                clipped = line[: remaining - 3].rstrip() + "..."
+                pieces.append(clipped)
+                used += len(clipped) + 2
             break
         pieces.append(line)
         used += len(line) + 2
