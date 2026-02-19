@@ -22,6 +22,7 @@ class SessionState:
     locked_summ_path: str = ""
     locked_summ_rel_path: str = ""
     locked_last_fact_lines: int = 0
+    pending_lock_candidate: str = ""
 
     # One Vodka per session (reduces noise + preserves stateful debug counters)
     vodka: Optional[any] = None  # VodkaFilter

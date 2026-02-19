@@ -40,6 +40,9 @@ Tips:
 - While lock is active, normal chat grounding is deterministic and scoped to the locked SUMM file.
 - Soft aliases (when a filesystem KB is attached): `lock SUMM_<name>.md` and `unlock`.
 - Strict soft alias (filesystem KB must be attached): `list files` -> `>>list_files`.
+- Partial lock alias (filesystem KB must be attached): `lock <partial_name>` -> router suggests one candidate as:
+  - `Did you mean: >>lock SUMM_<name>.md ? [Y/N]`
+  - Reply `Y` to lock, `N` to cancel.
 
 ## Scratchpad (`>>`)
 Attach first:
@@ -139,6 +142,7 @@ Tips:
 - `attached_kbs` KBs currently attached for retrieval grounding
 - `locked_summ_file` currently locked SUMM filename (empty = no lock)
 - `locked_summ_kb` KB that owns the locked SUMM file (empty = no lock)
+- `pending_lock_candidate` pending Y/N lock suggestion target (empty = none)
 - `fun_sticky` whether sticky Fun mode is currently enabled
 - `fun_rewrite_sticky` whether sticky Fun Rewrite mode is currently enabled
 - `last_query` most recent filesystem-KB retrieval query

@@ -86,6 +86,46 @@ def find_summ_file_matches(
     return out
 
 
+def find_summ_file_candidates(
+    term: str,
+    attached_kbs: Set[str],
+    kb_paths: Dict[str, str],
+) -> List[Tuple[str, str, str, str]]:
+    """Find candidate SUMM files by partial filename match.
+
+    Matching is case-insensitive and checks:
+    - full filename (with .md),
+    - filename stem,
+    - filename stem with optional leading 'SUMM_' removed.
+    """
+    q = (term or "").strip().lower()
+    if not q:
+        return []
+    if q.endswith(".md"):
+        q = q[:-3]
+    if q.startswith("summ_"):
+        q = q[5:]
+    q = q.strip()
+    if not q:
+        return []
+
+    out: List[Tuple[str, str, str, str]] = []
+    for kb in sorted(attached_kbs):
+        root = kb_paths.get(kb)
+        if not root or not os.path.isdir(root):
+            continue
+        for fpath in _iter_summ_files(root):
+            fn = os.path.basename(fpath)
+            fn_l = fn.lower()
+            stem = fn_l[:-3] if fn_l.endswith(".md") else fn_l
+            stem_no_summ = stem[5:] if stem.startswith("summ_") else stem
+            if q in fn_l or q in stem or q in stem_no_summ:
+                rel = os.path.relpath(fpath, root)
+                out.append((kb, fpath, rel, fn))
+    out.sort(key=lambda t: (t[0], t[3].lower(), t[2].lower()))
+    return out
+
+
 def _strip_summ_comment_header(md_text: str) -> str:
     txt = (md_text or "").replace("\r\n", "\n").replace("\r", "\n").lstrip()
     if not txt.startswith("<!--"):

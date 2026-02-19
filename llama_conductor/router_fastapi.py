@@ -368,8 +368,12 @@ def _soft_alias_command(text: str, state: SessionState) -> Optional[str]:
     # Lock aliases (guarded: only when a filesystem KB is attached or a lock is active).
     if (fs_attached or getattr(state, "locked_summ_path", "")):
         if low := t.lower():
-            if low.startswith("lock summ_") and low.endswith(".md"):
-                return ">>" + t
+            if low.startswith("lock "):
+                rest = t[5:].strip()
+                if low.startswith("lock summ_") and low.endswith(".md"):
+                    return ">>" + t
+                if rest and " " not in rest:
+                    return f">>lock {rest}"
             if low == "unlock":
                 return ">>unlock"
             if low == "list files" and fs_attached:
@@ -603,6 +607,32 @@ async def v1_chat_completions(req: Request):
                 if stream:
                     return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
                 return JSONResponse(_make_openai_response(text))
+
+    # Pending lock confirmation (Y/N) for partial lock suggestions.
+    if selector == "" and state.pending_lock_candidate:
+        yn = (user_text_raw or "").strip().lower()
+        if yn in ("y", "yes"):
+            lock_target = state.pending_lock_candidate
+            state.pending_lock_candidate = ""
+            try:
+                cmd_reply = handle_command(f">>lock {lock_target}", state=state, session_id=session_id)
+            except Exception as e:
+                text = f"[router error: lock confirm crashed: {e.__class__.__name__}: {e}]"
+                if stream:
+                    return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+                return JSONResponse(_make_openai_response(text))
+            text = cmd_reply or f"[router] lock target not found in attached KBs: {lock_target}"
+            if stream:
+                return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+            return JSONResponse(_make_openai_response(text))
+        if yn in ("n", "no"):
+            state.pending_lock_candidate = ""
+            text = "[router] lock suggestion cancelled"
+            if stream:
+                return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+            return JSONResponse(_make_openai_response(text))
+        # Non-Y/N input clears stale confirmation and proceeds normally.
+        state.pending_lock_candidate = ""
     
     # Only treat as session command if NOT a per-turn selector
     if selector == "":

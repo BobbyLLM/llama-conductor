@@ -19,10 +19,11 @@ from .cliniko import handle_cliniko_command
 
 # Optional imports (feature-detected)
 try:
-    from ..fs_rag import build_fs_facts_block, find_summ_file_matches  # type: ignore
+    from ..fs_rag import build_fs_facts_block, find_summ_file_matches, find_summ_file_candidates  # type: ignore
 except Exception:
     build_fs_facts_block = None  # type: ignore
     find_summ_file_matches = None  # type: ignore
+    find_summ_file_candidates = None  # type: ignore
 
 try:
     from ..sidecars import (  # type: ignore
@@ -100,6 +101,10 @@ def _clear_locked_summ(state: SessionState) -> str:
     state.locked_summ_rel_path = ""
     state.locked_last_fact_lines = 0
     return prev
+
+
+def _clear_pending_lock(state: SessionState) -> None:
+    state.pending_lock_candidate = ""
 
 
 def _list_lockable_summ_files(state: SessionState) -> List[str]:
@@ -195,6 +200,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             f"attached_kbs={sorted(state.attached_kbs)}\n"
             f"locked_summ_file={state.locked_summ_file!r}\n"
             f"locked_summ_kb={state.locked_summ_kb!r}\n"
+            f"pending_lock_candidate={state.pending_lock_candidate!r}\n"
             f"fun_sticky={state.fun_sticky}\n"
             f"fun_rewrite_sticky={state.fun_rewrite_sticky}\n"
             f"last_query={state.rag_last_query!r}\n"
@@ -438,6 +444,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             scratchpad_deleted = False
             scratchpad_count = 0
             prev_locked = _clear_locked_summ(state)
+            _clear_pending_lock(state)
             if "scratchpad" in state.attached_kbs and list_scratchpad_records and clear_scratchpad:
                 recs = list_scratchpad_records(session_id, limit=1000000)
                 scratchpad_count = len(recs)
@@ -456,6 +463,8 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
                 prev_locked = _clear_locked_summ(state)
                 if prev_locked:
                     unlock_note = f" and unlocked '{prev_locked}'"
+            if target in KB_PATHS:
+                _clear_pending_lock(state)
             if target == "scratchpad" and list_scratchpad_records and clear_scratchpad:
                 recs = list_scratchpad_records(session_id, limit=1000000)
                 n = len(recs)
@@ -485,8 +494,6 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
 
         target_file = parts[1].strip()
         low_target = target_file.lower()
-        if not (low_target.startswith("summ_") and low_target.endswith(".md")):
-            return "[router] usage: >>lock SUMM_<name>.md"
 
         source_kbs = {
             k
@@ -499,17 +506,33 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         if not find_summ_file_matches:
             return "[router] lock unavailable (fs_rag missing)"
 
-        matches = find_summ_file_matches(target_file, source_kbs, KB_PATHS)
-        if not matches:
-            return f"[router] lock target not found in attached KBs: {target_file}"
+        # Full-name lock path: SUMM_*.md
+        if low_target.startswith("summ_") and low_target.endswith(".md"):
+            matches = find_summ_file_matches(target_file, source_kbs, KB_PATHS)
+            if not matches:
+                return f"[router] lock target not found in attached KBs: {target_file}"
+        else:
+            # Partial-name lock path: suggest candidate then require Y/N confirm.
+            if not find_summ_file_candidates:
+                return "[router] lock unavailable (fs_rag missing)"
+            matches = find_summ_file_candidates(target_file, source_kbs, KB_PATHS)
+            if not matches:
+                return f"[router] lock target not found in attached KBs: {target_file}"
+            if len(matches) == 1:
+                _kb, _abs_path, _rel_path, fn = matches[0]
+                state.pending_lock_candidate = fn
+                return f"[router] Did you mean: >>lock {fn} ? [Y/N]"
+
         if len(matches) > 1:
             lines = [f"[router] lock target is ambiguous: {target_file}"]
             for kb, _abs_path, rel_path, fn in matches[:10]:
                 lines.append(f"- kb={kb} file={fn} rel={rel_path}")
             lines.append("Tip: detach unrelated KBs, then retry >>lock.")
+            _clear_pending_lock(state)
             return "\n".join(lines)
 
         kb, abs_path, rel_path, fn = matches[0]
+        _clear_pending_lock(state)
         state.locked_summ_file = fn
         state.locked_summ_kb = kb
         state.locked_summ_path = abs_path
@@ -518,6 +541,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return f"[router] locked file: kb={kb} file={fn}"
 
     if parts and parts[0].lower() == "unlock":
+        _clear_pending_lock(state)
         prev = _clear_locked_summ(state)
         if not prev:
             return "[router] no locked file"
