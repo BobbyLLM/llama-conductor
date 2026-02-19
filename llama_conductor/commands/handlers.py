@@ -397,12 +397,22 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             target = "scratchpad"
 
         if target == "all":
-            # attach all known non-empty kb_paths
+            # Attach all filesystem KBs that exist on disk (+scratchpad).
+            missing: List[str] = []
             for k in sorted(KB_PATHS.keys()):
-                if k:
+                if not k:
+                    continue
+                folder = KB_PATHS.get(k, "")
+                if folder and os.path.isdir(folder):
                     state.attached_kbs.add(k)
+                else:
+                    missing.append(f"- {k} -> {folder}")
             state.attached_kbs.add("scratchpad")
-            return f"[router] attached ALL: {sorted(state.attached_kbs)}"
+            msg = f"[router] attached: {sorted(state.attached_kbs)}"
+            if missing:
+                msg += "\n[router] skipped KBs with missing folders (create path or update router_config.yaml):\n"
+                msg += "\n".join(missing[:25])
+            return msg
 
         # Scratchpad virtual KB
         if target == "scratchpad":
@@ -429,6 +439,12 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
 
         # Only allow filesystem KBs
         if target in KB_PATHS:
+            folder = KB_PATHS.get(target, "")
+            if not folder or not os.path.isdir(folder):
+                return (
+                    f"[router] cannot attach '{target}': folder missing. "
+                    f"Please create {folder} or update router_config.yaml."
+                )
             state.attached_kbs.add(target)
             return f"[router] attached: {sorted(state.attached_kbs)}"
 
