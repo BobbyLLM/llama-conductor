@@ -126,7 +126,9 @@ def _list_lockable_summ_files(state: SessionState) -> List[str]:
                     and os.path.abspath(abs_path).lower() == os.path.abspath(state.locked_summ_path).lower()
                 ):
                     mark = " [LOCKED]"
-                rows.append(f"- kb={kb} file={fn} rel={rel}{mark}")
+                rel_norm = rel.replace("\\", "/")
+                rel_part = f" rel={rel_norm}" if rel_norm != fn else ""
+                rows.append(f"- kb={kb} file={fn}{rel_part}{mark}")
     rows.sort()
     return rows
 
