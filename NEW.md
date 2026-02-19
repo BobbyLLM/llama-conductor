@@ -1,6 +1,29 @@
 # What's New
 
-*** V1.2.2 (latest)
+*** V1.2.3 (latest)
+
+Locked SUMM grounding + lock-safe provenance behavior:
+
+- Added `>>lock SUMM_<name>.md` and `>>unlock` for deterministic single-file SUMM grounding in normal query paths.
+- Added soft aliases (when a filesystem KB is attached):
+  - `lock SUMM_<name>.md` -> `>>lock SUMM_<name>.md`
+  - `unlock` -> `>>unlock`
+- Lock behavior:
+  - normal filesystem-grounded queries are scoped to the locked SUMM file only
+  - facts are built deterministically from the locked file's `## Extracted Sentences` section
+  - source labels normalize to `Source: Locked file (<SUMM_file>)` when grounded
+  - when model fallback is used, source label is explicit:
+    - `Source: Model (not in locked file)`
+    - plus note: `[Not found in locked source <SUMM_file>. Answer based on pre-trained data.]`
+- `##mentats` behavior is unchanged and remains Vault-only; lock scope does not affect Mentats.
+- No SUMM pipeline changes:
+  - `>>summ` mechanics and provenance remain unchanged
+  - `>>move to vault` mechanics remain unchanged
+  - TLDR: you can now >>lock a SUMM<name>.md file and reason ONLY over that file, similar to >>scratch pipeline...but without having to copy paste. Should the information NOT be within the locked file, the model will attempt to answer based on pre-trained data and will LOUDLY state "not in locked file; here's my best guess". I hope that this (along with the stdlib summary extraction method) further improves you confidence in provided answers. As always - glassbox, fail states LOUD, trust-but-verify. 
+
+---
+
+*** V1.2.2
 
 Deterministic `>>summ` pipeline swap (surgical refactor):
 

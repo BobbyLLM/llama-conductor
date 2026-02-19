@@ -17,6 +17,11 @@ class SessionState:
 
     vault_last_query: str = ""
     vault_last_hits: int = 0
+    locked_summ_file: str = ""
+    locked_summ_kb: str = ""
+    locked_summ_path: str = ""
+    locked_summ_rel_path: str = ""
+    locked_last_fact_lines: int = 0
 
     # One Vodka per session (reduces noise + preserves stateful debug counters)
     vodka: Optional[any] = None  # VodkaFilter
@@ -29,6 +34,15 @@ class SessionState:
     auto_query_after_attach: str = ""
     auto_detach_after_response: bool = False
     
+    # Cliniko sidecar: staged clinical note pipeline
+    cliniko_compacted: Optional[str] = None
+    cliniko_compaction_stats: Dict[str, int] = field(default_factory=dict)
+    cliniko_last_draft: Optional[str] = None
+    cliniko_last_scaffold: str = ""
+    cliniko_last_raw: str = ""
+    cliniko_last_region: str = ""
+
+
 # Global session storage
 _SESSIONS: Dict[str, SessionState] = {}
 

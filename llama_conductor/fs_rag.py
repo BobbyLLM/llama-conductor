@@ -59,6 +59,114 @@ def _iter_summ_files(root: str) -> List[str]:
     return out
 
 
+def find_summ_file_matches(
+    filename: str,
+    attached_kbs: Set[str],
+    kb_paths: Dict[str, str],
+) -> List[Tuple[str, str, str, str]]:
+    """Find SUMM filename matches in attached KBs.
+
+    Returns list of tuples:
+      (kb, abs_path, rel_path, actual_filename)
+    """
+    target = (filename or "").strip().lower()
+    if not target:
+        return []
+    out: List[Tuple[str, str, str, str]] = []
+    for kb in sorted(attached_kbs):
+        root = kb_paths.get(kb)
+        if not root or not os.path.isdir(root):
+            continue
+        for fpath in _iter_summ_files(root):
+            fn = os.path.basename(fpath)
+            if fn.lower() != target:
+                continue
+            rel = os.path.relpath(fpath, root)
+            out.append((kb, fpath, rel, fn))
+    return out
+
+
+def _strip_summ_comment_header(md_text: str) -> str:
+    txt = (md_text or "").replace("\r\n", "\n").replace("\r", "\n").lstrip()
+    if not txt.startswith("<!--"):
+        return txt
+    end = txt.find("-->")
+    if end == -1:
+        return txt
+    return txt[end + 3 :].lstrip()
+
+
+def _extract_summ_sentences(md_text: str) -> List[str]:
+    """Extract bullet sentences from '## Extracted Sentences' section."""
+    txt = _strip_summ_comment_header(md_text)
+    lines = txt.splitlines()
+    in_section = False
+    out: List[str] = []
+    for raw in lines:
+        ln = (raw or "").strip()
+        if not in_section:
+            if ln.lower().startswith("## extracted sentences"):
+                in_section = True
+            continue
+        if ln.startswith("## "):
+            break
+        if ln.startswith("- "):
+            s = ln[2:].strip()
+            if s:
+                out.append(s)
+    return out
+
+
+def build_locked_summ_facts_block(
+    *,
+    query: str,
+    kb: str,
+    file: str,
+    rel_path: str,
+    abs_path: str,
+    max_chars: int = 12000,
+) -> Tuple[str, int]:
+    """Build deterministic facts block from one locked SUMM file.
+
+    Returns: (facts_block, fact_line_count)
+    """
+    del query  # lock mode is deterministic by file scope; query is not used for ranking.
+
+    if not abs_path or not os.path.isfile(abs_path):
+        return ("", 0)
+
+    try:
+        with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+            md = f.read()
+    except Exception:
+        return ("", 0)
+
+    sentences = _extract_summ_sentences(md)
+    if not sentences:
+        txt = _strip_summ_comment_header(md).strip()
+        if not txt:
+            return ("", 0)
+        line = f"- [kb={kb} file={file}] {txt}"
+        if max_chars > 0 and len(line) > max_chars:
+            line = line[:max_chars].rstrip()
+        return (line, 1 if line else 0)
+
+    parts: List[str] = []
+    used = 0
+    count = 0
+    for s in sentences:
+        line = f"- [kb={kb} file={file}] {s}"
+        if max_chars > 0 and used + len(line) + 2 > max_chars:
+            break
+        parts.append(line)
+        used += len(line) + 2
+        count += 1
+
+    if not parts:
+        return ("", 0)
+    return ("\n\n".join(parts), count)
+
+
 def _split_blocks(md_text: str) -> List[str]:
     """Split markdown into moderately sized blocks for scoring."""
     max_block = 1200

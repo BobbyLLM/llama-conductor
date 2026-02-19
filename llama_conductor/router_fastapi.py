@@ -11,7 +11,7 @@ CHANGES IN v1.2.0-refactored:
   - quotes.py: Quote loading and tone inference
   - streaming.py: SSE streaming responses
   - vault_ops.py: Vault and SUMM operations
-  - commands/: Command handlers
+  - commands/: Command handlers (cliniko, handlers)
 - router_fastapi.py now ~700 lines (was 2,373)
 - Zero breaking changes - all functionality preserved
 - All imports lazy-loaded for optional dependencies
@@ -25,6 +25,7 @@ This file is now the thin orchestration layer:
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any, Dict, List, Optional
 
@@ -64,9 +65,10 @@ except Exception:
     run_mentats = None  # type: ignore
 
 try:
-    from .fs_rag import build_fs_facts_block  # type: ignore
+    from .fs_rag import build_fs_facts_block, build_locked_summ_facts_block  # type: ignore
 except Exception:
     build_fs_facts_block = None  # type: ignore
+    build_locked_summ_facts_block = None  # type: ignore
 
 try:
     from .pipelines import run_raw  # type: ignore
@@ -93,14 +95,32 @@ except Exception:
 
 def build_fs_facts(query: str, state: SessionState) -> str:
     """Build facts block from filesystem KBs."""
-    if not build_fs_facts_block:
-        return ""
-
     q = " ".join((query or "").split()).strip()
     state.rag_last_query = q
     state.rag_last_hits = 0
+    state.locked_last_fact_lines = 0
 
     if not q:
+        return ""
+
+    # Strict lock mode: deterministic grounding from one SUMM file.
+    if state.locked_summ_path:
+        if not build_locked_summ_facts_block:
+            return ""
+        max_chars = int(cfg_get("lock.max_chars", max(FS_MAX_CHARS, 12000)))
+        txt, n = build_locked_summ_facts_block(
+            query=q,
+            kb=state.locked_summ_kb or "locked",
+            file=state.locked_summ_file or "SUMM_locked.md",
+            rel_path=state.locked_summ_rel_path or "",
+            abs_path=state.locked_summ_path,
+            max_chars=max_chars,
+        )
+        state.rag_last_hits = int(n)
+        state.locked_last_fact_lines = int(n)
+        return txt or ""
+
+    if not build_fs_facts_block:
         return ""
 
     # Only filesystem KBs (exclude vault)
@@ -277,6 +297,51 @@ def _append_scratchpad_provenance(text: str) -> str:
     return t + "\n\nSource: Scratchpad"
 
 
+def _rewrite_source_line(text: str, source_line: str) -> str:
+    """Replace first Source: line; append if missing."""
+    t = (text or "").strip()
+    if not t:
+        return source_line
+    lines = t.splitlines()
+    for i, ln in enumerate(lines):
+        if "source:" in ln.lower():
+            lines[i] = source_line
+            return "\n".join(lines).strip()
+    return t.rstrip() + "\n\n" + source_line
+
+
+def _lock_constraints_block(locked_file: str) -> str:
+    lf = (locked_file or "SUMM_locked.md").strip()
+    return (
+        "Grounding mode: LOCKED_SUMM_FILE.\n"
+        f"- Locked file: {lf}\n"
+        "- Prefer facts from the locked file for answers.\n"
+        f"- If the answer is not present in {lf}, you may answer from pre-trained knowledge.\n"
+        f"- In that fallback case, include this exact note line first: "
+        f"[Not found in locked source {lf}. Answer based on pre-trained data.]\n"
+        "- In that fallback case, final source line must be exactly: Source: Model (not in locked file)"
+    )
+
+
+def _apply_locked_output_policy(text: str, state: SessionState) -> str:
+    """Normalize provenance for lock mode while preserving Mentats isolation."""
+    if not state.locked_summ_path:
+        return text
+    locked_file = state.locked_summ_file or os.path.basename(state.locked_summ_path) or "SUMM_locked.md"
+    t = (text or "").strip()
+    if not t:
+        return _rewrite_source_line("", f"Source: Locked file ({locked_file})")
+
+    low = t.lower()
+    if "source: model" in low:
+        note = f"[Not found in locked source {locked_file}. Answer based on pre-trained data.]"
+        if note.lower() not in low:
+            t = note + "\n\n" + t
+        return _rewrite_source_line(t, "Source: Model (not in locked file)")
+
+    return _rewrite_source_line(t, f"Source: Locked file ({locked_file})")
+
+
 def _soft_alias_command(text: str, state: SessionState) -> Optional[str]:
     """Optional bare-text aliases for scratchpad ergonomics.
 
@@ -297,9 +362,19 @@ def _soft_alias_command(text: str, state: SessionState) -> Optional[str]:
     if t.lower() == "status":
         return ">>status"
 
-    if "scratchpad" not in (getattr(state, "attached_kbs", set()) or set()):
-        return None
+    attached = set(getattr(state, "attached_kbs", set()) or set())
+    fs_attached = {k for k in attached if k in KB_PATHS and k != VAULT_KB_NAME}
 
+    # Lock aliases (guarded: only when a filesystem KB is attached or a lock is active).
+    if (fs_attached or getattr(state, "locked_summ_path", "")):
+        if low := t.lower():
+            if low.startswith("lock summ_") and low.endswith(".md"):
+                return ">>" + t
+            if low == "unlock":
+                return ">>unlock"
+
+    if "scratchpad" not in attached:
+        return None
     low = t.lower()
     if low.startswith("scratchpad show "):
         q = t[len("scratchpad show ") :].strip()
@@ -394,13 +469,15 @@ async def v1_chat_completions(req: Request):
 
     def _openwebui_title_for(t: str) -> str:
         t_l = t.lower()
+        if "cliniko" in t_l:
+            return "Cliniko Pipeline"
         if "router" in t_l or "fastapi" in t_l:
             return "Router Debugging"
         return "Chat Summary"
 
     if _is_openwebui_title_task(user_text_raw):
-        MODEL_DEBUG = cfg_get("debug.model_calls", False)
-        if MODEL_DEBUG:
+        CLINIKO_DEBUG = cfg_get("cliniko.debug", True)
+        if CLINIKO_DEBUG:
             print("[DEBUG] openwebui title task bypass", flush=True)
         title_json = json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
         return JSONResponse(_make_openai_response(title_json))
@@ -732,12 +809,15 @@ async def v1_chat_completions(req: Request):
 
     # Default: serious reasoning
     facts_block = build_fs_facts(user_text, state)
+    lock_active = bool(state.locked_summ_path)
     scratchpad_quotes: List[str] = []
     scratchpad_grounded = False
     constraints_block = ""
+    if lock_active:
+        constraints_block = _lock_constraints_block(state.locked_summ_file)
     scratchpad_exhaustive = False
     scratchpad_exhaustive_mode = str(cfg_get("scratchpad.exhaustive_response_mode", "raw") or "raw").strip().lower()
-    if "scratchpad" in state.attached_kbs and build_scratchpad_facts_block is not None:
+    if (not lock_active) and "scratchpad" in state.attached_kbs and build_scratchpad_facts_block is not None:
         try:
             if wants_exhaustive_query is not None:
                 scratchpad_exhaustive = bool(wants_exhaustive_query(user_text))
@@ -847,10 +927,12 @@ async def v1_chat_completions(req: Request):
             text = _append_scratchpad_provenance(text)
 
         # Add disclaimer if KBs were attached but model used training data
-        if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded:
+        if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded and not lock_active:
             kb_list = ', '.join(sorted(state.attached_kbs))
             disclaimer = f"[Note: No relevant information found in attached KBs ({kb_list}). Answer based on pre-trained data.]\n\n"
             text = disclaimer + text
+        if lock_active:
+            text = _apply_locked_output_policy(text, state)
         
         # Auto-detach if this was a trust >>attach all operation
         if state.auto_detach_after_response:
@@ -881,10 +963,12 @@ async def v1_chat_completions(req: Request):
             text = _append_scratchpad_provenance(text)
         
         # Add disclaimer if KBs were attached but model used training data
-        if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded:
+        if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded and not lock_active:
             kb_list = ', '.join(sorted(state.attached_kbs))
             disclaimer = f"[Note: No relevant information found in attached KBs ({kb_list}). Answer based on pre-trained data.]\n\n"
             text = disclaimer + text
+        if lock_active:
+            text = _apply_locked_output_policy(text, state)
         
         # Auto-detach if this was a trust >>attach all operation
         if state.auto_detach_after_response:
@@ -919,10 +1003,12 @@ async def v1_chat_completions(req: Request):
             text = _append_scratchpad_provenance(text)
         
         # Add disclaimer if KBs were attached but model used training data
-        if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded:
+        if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded and not lock_active:
             kb_list = ', '.join(sorted(state.attached_kbs))
             disclaimer = f"[Note: No relevant information found in attached KBs ({kb_list}). Answer based on pre-trained data.]\n\n"
             text = disclaimer + text
+        if lock_active:
+            text = _apply_locked_output_policy(text, state)
         
         # Auto-detach if this was a trust >>attach all operation
         if state.auto_detach_after_response:
@@ -956,10 +1042,12 @@ async def v1_chat_completions(req: Request):
         text = _append_scratchpad_provenance(text)
 
     # Add disclaimer if KBs were attached but model used training data
-    if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded:
+    if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded and not lock_active:
         kb_list = ', '.join(sorted(state.attached_kbs))
         disclaimer = f"[Note: No relevant information found in attached KBs ({kb_list}). Answer based on pre-trained data.]\n\n"
         text = disclaimer + text
+    if lock_active:
+        text = _apply_locked_output_policy(text, state)
     
     # Auto-detach AFTER disclaimer check
     if state.auto_detach_after_response:

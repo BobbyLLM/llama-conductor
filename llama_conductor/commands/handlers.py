@@ -19,9 +19,10 @@ from .cliniko import handle_cliniko_command
 
 # Optional imports (feature-detected)
 try:
-    from ..fs_rag import build_fs_facts_block  # type: ignore
+    from ..fs_rag import build_fs_facts_block, find_summ_file_matches  # type: ignore
 except Exception:
     build_fs_facts_block = None  # type: ignore
+    find_summ_file_matches = None  # type: ignore
 
 try:
     from ..sidecars import (  # type: ignore
@@ -148,6 +149,8 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             "[status]\n"
             f"session_id={session_id}\n"
             f"attached_kbs={sorted(state.attached_kbs)}\n"
+            f"locked_summ_file={state.locked_summ_file!r}\n"
+            f"locked_summ_kb={state.locked_summ_kb!r}\n"
             f"fun_sticky={state.fun_sticky}\n"
             f"fun_rewrite_sticky={state.fun_rewrite_sticky}\n"
             f"last_query={state.rag_last_query!r}\n"
@@ -414,6 +417,56 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
     if low in ("list_kb", "list", "kbs"):
         known = sorted(set(KB_PATHS.keys()) | {"scratchpad"})
         return "[router] known KBs: " + ", ".join(known)
+
+    # lock / unlock SUMM source file (filesystem KB grounding scope)
+    if parts and parts[0].lower() == "lock":
+        if len(parts) < 2:
+            return "[router] usage: >>lock SUMM_<name>.md"
+
+        target_file = parts[1].strip()
+        low_target = target_file.lower()
+        if not (low_target.startswith("summ_") and low_target.endswith(".md")):
+            return "[router] usage: >>lock SUMM_<name>.md"
+
+        source_kbs = {
+            k
+            for k in state.attached_kbs
+            if k and k in KB_PATHS and k not in (VAULT_KB_NAME, "scratchpad")
+        }
+        if not source_kbs:
+            return "[router] No filesystem KBs attached. Attach KB(s) first, then: >>lock SUMM_<name>.md"
+
+        if not find_summ_file_matches:
+            return "[router] lock unavailable (fs_rag missing)"
+
+        matches = find_summ_file_matches(target_file, source_kbs, KB_PATHS)
+        if not matches:
+            return f"[router] lock target not found in attached KBs: {target_file}"
+        if len(matches) > 1:
+            lines = [f"[router] lock target is ambiguous: {target_file}"]
+            for kb, _abs_path, rel_path, fn in matches[:10]:
+                lines.append(f"- kb={kb} file={fn} rel={rel_path}")
+            lines.append("Tip: detach unrelated KBs, then retry >>lock.")
+            return "\n".join(lines)
+
+        kb, abs_path, rel_path, fn = matches[0]
+        state.locked_summ_file = fn
+        state.locked_summ_kb = kb
+        state.locked_summ_path = abs_path
+        state.locked_summ_rel_path = rel_path
+        state.locked_last_fact_lines = 0
+        return f"[router] locked file: kb={kb} file={fn}"
+
+    if parts and parts[0].lower() == "unlock":
+        if not state.locked_summ_path:
+            return "[router] no locked file"
+        prev = state.locked_summ_file or os.path.basename(state.locked_summ_path)
+        state.locked_summ_file = ""
+        state.locked_summ_kb = ""
+        state.locked_summ_path = ""
+        state.locked_summ_rel_path = ""
+        state.locked_last_fact_lines = 0
+        return f"[router] unlocked file: {prev}"
 
     # fun toggles
     if low in ("fun", "f"):

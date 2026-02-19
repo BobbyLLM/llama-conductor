@@ -75,6 +75,7 @@ llama-conductor serve --host 0.0.0.0 --port 9000
   - [What's the difference between modes?](#whats-the-difference-between-modes)
     - [Serious (default):](#serious-default)
     - [Mentats (##mentats):](#mentats-mentats)
+    - [Locked SUMM grounding (`>>lock`):](#locked-summ-grounding-lock)
     - [Fun (##fun or >>fun):](#fun-fun-or-fun)
     - [Fun Rewrite (>>fr):](#fun-rewrite-fr)
   - [Common workflows](#common-workflows)
@@ -534,9 +535,21 @@ roles:
 
 #### Mentats (##mentats):
 - Uses Vault only (ignores filesystem KBs)
+- Ignores `>>lock` scope (lock affects normal filesystem-grounded queries only)
 - No Vodka, no chat history (isolated)
 - Refuses if no Vault facts
 - 3-pass reasoning (Thinker → Critic → Thinker)
+
+#### Locked SUMM grounding (`>>lock`):
+- `>>lock SUMM_<name>.md` scopes normal query grounding to one SUMM file from attached filesystem KBs.
+- `>>unlock` clears the lock (no filename needed).
+- Soft aliases (when a filesystem KB is attached): `lock SUMM_<name>.md`, `unlock`.
+- While locked, normal query grounding is deterministic and file-scoped.
+- If answer support is in locked facts, provenance is normalized to:
+  - `Source: Locked file (SUMM_<name>.md)`
+- If answer support is not in locked facts and model fallback is used, provenance is explicit:
+  - `Source: Model (not in locked file)`
+  - plus note line: `[Not found in locked source SUMM_<name>.md. Answer based on pre-trained data.]`
 
 #### Fun (##fun or >>fun):
 - Runs default (serious) → gets correct answer

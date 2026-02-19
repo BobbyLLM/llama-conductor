@@ -29,9 +29,13 @@ Tips:
 - `>>attach all` attach all KBs
 - `>>detach <kb>` detach KB
 - `>>detach all` detach all KBs
+- `>>lock SUMM_<name>.md` lock normal query grounding to one SUMM file (from attached filesystem KBs)
+- `>>unlock` clear active SUMM file lock
 Tips:
 - After `>>attach <kb>`, normal chat queries are grounded against attached KB content until you detach it.
 - Attachments persist for the session (sticky), so use `>>detach <kb>` or `>>detach all` to stop grounding.
+- While lock is active, normal chat grounding is deterministic and scoped to the locked SUMM file.
+- Soft aliases (when a filesystem KB is attached): `lock SUMM_<name>.md` and `unlock`.
 
 ## Scratchpad (`>>`)
 Attach first:
@@ -127,6 +131,7 @@ Tips:
 Tips:
 - Selectors apply to the current turn only.
 - Use selectors for explicit pipeline control when sticky modes are active.
+- `##mentats` remains Vault-only and does not use filesystem lock scope.
 
 ## Vision/OCR
 - `>>vision` / `>>vl` / `>>v` with image: direct vision answer
@@ -139,6 +144,8 @@ Tips:
 ## Status fields (`>>status`)
 - `session_id` current chat/session identifier used by the router
 - `attached_kbs` KBs currently attached for retrieval grounding
+- `locked_summ_file` currently locked SUMM filename (empty = no lock)
+- `locked_summ_kb` KB that owns the locked SUMM file (empty = no lock)
 - `fun_sticky` whether sticky Fun mode is currently enabled
 - `fun_rewrite_sticky` whether sticky Fun Rewrite mode is currently enabled
 - `last_query` most recent filesystem-KB retrieval query
