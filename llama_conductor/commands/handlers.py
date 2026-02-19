@@ -15,6 +15,7 @@ from ..config import (
 from ..session_state import SessionState
 from ..helpers import is_command, strip_cmd_prefix, parse_args
 from ..vault_ops import summ_new_in_kb, move_summ_to_vault
+from .cliniko import handle_cliniko_command
 
 # Optional imports (feature-detected)
 try:
@@ -269,6 +270,70 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         # Format and return recommendations
         return "[trust] " + format_recommendations(recommendations, query=query)
 
+    # cliniko (DETERMINISTIC clinical note pipeline)
+    if parts and parts[0].lower() == "cliniko":
+        subcommand = parts[1].lower() if len(parts) > 1 else ""
+
+        # Default: treat '>>cliniko' as 'auto' when full note payload is present
+        _known_subcommands = {
+            "auto", "parse", "compact", "review",
+            "help", "status",
+            "sidecar", "generate", "sanitize",
+        }
+        if (not subcommand) or (subcommand not in _known_subcommands):
+            _lead = (cmd_text or "").lstrip()
+            _tail = ""
+            for _prefix in (">>cliniko", "»cliniko", "Â»cliniko"):
+                if _lead.lower().startswith(_prefix):
+                    _tail = _lead[len(_prefix):].lstrip()
+                    break
+            if _tail and ("\n" in _tail or len(_tail) >= 200):
+                return handle_cliniko_command("auto", _tail, state, session_id)
+        
+        # Explicit subcommands
+        if subcommand == "auto":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for auto_prefix in (">>cliniko auto", "»cliniko auto", "Â»cliniko auto"):
+                if auto_prefix in _low:
+                    idx = _low.find(auto_prefix) + len(auto_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        if subcommand == "parse":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for parse_prefix in (">>cliniko parse", "»cliniko parse", "Â»cliniko parse"):
+                if parse_prefix in _low:
+                    idx = _low.find(parse_prefix) + len(parse_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        # Legacy compact (redirect but support for transition)
+        if subcommand == "compact":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for compact_prefix in (">>cliniko compact", "»cliniko compact"):
+                if compact_prefix in _low:
+                    idx = _low.find(compact_prefix) + len(compact_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        # Other subcommands (help, status, legacy generate/sanitize)
+        return handle_cliniko_command(subcommand, "", state, session_id)
+
     # attach/detach/list
     if parts and parts[0].lower() in ("attach", "a"):
         if len(parts) < 2:
@@ -436,9 +501,19 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return msg
 
     # move to vault
-    if low.startswith("move to vault") or low.startswith("move_to_vault") or low.startswith("mtv"):
-        # parse: >>move to vault [all]
+    if (
+        low.startswith("move to vault")
+        or low.startswith("move_to_vault")
+        or low.startswith("mtv")
+        or low.startswith("move new to vault")
+    ):
+        # parse:
+        # - >>move to vault [all]
+        # - >>move new to vault
+        # - >>move_to_vault new
+        # - >>mtv new
         arg = parts[-1].lower() if parts else ""
+        newest_only = low.startswith("move new to vault") or arg == "new"
         if arg == "all":
             src = set(k for k in KB_PATHS.keys() if k and k != VAULT_KB_NAME)
         else:
@@ -447,8 +522,9 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         if not src:
             return "[router] No source KBs to promote. Attach KB(s) then: >>move to vault"
 
-        res = move_summ_to_vault(src)
-        msg = f"[router] move-to-vault complete: files={res.get('files', 0)} chunks={res.get('chunks', 0)}"
+        res = move_summ_to_vault(src, newest_only=newest_only)
+        mode = "newest-only " if newest_only else ""
+        msg = f"[router] {mode}move-to-vault complete: files={res.get('files', 0)} chunks={res.get('chunks', 0)}"
         notes = res.get("notes", []) or []
         if notes:
             msg += "\n" + "\n".join("- " + n for n in notes[:25])
@@ -490,14 +566,8 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
 
     # >>flush (CTC cache)
     if low == "flush":
-        if not flush_ctc_cache:
+        if not flush_ctc_cache or not state.vodka:
             return "[router] flush not available"
-        if not state.vodka:
-            try:
-                from ..vodka_filter import Filter as VodkaFilter  # type: ignore
-                state.vodka = VodkaFilter()
-            except Exception:
-                return "[router] flush not available"
         return flush_ctc_cache(state.vodka)
 
     # >>wiki <topic> (Wikipedia summary)

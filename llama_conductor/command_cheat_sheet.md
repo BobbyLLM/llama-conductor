@@ -93,10 +93,12 @@ Tips:
 ## SUMM and Vault (`>>`)
 - `>>summ new` summarize new raw files in attached KB folders
 - `>>move to vault` embed attached KB summaries into Vault
+- `>>move new to vault` embed only the newest `SUMM_*.md` per attached KB into Vault
 Tips:
 - `>>summ new` processes new raw docs in currently attached KB folders.
 - `>>summ` is deterministic/extractive in current builds (no LLM call in the SUMM generation step).
 - `>>move to vault` promotes summaries for Vault retrieval; it does not make Vault attachable via `>>attach`.
+- `>>move_to_vault new` and `>>mtv new` are equivalent shorthand for newest-only promotion.
 - SUMM mechanics are unchanged: creates `SUMM_*.md`, moves source docs into `/original/`, and keeps provenance headers.
 
 ## Tool recommendation (`>>`)

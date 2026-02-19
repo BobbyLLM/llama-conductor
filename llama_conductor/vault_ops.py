@@ -526,8 +526,11 @@ def qdrant_delete_for_vault_file(client: Any, *, vault_kb: str, source_kb: str, 
         return 0
 
 
-def move_summ_to_vault(source_kbs: set) -> Dict[str, Any]:
-    """Promote SUMM_*.md from source_kbs into Qdrant under kb=VAULT_KB_NAME."""
+def move_summ_to_vault(source_kbs: set, *, newest_only: bool = False) -> Dict[str, Any]:
+    """Promote SUMM_*.md from source_kbs into Qdrant under kb=VAULT_KB_NAME.
+
+    newest_only=True promotes only the newest SUMM_*.md per source KB.
+    """
     source_kbs = {k.strip() for k in (source_kbs or set()) if k and k.strip()}
     if not source_kbs:
         return {"files": 0, "chunks": 0, "notes": ["no source KBs provided"]}
@@ -565,6 +568,10 @@ def move_summ_to_vault(source_kbs: set) -> Dict[str, Any]:
             for fn in files:
                 if fn.startswith("SUMM_") and fn.lower().endswith(".md"):
                     summ_files.append(os.path.join(root, fn))
+
+        if newest_only and summ_files:
+            # Keep only the single newest SUMM file for this KB.
+            summ_files = [max(summ_files, key=lambda p: os.path.getmtime(p))]
 
         for summ_path in sorted(summ_files):
             rel_path = os.path.relpath(summ_path, folder)
