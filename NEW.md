@@ -1,6 +1,26 @@
 # What's New
 
-*** V1.2.1 (latest)
+*** V1.2.2 (latest)
+
+Deterministic `>>summ` pipeline swap (surgical refactor):
+
+- Replaced LLM-based summary generation in `>>summ` with deterministic stdlib extractive generation.
+- Preserved existing command and pipeline mechanics:
+  - `>>summ new|all|<kb>` behavior unchanged
+  - `SUMM_<file>.md` creation unchanged
+  - original-file move to `/original/` unchanged
+  - `>>move to vault` ingestion path unchanged
+- Preserved provenance wrapper behavior in generated SUMM files:
+  - `source_sha256`
+  - `summ_created_utc`
+  - `pipeline: SUMM`
+- No new dependencies added to `pyproject.toml`.
+- `SUMM.md` compatibility checks remain in place to avoid command-path behavior drift.
+-  TLDR: >>SUMM is now entirely deterministic and *not* LLM summary. Faster and even more reflective of raw file (albeit somewhat larger).
+
+---
+
+*** V1.2.1
 
 Scratchpad reliability and safety updates:
 

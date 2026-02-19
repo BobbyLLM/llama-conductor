@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple
 
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
+_SUMM_FILE_RE = re.compile(r"\b(SUMM_[A-Za-z0-9._-]+\.md)\b", re.IGNORECASE)
 
 
 @dataclass
@@ -26,6 +27,14 @@ def _tokenize(text: str) -> List[str]:
 
 def _norm_space(s: str) -> str:
     return " ".join((s or "").split()).strip()
+
+
+def _extract_target_summ_file(query: str) -> str:
+    """Return explicitly requested SUMM filename from query, else empty string."""
+    m = _SUMM_FILE_RE.search(query or "")
+    if not m:
+        return ""
+    return m.group(1).strip().lower()
 
 
 def _iter_summ_files(root: str) -> List[str]:
@@ -52,22 +61,41 @@ def _iter_summ_files(root: str) -> List[str]:
 
 def _split_blocks(md_text: str) -> List[str]:
     """Split markdown into moderately sized blocks for scoring."""
+    max_block = 1200
+    overlap = 240
+
+    def _window_text(s: str) -> List[str]:
+        txt = (s or "").strip()
+        if not txt:
+            return []
+        if len(txt) <= max_block:
+            return [txt]
+        out: List[str] = []
+        step = max(1, max_block - overlap)
+        i = 0
+        while i < len(txt):
+            chunk = txt[i : i + max_block].strip()
+            if chunk:
+                out.append(chunk)
+            i += step
+        return out
+
     text = (md_text or "").replace("\r\n", "\n").replace("\r", "\n")
     raw_blocks = [b.strip() for b in re.split(r"\n\s*\n+", text) if b.strip()]
 
     blocks: List[str] = []
     for b in raw_blocks:
-        if len(b) <= 1200:
+        if len(b) <= max_block:
             blocks.append(b)
             continue
 
         sub = [s.strip() for s in re.split(r"\n(?=#+\s)", b) if s.strip()]
         if not sub:
-            blocks.append(b[:1200])
+            blocks.extend(_window_text(b))
             continue
 
         for s in sub:
-            blocks.append(s if len(s) <= 1200 else s[:1200])
+            blocks.extend(_window_text(s))
 
     return blocks
 
@@ -120,6 +148,7 @@ def search_fs(
     q_tokens = set(_tokenize(q))
     if not q_tokens:
         return []
+    target_summ_file = _extract_target_summ_file(q)
 
     hits: List[FsHit] = []
 
@@ -129,6 +158,8 @@ def search_fs(
             continue
 
         for fpath in _iter_summ_files(root):
+            if target_summ_file and os.path.basename(fpath).lower() != target_summ_file:
+                continue
             try:
                 with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
                     md = f.read()

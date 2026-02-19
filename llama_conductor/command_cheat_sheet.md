@@ -52,6 +52,8 @@ Aliases:
 - `>>scratch ...` is an alias root for all `>>scratchpad ...` commands
 - `>>attach scratch` / `>>detach scratch` map to `scratchpad`
 - `>>list scratchpad` -> `>>scratchpad list`
+- bare `scratchpad show <query>` -> `>>scratchpad show <query>` (only when scratchpad is attached)
+- bare `scratch show <query>` -> `>>scratchpad show <query>` (only when scratchpad is attached)
 - When scratchpad is attached:
   - `>>add <text>` -> `>>scratchpad add <text>`
   - `>>list` shows scratchpad captures
@@ -93,7 +95,9 @@ Tips:
 - `>>move to vault` embed attached KB summaries into Vault
 Tips:
 - `>>summ new` processes new raw docs in currently attached KB folders.
+- `>>summ` is deterministic/extractive in current builds (no LLM call in the SUMM generation step).
 - `>>move to vault` promotes summaries for Vault retrieval; it does not make Vault attachable via `>>attach`.
+- SUMM mechanics are unchanged: creates `SUMM_*.md`, moves source docs into `/original/`, and keeps provenance headers.
 
 ## Tool recommendation (`>>`)
 - `>>trust <query>` suggests best tool path (A/B/C)

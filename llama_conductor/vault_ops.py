@@ -7,7 +7,8 @@ import re
 import shutil
 import time
 import uuid
-from typing import Any, Dict, List, Tuple
+from collections import Counter
+from typing import Any, Dict, List, Set, Tuple
 
 from .config import (
     cfg_get,
@@ -17,7 +18,6 @@ from .config import (
     VAULT_OVERLAP_WORDS,
     KB_PATHS,
 )
-from .model_calls import call_model_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -25,6 +25,51 @@ from .model_calls import call_model_prompt
 # ---------------------------------------------------------------------------
 
 _SUPPORTED_RAW_EXTS = {".md", ".txt", ".pdf", ".html", ".htm"}
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
+_WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'_-]*")
+_FACT_VERB_RE = re.compile(
+    r"\b(?:is|are|was|were|had|has|have|found|show|shows|reported|released|"
+    r"permitted|requires|need|priced|continued|include|includes|apply|applied|emit)\b",
+    re.I,
+)
+_NUM_RE = re.compile(r"\b\d{1,4}(?:[.,]\d+)?\b")
+_YEAR_RE = re.compile(r"\b(?:19\d{2}|20\d{2})\b")
+_MONEY_RE = re.compile(r"\b(?:percent|million|billion|trillion|usd|gbp|eur)\b|%|\$", re.I)
+_CAPWORD_RE = re.compile(r"\b[A-Z][a-z]+\b")
+_SHORT_CUTOFF_WORDS = 420
+_LONG_CUTOFF_WORDS = 1200
+_SHORT_RATIO = 0.90
+_MID_RATIO = 0.38
+_LONG_RATIO = 0.50
+_MIN_WORDS = 160
+_MAX_SENT_CAP = 44
+_MIN_SENT_CAP = 8
+_AVG_SENT_WORDS = 22
+_MMR_LAMBDA = 0.72
+_BUDGET_SLACK = 1.15
+_FLOOR_KEEP = 10
+_LEAD_BOOST = 0.20
+_TAIL_BOOST = 0.05
+_NUM_BOOST = 2.40
+_MONEY_BOOST = 1.00
+_YEAR_BOOST = 0.25
+_ENT_BOOST = 0.30
+_VERB_BOOST = 0.10
+_COVER_TOP_K = 16
+_COVER_MIN_TOKEN_LEN = 5
+_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "been", "being", "but", "by", "can",
+    "could", "did", "do", "does", "doing", "for", "from", "had", "has", "have",
+    "having", "he", "her", "here", "hers", "herself", "him", "himself", "his", "how",
+    "i", "if", "in", "into", "is", "it", "its", "itself", "just", "me", "more", "most",
+    "my", "myself", "no", "nor", "not", "of", "off", "on", "once", "only", "or",
+    "other", "our", "ours", "ourselves", "out", "over", "own", "same", "she", "should",
+    "so", "some", "such", "than", "that", "the", "their", "theirs", "them",
+    "themselves", "then", "there", "these", "they", "this", "those", "through", "to",
+    "too", "under", "until", "up", "very", "was", "we", "were", "what", "when",
+    "where", "which", "while", "who", "whom", "why", "will", "with", "you", "your",
+    "yours", "yourself", "yourselves",
+}
 
 
 def sha256_file(path: str) -> str:
@@ -87,31 +132,246 @@ def load_summ_prompt() -> str:
         return f.read()
 
 
+def _clean_summary_text(text: str) -> str:
+    s = text or ""
+    s = re.sub(r"```[\s\S]*?```", " ", s)
+    s = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1", s)
+    s = s.replace("×", "x").replace("–", "-").replace("—", "-")
+    s = re.sub(r"[`*_>#]", " ", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def _split_sentences(text: str) -> List[str]:
+    cleaned = _clean_summary_text(text)
+    if not cleaned:
+        return []
+    parts = _SENT_SPLIT_RE.split(cleaned)
+    if len(parts) <= 1:
+        parts = re.split(r"(?<=[.!?])\s+", cleaned)
+    return [p.strip() for p in parts if p and p.strip()]
+
+
+def _is_header_like(sentence: str) -> bool:
+    s = (sentence or "").strip()
+    if not s:
+        return True
+    tokens = re.findall(r"[A-Za-z]+", s)
+    if not tokens:
+        return True
+    if len(tokens) <= 8 and s[-1] not in ".!?":
+        return True
+    title_case_count = sum(1 for t in tokens if t[:1].isupper())
+    if tokens and (title_case_count / len(tokens)) > 0.75 and s[-1] not in ".!?":
+        return True
+    return False
+
+
+def _is_noise_caption(sentence: str) -> bool:
+    s = (sentence or "").strip().lower()
+    if "photograph:" in s:
+        return True
+    return s.startswith("thermal video") or s.startswith("emissions coming") or s.startswith("snow on the ground")
+
+
+def _tokenize(sentence: str) -> List[str]:
+    out: List[str] = []
+    for tok in _WORD_RE.findall((sentence or "").lower()):
+        if len(tok) > 2 and tok not in _STOPWORDS:
+            out.append(tok)
+    return out
+
+
+def _factual_signal(sentence: str) -> float:
+    score = 0.0
+    if _NUM_RE.search(sentence):
+        score += _NUM_BOOST
+    if _MONEY_RE.search(sentence):
+        score += _MONEY_BOOST
+    score += _YEAR_BOOST * len(_YEAR_RE.findall(sentence))
+    if len(_CAPWORD_RE.findall(sentence)) >= 2:
+        score += _ENT_BOOST
+    if _FACT_VERB_RE.search(sentence):
+        score += _VERB_BOOST
+    return score
+
+
+def _choose_target_words(src_words: int) -> int:
+    if src_words < _SHORT_CUTOFF_WORDS:
+        ratio = _SHORT_RATIO
+    elif src_words < _LONG_CUTOFF_WORDS:
+        ratio = _MID_RATIO
+    else:
+        ratio = _LONG_RATIO
+    return max(_MIN_WORDS, int(src_words * ratio))
+
+
+def _mmr_select(sentences: List[str], scores: List[float], max_sent: int, lam: float) -> List[int]:
+    token_sets = [set(_tokenize(s)) for s in sentences]
+    selected: List[int] = []
+    while len(selected) < min(max_sent, len(sentences)):
+        best_idx = None
+        best_val = -1e18
+        for i in range(len(sentences)):
+            if i in selected:
+                continue
+            relevance = scores[i]
+            redundancy = 0.0
+            for j in selected:
+                a = token_sets[i]
+                b = token_sets[j]
+                if a and b:
+                    redundancy = max(redundancy, len(a & b) / max(1, len(a | b)))
+            val = lam * relevance - (1.0 - lam) * redundancy
+            if val > best_val:
+                best_val = val
+                best_idx = i
+        if best_idx is None:
+            break
+        selected.append(best_idx)
+    return sorted(selected)
+
+
+def _top_coverage_terms(sentences: List[str]) -> Set[str]:
+    c = Counter()
+    for s in sentences:
+        for tok in _tokenize(s):
+            if len(tok) >= _COVER_MIN_TOKEN_LEN and not tok.isdigit():
+                c[tok] += 1
+    return {tok for tok, _ in c.most_common(_COVER_TOP_K)}
+
+
+def _extractive_sentences(text: str) -> List[str]:
+    raw_paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text or "") if p and p.strip()]
+    sentences: List[str] = []
+    seen: Set[str] = set()
+
+    for paragraph in raw_paragraphs:
+        for sent in _split_sentences(paragraph):
+            s = sent.strip()
+            if len(s) < 28:
+                continue
+            if _is_header_like(s) or _is_noise_caption(s):
+                continue
+            norm = re.sub(r"\s+", " ", s).strip().lower()
+            if norm in seen:
+                continue
+            seen.add(norm)
+            sentences.append(s)
+
+    if not sentences:
+        for sent in _split_sentences(text):
+            s = sent.strip()
+            if len(s) < 28:
+                continue
+            if _is_header_like(s) or _is_noise_caption(s):
+                continue
+            norm = re.sub(r"\s+", " ", s).strip().lower()
+            if norm in seen:
+                continue
+            seen.add(norm)
+            sentences.append(s)
+
+    if not sentences:
+        return []
+
+    freq = Counter()
+    for sent in sentences:
+        freq.update(_tokenize(sent))
+
+    scores: List[float] = []
+    n_sent = len(sentences)
+    for i, sent in enumerate(sentences):
+        toks = _tokenize(sent)
+        base = sum(freq[t] for t in toks) / max(1, len(toks))
+        pos = 0.0
+        if i < max(1, n_sent // 8):
+            pos += _LEAD_BOOST
+        if i > n_sent * 0.85:
+            pos += _TAIL_BOOST
+        scores.append(base + _factual_signal(sent) + pos)
+
+    src_words = len(_WORD_RE.findall(_clean_summary_text(text)))
+    target_words = _choose_target_words(src_words)
+    max_sent = min(_MAX_SENT_CAP, max(_MIN_SENT_CAP, target_words // _AVG_SENT_WORDS))
+
+    selected = _mmr_select(sentences, scores, max_sent=max_sent, lam=_MMR_LAMBDA)
+
+    # Ensure early/mid/late coverage if possible.
+    if sentences:
+        n = len(sentences)
+        bands = [range(0, max(1, n // 3)), range(n // 3, max(n // 3 + 1, 2 * n // 3)), range(2 * n // 3, n)]
+        for band in bands:
+            if any(i in band for i in selected):
+                continue
+            candidates = [i for i in band if i not in selected]
+            if candidates:
+                selected.append(max(candidates, key=lambda idx: scores[idx]))
+
+    selected_set: Set[int] = set(selected)
+    covered_tokens: Set[str] = set()
+    for i in selected_set:
+        covered_tokens.update(_tokenize(sentences[i]))
+    desired_terms = _top_coverage_terms(sentences)
+
+    budget = int(target_words * _BUDGET_SLACK)
+    used_words = sum(len(_WORD_RE.findall(sentences[i])) for i in selected_set)
+    candidates = [i for i in range(len(sentences)) if i not in selected_set]
+    candidates.sort(key=lambda idx: scores[idx], reverse=True)
+
+    for i in candidates:
+        if used_words >= budget or len(selected_set) >= _MAX_SENT_CAP:
+            break
+        sent_tokens = set(_tokenize(sentences[i]))
+        gain = len((sent_tokens & desired_terms) - covered_tokens)
+        if gain <= 0:
+            continue
+        w = len(_WORD_RE.findall(sentences[i]))
+        if used_words + w > budget:
+            continue
+        selected_set.add(i)
+        used_words += w
+        covered_tokens.update(sent_tokens)
+
+    ranked = sorted(selected_set, key=lambda idx: scores[idx], reverse=True)
+    kept: List[int] = []
+    kept_words = 0
+    for i in ranked:
+        w = len(_WORD_RE.findall(sentences[i]))
+        if kept_words + w <= budget or len(kept) < _FLOOR_KEEP:
+            kept.append(i)
+            kept_words += w
+
+    kept = sorted(set(kept))
+    return [sentences[i] for i in kept]
+
+
+def _render_extractive_summary(src_path: str, sentences: List[str]) -> str:
+    src_name = os.path.basename(src_path)
+    lines = [
+        f"# SUMM: {src_name}",
+        "method: extractive-stdlib-tuned-v3",
+        "",
+        "## Extracted Sentences",
+    ]
+    if not sentences:
+        lines.append("- [No extractable sentences found in source text.]")
+    else:
+        lines.extend(f"- {s}" for s in sentences)
+    return "\n".join(lines).strip() + "\n"
+
+
 def summ_one(src_path: str) -> str:
-    """Return SUMM markdown content for src_path."""
-    prompt = load_summ_prompt()
+    """Return deterministic extractive SUMM markdown content for src_path."""
     body = read_raw_to_text(src_path)
 
-    # Guard: avoid sending insane payloads
+    # Guard: avoid processing insane payloads.
     max_chars = int(cfg_get("summ.max_input_chars", 120_000))
     if max_chars > 0 and len(body) > max_chars:
         body = body[:max_chars] + "\n\n...[truncated]...\n"
 
-    full_prompt = (
-        f"{prompt.rstrip()}\n\n"
-        "---\n"
-        "INPUT_TEXT:\n"
-        f"{body}\n"
-        "---\n"
-    )
-
-    return call_model_prompt(
-        role="thinker",
-        prompt=full_prompt,
-        max_tokens=int(cfg_get("summ.max_tokens", 900)),
-        temperature=float(cfg_get("summ.temperature", 0.2)),
-        top_p=float(cfg_get("summ.top_p", 0.9)),
-    )
+    sentences = _extractive_sentences(body)
+    return _render_extractive_summary(src_path, sentences)
 
 
 def summ_new_in_kb(kb_name: str, folder: str) -> Dict[str, Any]:

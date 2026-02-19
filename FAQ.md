@@ -406,6 +406,8 @@ Every fact has a lifespan:
    >>summ new
    ```
    Creates: `SUMM_<file>.md` with SHA-256 hash
+   - Current behavior: `>>summ` uses a deterministic extractive pipeline (stdlib), not an LLM generation call.
+   - Mechanics stay the same: source file is moved to `/original/`, SUMM file is created beside it.
 
 2. **Promote to Vault**:
    ```
