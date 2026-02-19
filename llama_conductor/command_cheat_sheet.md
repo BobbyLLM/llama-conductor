@@ -25,6 +25,7 @@ Tips:
 
 ## KB attachment (`>>`)
 - `>>list_kb` list known and attached KBs
+- `>>list_files` list lockable `SUMM_*.md` files in attached filesystem KBs
 - `>>attach <kb>` attach KB
 - `>>attach all` attach all KBs
 - `>>detach <kb>` detach KB
@@ -34,8 +35,11 @@ Tips:
 Tips:
 - After `>>attach <kb>`, normal chat queries are grounded against attached KB content until you detach it.
 - Attachments persist for the session (sticky), so use `>>detach <kb>` or `>>detach all` to stop grounding.
+- `>>detach all` also clears active lock state (same as `>>unlock`).
+- `>>detach <kb>` also clears lock if the locked file belongs to that KB.
 - While lock is active, normal chat grounding is deterministic and scoped to the locked SUMM file.
 - Soft aliases (when a filesystem KB is attached): `lock SUMM_<name>.md` and `unlock`.
+- Strict soft alias (filesystem KB must be attached): `list files` -> `>>list_files`.
 
 ## Scratchpad (`>>`)
 Attach first:
@@ -71,17 +75,6 @@ Tips:
 - `>>list` is context-sensitive: scratchpad list when attached, KB list when not attached.
 - `>>list` may show more records than a normal follow-up reasoning turn uses; to query against all contents (eg: "compare xyz to abc"), run `>>scratchpad show all` first, then ask the question.
 - Raw captures are stored at `total_recall/session_kb/<session_id>.jsonl`.
-
-## Cliniko (`>>`)
-Two-step workflow:
-1. `>>cliniko` + paste raw clinical note payload
-2. `>>cliniko review` (optional LLM polish of last scaffold)
-
-Other:
-- `>>cliniko parse` parse-only diagnostics
-Tips:
-- `>>cliniko review` requires a prior successful `>>cliniko` in the same session.
-- Deterministic scaffold first, then optional stochastic polish.
 
 ## Sticky modes (`>>`)
 - `>>fun` / `>>f` / `>>F` enable Fun mode

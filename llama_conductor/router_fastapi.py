@@ -372,6 +372,8 @@ def _soft_alias_command(text: str, state: SessionState) -> Optional[str]:
                 return ">>" + t
             if low == "unlock":
                 return ">>unlock"
+            if low == "list files" and fs_attached:
+                return ">>list_files"
 
     if "scratchpad" not in attached:
         return None

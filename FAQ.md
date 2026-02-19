@@ -543,7 +543,11 @@ roles:
 #### Locked SUMM grounding (`>>lock`):
 - `>>lock SUMM_<name>.md` scopes normal query grounding to one SUMM file from attached filesystem KBs.
 - `>>unlock` clears the lock (no filename needed).
+- `>>list_files` lists lockable `SUMM_*.md` files in currently attached filesystem KBs.
 - Soft aliases (when a filesystem KB is attached): `lock SUMM_<name>.md`, `unlock`.
+- Strict soft alias (requires at least one attached filesystem KB): `list files` -> `>>list_files`.
+- `>>detach all` also clears lock state.
+- `>>detach <kb>` also clears lock if the locked file belongs to that KB.
 - While locked, normal query grounding is deterministic and file-scoped.
 - If answer support is in locked facts, provenance is normalized to:
   - `Source: Locked file (SUMM_<name>.md)`

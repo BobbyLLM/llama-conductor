@@ -5,9 +5,11 @@
 Locked SUMM grounding + lock-safe provenance behavior:
 
 - Added `>>lock SUMM_<name>.md` and `>>unlock` for deterministic single-file SUMM grounding in normal query paths.
+- Added `>>list_files` to enumerate lockable `SUMM_*.md` files from attached filesystem KBs.
 - Added soft aliases (when a filesystem KB is attached):
   - `lock SUMM_<name>.md` -> `>>lock SUMM_<name>.md`
   - `unlock` -> `>>unlock`
+  - `list files` -> `>>list_files` (strict exact phrase)
 - Lock behavior:
   - normal filesystem-grounded queries are scoped to the locked SUMM file only
   - facts are built deterministically from the locked file's `## Extracted Sentences` section
@@ -16,6 +18,7 @@ Locked SUMM grounding + lock-safe provenance behavior:
     - `Source: Model (not in locked file)`
     - plus note: `[Not found in locked source <SUMM_file>. Answer based on pre-trained data.]`
 - `##mentats` behavior is unchanged and remains Vault-only; lock scope does not affect Mentats.
+- `>>detach all` now also clears lock state; `>>detach <kb>` clears lock when the locked file belongs to that KB.
 - No SUMM pipeline changes:
   - `>>summ` mechanics and provenance remain unchanged
   - `>>move to vault` mechanics remain unchanged

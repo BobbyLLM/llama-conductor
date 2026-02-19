@@ -89,6 +89,48 @@ def load_help_text() -> str:
         return f"[help missing: {e}]"
 
 
+def _clear_locked_summ(state: SessionState) -> str:
+    """Clear current lock and return previous locked filename (if any)."""
+    if not state.locked_summ_path:
+        return ""
+    prev = state.locked_summ_file or os.path.basename(state.locked_summ_path)
+    state.locked_summ_file = ""
+    state.locked_summ_kb = ""
+    state.locked_summ_path = ""
+    state.locked_summ_rel_path = ""
+    state.locked_last_fact_lines = 0
+    return prev
+
+
+def _list_lockable_summ_files(state: SessionState) -> List[str]:
+    """Return lockable SUMM files across attached filesystem KBs."""
+    rows: List[str] = []
+    source_kbs = sorted(
+        k for k in state.attached_kbs if k and k in KB_PATHS and k not in (VAULT_KB_NAME, "scratchpad")
+    )
+    for kb in source_kbs:
+        root = KB_PATHS.get(kb)
+        if not root or not os.path.isdir(root):
+            continue
+        for dirpath, _, filenames in os.walk(root):
+            if "original" in {p.lower() for p in dirpath.split(os.sep)}:
+                continue
+            for fn in sorted(filenames):
+                if not (fn.startswith("SUMM_") and fn.lower().endswith(".md")):
+                    continue
+                abs_path = os.path.join(dirpath, fn)
+                rel = os.path.relpath(abs_path, root)
+                mark = ""
+                if (
+                    state.locked_summ_path
+                    and os.path.abspath(abs_path).lower() == os.path.abspath(state.locked_summ_path).lower()
+                ):
+                    mark = " [LOCKED]"
+                rows.append(f"- kb={kb} file={fn} rel={rel}{mark}")
+    rows.sort()
+    return rows
+
+
 def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Optional[str]:
     """Return immediate reply if handled, else None."""
     if not is_command(cmd_text):
@@ -393,26 +435,42 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         if target == "all":
             scratchpad_deleted = False
             scratchpad_count = 0
+            prev_locked = _clear_locked_summ(state)
             if "scratchpad" in state.attached_kbs and list_scratchpad_records and clear_scratchpad:
                 recs = list_scratchpad_records(session_id, limit=1000000)
                 scratchpad_count = len(recs)
                 scratchpad_deleted = bool(clear_scratchpad(session_id))
             state.attached_kbs.clear()
+            unlock_note = f" and unlocked '{prev_locked}'" if prev_locked else ""
             if scratchpad_deleted:
-                return f"[router] detached ALL and deleted scratchpad data ({scratchpad_count} records dumped)"
-            return "[router] detached ALL"
+                return (
+                    f"[router] detached ALL and deleted scratchpad data ({scratchpad_count} records dumped)"
+                    f"{unlock_note}"
+                )
+            return f"[router] detached ALL{unlock_note}"
         if target in state.attached_kbs:
+            unlock_note = ""
+            if target in KB_PATHS and state.locked_summ_path and state.locked_summ_kb == target:
+                prev_locked = _clear_locked_summ(state)
+                if prev_locked:
+                    unlock_note = f" and unlocked '{prev_locked}'"
             if target == "scratchpad" and list_scratchpad_records and clear_scratchpad:
                 recs = list_scratchpad_records(session_id, limit=1000000)
                 n = len(recs)
                 deleted = bool(clear_scratchpad(session_id))
                 state.attached_kbs.remove(target)
                 if not deleted:
-                    return "[router] detached 'scratchpad' (warning: scratchpad delete failed)"
-                return f"[router] detached 'scratchpad' and deleted scratchpad data ({n} records dumped)"
+                    return f"[router] detached 'scratchpad' (warning: scratchpad delete failed){unlock_note}"
+                return f"[router] detached 'scratchpad' and deleted scratchpad data ({n} records dumped){unlock_note}"
             state.attached_kbs.remove(target)
-            return f"[router] detached '{target}'"
+            return f"[router] detached '{target}'{unlock_note}"
         return f"[router] kb not attached: '{target}'"
+
+    if low in ("list_files", "list files"):
+        rows = _list_lockable_summ_files(state)
+        if not rows:
+            return "[router] No lockable SUMM files found in attached filesystem KBs."
+        return "[router] lockable SUMM files:\n" + "\n".join(rows[:300])
 
     if low in ("list_kb", "list", "kbs"):
         known = sorted(set(KB_PATHS.keys()) | {"scratchpad"})
@@ -458,14 +516,9 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return f"[router] locked file: kb={kb} file={fn}"
 
     if parts and parts[0].lower() == "unlock":
-        if not state.locked_summ_path:
+        prev = _clear_locked_summ(state)
+        if not prev:
             return "[router] no locked file"
-        prev = state.locked_summ_file or os.path.basename(state.locked_summ_path)
-        state.locked_summ_file = ""
-        state.locked_summ_kb = ""
-        state.locked_summ_path = ""
-        state.locked_summ_rel_path = ""
-        state.locked_last_fact_lines = 0
         return f"[router] unlocked file: {prev}"
 
     # fun toggles
