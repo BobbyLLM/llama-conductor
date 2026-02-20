@@ -36,7 +36,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from .config import cfg_get, ROLES, KB_PATHS, VAULT_KB_NAME, FS_TOP_K, FS_MAX_CHARS
 from .session_state import get_state, SessionState
 from .helpers import (
-    has_images_in_messages,
     has_mentats_in_recent_history,
     normalize_history,
     last_user_message,
@@ -368,6 +367,57 @@ def _apply_deterministic_footer(
         )
     except Exception:
         return text
+
+
+def _finalize_chat_response(
+    *,
+    text: str,
+    state: SessionState,
+    lock_active: bool,
+    scratchpad_grounded: bool,
+    scratchpad_quotes: List[str],
+    has_facts_block: bool,
+    stream: bool,
+):
+    """Apply shared post-processing and return HTTP response."""
+    if scratchpad_grounded:
+        text = _sanitize_scratchpad_grounded_output(text)
+        if scratchpad_quotes:
+            text = (
+                text.rstrip()
+                + "\n\nScratchpad Quotes:\n"
+                + "\n".join(f'- "{q}"' for q in scratchpad_quotes)
+            )
+        text = _append_scratchpad_provenance(text)
+
+    # Add disclaimer if KBs were attached but model used training data.
+    if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded and not lock_active:
+        kb_list = ", ".join(sorted(state.attached_kbs))
+        disclaimer = (
+            f"[Note: No relevant information found in attached KBs ({kb_list}). "
+            f"Answer based on pre-trained data.]\n\n"
+        )
+        text = disclaimer + text
+
+    if lock_active:
+        text = _apply_locked_output_policy(text, state)
+
+    text = _apply_deterministic_footer(
+        text=text,
+        state=state,
+        lock_active=lock_active,
+        scratchpad_grounded=scratchpad_grounded,
+        has_facts_block=has_facts_block,
+    )
+
+    # Auto-detach if this was a trust >>attach all operation.
+    if state.auto_detach_after_response:
+        state.attached_kbs.clear()
+        state.auto_detach_after_response = False
+
+    if stream:
+        return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+    return JSONResponse(_make_openai_response(text))
 
 
 def _soft_alias_command(text: str, state: SessionState) -> Optional[str]:
@@ -745,7 +795,7 @@ async def v1_chat_completions(req: Request):
         vodka_body = vodka.inlet(vodka_body)
         vodka_body = vodka.outlet(vodka_body)
         raw_messages = vodka_body.get("messages", raw_messages)
-    except Exception as e:
+    except Exception:
         pass  # Fail-open
     
     # Check if Vodka already answered hard commands (?? list, !! nuke)
@@ -976,39 +1026,15 @@ async def v1_chat_completions(req: Request):
             else:
                 text = "[FUN]"
 
-        if scratchpad_grounded:
-            text = _sanitize_scratchpad_grounded_output(text)
-            if scratchpad_quotes:
-                text = (
-                    text.rstrip()
-                    + "\n\nScratchpad Quotes:\n"
-                    + "\n".join(f'- "{q}"' for q in scratchpad_quotes)
-                )
-            text = _append_scratchpad_provenance(text)
-
-        # Add disclaimer if KBs were attached but model used training data
-        if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded and not lock_active:
-            kb_list = ', '.join(sorted(state.attached_kbs))
-            disclaimer = f"[Note: No relevant information found in attached KBs ({kb_list}). Answer based on pre-trained data.]\n\n"
-            text = disclaimer + text
-        if lock_active:
-            text = _apply_locked_output_policy(text, state)
-        text = _apply_deterministic_footer(
+        return _finalize_chat_response(
             text=text,
             state=state,
             lock_active=lock_active,
             scratchpad_grounded=scratchpad_grounded,
+            scratchpad_quotes=scratchpad_quotes,
             has_facts_block=bool((facts_block or "").strip()),
+            stream=stream,
         )
-        
-        # Auto-detach if this was a trust >>attach all operation
-        if state.auto_detach_after_response:
-            state.attached_kbs.clear()
-            state.auto_detach_after_response = False
-
-        if stream:
-            return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
-        return JSONResponse(_make_openai_response(text))
 
     if fun_mode == "fun_rewrite":
         text = run_fun_rewrite_fallback(
@@ -1019,39 +1045,15 @@ async def v1_chat_completions(req: Request):
             facts_block=facts_block,
         ).strip()
 
-        if scratchpad_grounded:
-            text = _sanitize_scratchpad_grounded_output(text)
-            if scratchpad_quotes:
-                text = (
-                    text.rstrip()
-                    + "\n\nScratchpad Quotes:\n"
-                    + "\n".join(f'- "{q}"' for q in scratchpad_quotes)
-                )
-            text = _append_scratchpad_provenance(text)
-        
-        # Add disclaimer if KBs were attached but model used training data
-        if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded and not lock_active:
-            kb_list = ', '.join(sorted(state.attached_kbs))
-            disclaimer = f"[Note: No relevant information found in attached KBs ({kb_list}). Answer based on pre-trained data.]\n\n"
-            text = disclaimer + text
-        if lock_active:
-            text = _apply_locked_output_policy(text, state)
-        text = _apply_deterministic_footer(
+        return _finalize_chat_response(
             text=text,
             state=state,
             lock_active=lock_active,
             scratchpad_grounded=scratchpad_grounded,
+            scratchpad_quotes=scratchpad_quotes,
             has_facts_block=bool((facts_block or "").strip()),
+            stream=stream,
         )
-        
-        # Auto-detach if this was a trust >>attach all operation
-        if state.auto_detach_after_response:
-            state.attached_kbs.clear()
-            state.auto_detach_after_response = False
-        
-        if stream:
-            return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
-        return JSONResponse(_make_openai_response(text))
 
     # RAW mode (bypass Serious formatting, keep CTC + KB grounding)
     if state.raw_sticky and run_raw:
@@ -1066,39 +1068,15 @@ async def v1_chat_completions(req: Request):
             thinker_role="thinker",
         ).strip()
 
-        if scratchpad_grounded:
-            text = _sanitize_scratchpad_grounded_output(text)
-            if scratchpad_quotes:
-                text = (
-                    text.rstrip()
-                    + "\n\nScratchpad Quotes:\n"
-                    + "\n".join(f'- "{q}"' for q in scratchpad_quotes)
-                )
-            text = _append_scratchpad_provenance(text)
-        
-        # Add disclaimer if KBs were attached but model used training data
-        if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded and not lock_active:
-            kb_list = ', '.join(sorted(state.attached_kbs))
-            disclaimer = f"[Note: No relevant information found in attached KBs ({kb_list}). Answer based on pre-trained data.]\n\n"
-            text = disclaimer + text
-        if lock_active:
-            text = _apply_locked_output_policy(text, state)
-        text = _apply_deterministic_footer(
+        return _finalize_chat_response(
             text=text,
             state=state,
             lock_active=lock_active,
             scratchpad_grounded=scratchpad_grounded,
+            scratchpad_quotes=scratchpad_quotes,
             has_facts_block=bool((facts_block or "").strip()),
+            stream=stream,
         )
-        
-        # Auto-detach if this was a trust >>attach all operation
-        if state.auto_detach_after_response:
-            state.attached_kbs.clear()
-            state.auto_detach_after_response = False
-        
-        if stream:
-            return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
-        return JSONResponse(_make_openai_response(text))
 
     # Normal serious
     text = run_serious(
@@ -1112,39 +1090,15 @@ async def v1_chat_completions(req: Request):
         thinker_role="thinker",
     ).strip()
 
-    if scratchpad_grounded:
-        text = _sanitize_scratchpad_grounded_output(text)
-        if scratchpad_quotes:
-            text = (
-                text.rstrip()
-                + "\n\nScratchpad Quotes:\n"
-                + "\n".join(f'- "{q}"' for q in scratchpad_quotes)
-            )
-        text = _append_scratchpad_provenance(text)
-
-    # Add disclaimer if KBs were attached but model used training data
-    if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded and not lock_active:
-        kb_list = ', '.join(sorted(state.attached_kbs))
-        disclaimer = f"[Note: No relevant information found in attached KBs ({kb_list}). Answer based on pre-trained data.]\n\n"
-        text = disclaimer + text
-    if lock_active:
-        text = _apply_locked_output_policy(text, state)
-    text = _apply_deterministic_footer(
+    return _finalize_chat_response(
         text=text,
         state=state,
         lock_active=lock_active,
         scratchpad_grounded=scratchpad_grounded,
+        scratchpad_quotes=scratchpad_quotes,
         has_facts_block=bool((facts_block or "").strip()),
+        stream=stream,
     )
-    
-    # Auto-detach AFTER disclaimer check
-    if state.auto_detach_after_response:
-        state.attached_kbs.clear()
-        state.auto_detach_after_response = False
-
-    if stream:
-        return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
-    return JSONResponse(_make_openai_response(text))
 
 
 # Convenience for `python router_fastapi.py`

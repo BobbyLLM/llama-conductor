@@ -16,7 +16,7 @@ Vodka v1.0.4 (no code changes - version bump for alignment)
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Union, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple
 from pydantic import BaseModel, Field
 
 import os

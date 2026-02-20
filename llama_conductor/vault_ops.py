@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Set, Tuple
 
 from .config import (
     cfg_get,
-    SUMM_PROMPT_PATH,
     VAULT_KB_NAME,
     VAULT_CHUNK_WORDS,
     VAULT_OVERLAP_WORDS,
@@ -124,12 +123,6 @@ def read_raw_to_text(path: str) -> str:
     if ext in (".html", ".htm"):
         return read_html_text(path)
     return read_text_file(path)
-
-
-def load_summ_prompt() -> str:
-    """Load SUMM prompt from file."""
-    with open(SUMM_PROMPT_PATH, "r", encoding="utf-8") as f:
-        return f.read()
 
 
 def _clean_summary_text(text: str) -> str:
@@ -516,7 +509,7 @@ def qdrant_delete_for_vault_file(client: Any, *, vault_kb: str, source_kb: str, 
                 FieldCondition(key="source_rel_path", match=MatchValue(value=rel_path)),
             ]
         )
-        res = client.delete(
+        client.delete(
             collection_name=cfg_get("rag.collection", None) or "moa_kb_docs",
             points_selector=flt,
             wait=True,
@@ -534,10 +527,6 @@ def move_summ_to_vault(source_kbs: set, *, newest_only: bool = False) -> Dict[st
     source_kbs = {k.strip() for k in (source_kbs or set()) if k and k.strip()}
     if not source_kbs:
         return {"files": 0, "chunks": 0, "notes": ["no source KBs provided"]}
-
-    # Ensure SUMM.md exists (so users have it next to router)
-    if not os.path.isfile(SUMM_PROMPT_PATH):
-        return {"files": 0, "chunks": 0, "notes": [f"SUMM.md missing at {SUMM_PROMPT_PATH}"]}
 
     notes: List[str] = []
     files_done = 0

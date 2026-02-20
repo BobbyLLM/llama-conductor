@@ -6,6 +6,7 @@ __pycache__/
 # Local runtime / personal state
 total_recall/
 *.log
+TEST_ARTIFACTS_VALIDATION/
 
 # Secrets
 .env

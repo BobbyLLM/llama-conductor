@@ -7,7 +7,6 @@ from typing import Callable, Dict, List, Optional
 from ..config import (
     KB_PATHS,
     VAULT_KB_NAME,
-    SUMM_PROMPT_PATH,
     CHEAT_SHEET_PATH,
     FS_TOP_K,
     FS_MAX_CHARS,
@@ -596,9 +595,6 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
 
     # summ / ingest (alias)
     if parts and parts[0].lower() in ("summ", "summarize", "ingest"):
-        if not os.path.isfile(SUMM_PROMPT_PATH):
-            return f"[router] SUMM.md missing at {SUMM_PROMPT_PATH}"
-
         # target: NEW (summarize in currently attached KBs), or a kb name, or ALL
         target = parts[1].lower() if len(parts) >= 2 else "new"
 

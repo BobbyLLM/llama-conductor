@@ -53,7 +53,6 @@ KB_PATHS: Dict[str, str] = dict(cfg_get("kb_paths", {}))
 VAULT_KB_NAME: str = str(cfg_get("vault_kb_name", "vault"))
 
 # File paths
-SUMM_PROMPT_PATH = os.path.join(HERE, "SUMM.md")
 QUOTES_MD_PATH = os.path.join(HERE, "quotes.md")
 CHEAT_SHEET_PATH = os.path.join(HERE, "command_cheat_sheet.md")
 

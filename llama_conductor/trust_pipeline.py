@@ -69,7 +69,6 @@ def classify_query(query: str) -> Dict[str, Any]:
     """
 
     q = (query or "").strip()
-    q_lower = q.lower()
 
     patterns: List[str] = []
 

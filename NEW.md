@@ -66,7 +66,7 @@ Deterministic `>>summ` pipeline swap (surgical refactor):
   - `summ_created_utc`
   - `pipeline: SUMM`
 - No new dependencies added to `pyproject.toml`.
-- `SUMM.md` compatibility checks remain in place to avoid command-path behavior drift.
+- Removed legacy `SUMM.md` sentinel dependency from `>>summ` / `>>move` command paths (no behavior change in pipeline mechanics).
 -  ** TLDR: >>SUMM is now entirely deterministic and *not* LLM summary. Faster and even more reflective of raw file (albeit somewhat larger).
 
 ---

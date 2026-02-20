@@ -693,7 +693,6 @@ def handle_weather_query(location: str) -> str:
         temp = current.get("temperature_2m")
         code = current.get("weather_code")
         humidity = current.get("relative_humidity_2m")
-        wind = current.get("wind_speed_10m")
         
         condition = _decode_weather_code(code)
         
