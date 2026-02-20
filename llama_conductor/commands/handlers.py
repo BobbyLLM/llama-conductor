@@ -1,8 +1,8 @@
-# commands/handlers.py
+﻿# commands/handlers.py
 """Main command handling logic."""
 
 import os
-from typing import List, Optional
+from typing import Callable, Dict, List, Optional
 
 from ..config import (
     KB_PATHS,
@@ -15,7 +15,6 @@ from ..config import (
 from ..session_state import SessionState
 from ..helpers import is_command, strip_cmd_prefix, parse_args
 from ..vault_ops import summ_new_in_kb, move_summ_to_vault
-from .cliniko import handle_cliniko_command
 
 # Optional imports (feature-detected)
 try:
@@ -138,6 +137,107 @@ def _list_lockable_summ_files(state: SessionState) -> List[str]:
     return rows
 
 
+def _source_filesystem_kbs(state: SessionState) -> set:
+    return {
+        k
+        for k in state.attached_kbs
+        if k and k in KB_PATHS and k not in (VAULT_KB_NAME, "scratchpad")
+    }
+
+
+def _render_status(session_id: str, state: SessionState) -> str:
+    return (
+        "[status]\n"
+        f"session_id={session_id}\n"
+        f"attached_kbs={sorted(state.attached_kbs)}\n"
+        f"locked_summ_file={state.locked_summ_file!r}\n"
+        f"locked_summ_kb={state.locked_summ_kb!r}\n"
+        f"pending_lock_candidate={state.pending_lock_candidate!r}\n"
+        f"fun_sticky={state.fun_sticky}\n"
+        f"fun_rewrite_sticky={state.fun_rewrite_sticky}\n"
+        f"last_query={state.rag_last_query!r}\n"
+        f"last_hits={state.rag_last_hits}\n"
+        f"vault_last_query={state.vault_last_query!r}\n"
+        f"vault_last_hits={state.vault_last_hits}\n"
+    )
+
+
+def _dispatch_exact_early(low: str, *, state: SessionState, session_id: str) -> Optional[str]:
+    handlers: Dict[str, Callable[[], str]] = {
+        "status": lambda: _render_status(session_id, state),
+        "help": load_help_text,
+    }
+    fn = handlers.get(low)
+    return fn() if fn else None
+
+
+def _dispatch_exact_fun(low: str, *, state: SessionState) -> Optional[str]:
+    def _fun_on() -> str:
+        state.fun_sticky = True
+        state.fun_rewrite_sticky = False
+        return "[router] fun mode ON (sticky)"
+
+    def _fun_off() -> str:
+        state.fun_sticky = False
+        return "[router] fun mode OFF"
+
+    def _fr_on() -> str:
+        state.fun_rewrite_sticky = True
+        state.fun_sticky = False
+        return "[router] fun rewrite ON (sticky)"
+
+    def _fr_off() -> str:
+        state.fun_rewrite_sticky = False
+        return "[router] fun rewrite OFF"
+
+    handlers: Dict[str, Callable[[], str]] = {
+        "fun": _fun_on,
+        "f": _fun_on,
+        "fun off": _fun_off,
+        "f off": _fun_off,
+        "fun_rewrite": _fr_on,
+        "fr": _fr_on,
+        "fun_rewrite off": _fr_off,
+        "fr off": _fr_off,
+    }
+    fn = handlers.get(low)
+    return fn() if fn else None
+
+
+def _dispatch_exact_listing(low: str, *, state: SessionState) -> Optional[str]:
+    if low in ("list_kb", "list", "kbs"):
+        known = sorted(set(KB_PATHS.keys()) | {"scratchpad"})
+        return "[router] known KBs: " + ", ".join(known)
+
+    return None
+
+
+def _handle_unlock(parts: List[str], *, state: SessionState) -> Optional[str]:
+    if not (parts and parts[0].lower() == "unlock"):
+        return None
+    _clear_pending_lock(state)
+    prev = _clear_locked_summ(state)
+    if not prev:
+        return "[router] no locked file"
+    return f"[router] unlocked file: {prev}"
+
+
+def _handle_list_files(low: str, *, state: SessionState) -> Optional[str]:
+    if low not in ("list_files", "list files"):
+        return None
+    rows = _list_lockable_summ_files(state)
+    if not rows:
+        return "[router] No lockable SUMM files found in attached filesystem KBs."
+    return "[router] lockable SUMM files:\n" + "\n".join(rows[:300])
+
+
+def _handle_list_known_kbs(low: str) -> Optional[str]:
+    if low not in ("list_kb", "list", "kbs"):
+        return None
+    known = sorted(set(KB_PATHS.keys()) | {"scratchpad"})
+    return "[router] known KBs: " + ", ".join(known)
+
+
 def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Optional[str]:
     """Return immediate reply if handled, else None."""
     if not is_command(cmd_text):
@@ -192,25 +292,10 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
                 lines.append(f"   {preview}")
             return "\n".join(lines)
 
-    # status/help
-    if low == "status":
-        return (
-            "[status]\n"
-            f"session_id={session_id}\n"
-            f"attached_kbs={sorted(state.attached_kbs)}\n"
-            f"locked_summ_file={state.locked_summ_file!r}\n"
-            f"locked_summ_kb={state.locked_summ_kb!r}\n"
-            f"pending_lock_candidate={state.pending_lock_candidate!r}\n"
-            f"fun_sticky={state.fun_sticky}\n"
-            f"fun_rewrite_sticky={state.fun_rewrite_sticky}\n"
-            f"last_query={state.rag_last_query!r}\n"
-            f"last_hits={state.rag_last_hits}\n"
-            f"vault_last_query={state.vault_last_query!r}\n"
-            f"vault_last_hits={state.vault_last_hits}\n"
-        )
-
-    if low == "help":
-        return load_help_text()
+    # status/help (exact dispatch, behavior-preserving)
+    out = _dispatch_exact_early(low, state=state, session_id=session_id)
+    if out is not None:
+        return out
 
     # scratchpad controls
     if parts and parts[0].lower() in ("scratchpad", "scratch"):
@@ -323,70 +408,6 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         # Format and return recommendations
         return "[trust] " + format_recommendations(recommendations, query=query)
 
-    # cliniko (DETERMINISTIC clinical note pipeline)
-    if parts and parts[0].lower() == "cliniko":
-        subcommand = parts[1].lower() if len(parts) > 1 else ""
-
-        # Default: treat '>>cliniko' as 'auto' when full note payload is present
-        _known_subcommands = {
-            "auto", "parse", "compact", "review",
-            "help", "status",
-            "sidecar", "generate", "sanitize",
-        }
-        if (not subcommand) or (subcommand not in _known_subcommands):
-            _lead = (cmd_text or "").lstrip()
-            _tail = ""
-            for _prefix in (">>cliniko", "»cliniko", "Â»cliniko"):
-                if _lead.lower().startswith(_prefix):
-                    _tail = _lead[len(_prefix):].lstrip()
-                    break
-            if _tail and ("\n" in _tail or len(_tail) >= 200):
-                return handle_cliniko_command("auto", _tail, state, session_id)
-        
-        # Explicit subcommands
-        if subcommand == "auto":
-            _low = (cmd_text or "").lower()
-            user_raw_text = ""
-            for auto_prefix in (">>cliniko auto", "»cliniko auto", "Â»cliniko auto"):
-                if auto_prefix in _low:
-                    idx = _low.find(auto_prefix) + len(auto_prefix)
-                    user_raw_text = (cmd_text or "")[idx:].lstrip()
-                    break
-            if not user_raw_text:
-                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
-            
-            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
-        
-        if subcommand == "parse":
-            _low = (cmd_text or "").lower()
-            user_raw_text = ""
-            for parse_prefix in (">>cliniko parse", "»cliniko parse", "Â»cliniko parse"):
-                if parse_prefix in _low:
-                    idx = _low.find(parse_prefix) + len(parse_prefix)
-                    user_raw_text = (cmd_text or "")[idx:].lstrip()
-                    break
-            if not user_raw_text:
-                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
-            
-            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
-        
-        # Legacy compact (redirect but support for transition)
-        if subcommand == "compact":
-            _low = (cmd_text or "").lower()
-            user_raw_text = ""
-            for compact_prefix in (">>cliniko compact", "»cliniko compact"):
-                if compact_prefix in _low:
-                    idx = _low.find(compact_prefix) + len(compact_prefix)
-                    user_raw_text = (cmd_text or "")[idx:].lstrip()
-                    break
-            if not user_raw_text:
-                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
-            
-            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
-        
-        # Other subcommands (help, status, legacy generate/sanitize)
-        return handle_cliniko_command(subcommand, "", state, session_id)
-
     # attach/detach/list
     if parts and parts[0].lower() in ("attach", "a"):
         if len(parts) < 2:
@@ -493,15 +514,17 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             return f"[router] detached '{target}'{unlock_note}"
         return f"[router] kb not attached: '{target}'"
 
-    if low in ("list_files", "list files"):
-        rows = _list_lockable_summ_files(state)
-        if not rows:
-            return "[router] No lockable SUMM files found in attached filesystem KBs."
-        return "[router] lockable SUMM files:\n" + "\n".join(rows[:300])
+    out = _handle_list_files(low, state=state)
+    if out is not None:
+        return out
 
-    if low in ("list_kb", "list", "kbs"):
-        known = sorted(set(KB_PATHS.keys()) | {"scratchpad"})
-        return "[router] known KBs: " + ", ".join(known)
+    out = _handle_list_known_kbs(low)
+    if out is not None:
+        return out
+
+    out = _dispatch_exact_listing(low, state=state)
+    if out is not None:
+        return out
 
     # lock / unlock SUMM source file (filesystem KB grounding scope)
     if parts and parts[0].lower() == "lock":
@@ -511,11 +534,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         target_file = parts[1].strip()
         low_target = target_file.lower()
 
-        source_kbs = {
-            k
-            for k in state.attached_kbs
-            if k and k in KB_PATHS and k not in (VAULT_KB_NAME, "scratchpad")
-        }
+        source_kbs = _source_filesystem_kbs(state)
         if not source_kbs:
             return "[router] No filesystem KBs attached. Attach KB(s) first, then: >>lock SUMM_<name>.md"
 
@@ -556,31 +575,14 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         state.locked_last_fact_lines = 0
         return f"[router] locked file: kb={kb} file={fn}"
 
-    if parts and parts[0].lower() == "unlock":
-        _clear_pending_lock(state)
-        prev = _clear_locked_summ(state)
-        if not prev:
-            return "[router] no locked file"
-        return f"[router] unlocked file: {prev}"
+    out = _handle_unlock(parts, state=state)
+    if out is not None:
+        return out
 
-    # fun toggles
-    if low in ("fun", "f"):
-        state.fun_sticky = True
-        state.fun_rewrite_sticky = False
-        return "[router] fun mode ON (sticky)"
-
-    if low in ("fun off", "f off"):
-        state.fun_sticky = False
-        return "[router] fun mode OFF"
-
-    if low in ("fun_rewrite", "fr"):
-        state.fun_rewrite_sticky = True
-        state.fun_sticky = False
-        return "[router] fun rewrite ON (sticky)"
-
-    if low in ("fun_rewrite off", "fr off"):
-        state.fun_rewrite_sticky = False
-        return "[router] fun rewrite OFF"
+    # fun toggles (exact dispatch, behavior-preserving)
+    out = _dispatch_exact_fun(low, state=state)
+    if out is not None:
+        return out
 
     # peek
     if parts and parts[0].lower() == "peek":
@@ -755,3 +757,4 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return "[router] raw mode OFF"
 
     return f"[router] unknown command: {cmd}"
+

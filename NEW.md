@@ -1,5 +1,27 @@
 # What's New
 
+*** V1.2.4 (latest)
+
+Deterministic confidence/source footer normalization:
+
+- Added `sources_footer.py` and integrated deterministic footer normalization.
+- Footer shape is unchanged:
+  - `Confidence: <low|medium|high|top> | Source: <Model|Docs|User|Contextual|Mixed>`
+- Footer assignment is now *router-rule-based* (not model self-grading), using current grounding signals:
+  - lock/scratchpad/facts grounding state
+  - lock fallback state
+  - retrieval hit indicators
+- Model fallback confidence is normalized to `medium` (with explicit `Source: Model`) to avoid pessimistic under-confidence on known-stable facts.
+- Existing explicit provenance lines remain intact:
+  - lock grounding: `Source: Locked file (SUMM_<name>.md)`
+  - lock fallback: `Source: Model (not in locked file)` + not-found note
+  - scratchpad grounding: `Source: Scratchpad`
+- Mentats contract is unchanged and still uses `Sources: Vault` (no footer override).
+- No new dependencies added.
+- **TLDR:Confidence now represents DIRECT sourcing, per above. No more 'good enough' indicators
+
+---
+
 *** V1.2.3 (latest)
 
 Locked SUMM grounding + lock-safe provenance behavior:
@@ -10,6 +32,9 @@ Locked SUMM grounding + lock-safe provenance behavior:
   - `lock SUMM_<name>.md` -> `>>lock SUMM_<name>.md`
   - `unlock` -> `>>unlock`
   - `list files` -> `>>list_files` (strict exact phrase)
+- Added partial lock confirmation flow:
+  - `lock <partial_name>` -> `Did you mean: >>lock SUMM_<name>.md ? [Y/N]`
+  - `Y` confirms lock, `N` cancels
 - Lock behavior:
   - normal filesystem-grounded queries are scoped to the locked SUMM file only
   - facts are built deterministically from the locked file's `## Extracted Sentences` section
@@ -22,7 +47,7 @@ Locked SUMM grounding + lock-safe provenance behavior:
 - No SUMM pipeline changes:
   - `>>summ` mechanics and provenance remain unchanged
   - `>>move to vault` mechanics remain unchanged
-  - TLDR: you can now >>lock a SUMM<name>.md file and reason ONLY over that file, similar to >>scratch pipeline...but without having to copy paste. Should the information NOT be within the locked file, the model will attempt to answer based on pre-trained data and will LOUDLY state "not in locked file; here's my best guess". I hope that this (along with the stdlib summary extraction method) further improves you confidence in provided answers. As always - glassbox, fail states LOUD, trust-but-verify. 
+  - ** TLDR: you can now >>lock a SUMM<name>.md file and reason ONLY over that file, similar to >>scratch pipeline...but without having to copy paste. Should the information NOT be within the locked file, the model will attempt to answer based on pre-trained data and will LOUDLY state "not in locked file; here's my best guess". I hope that this (along with the stdlib summary extraction method) further improves you confidence in provided answers. As always - glassbox, fail states LOUD, trust-but-verify. 
 
 ---
 
@@ -42,7 +67,7 @@ Deterministic `>>summ` pipeline swap (surgical refactor):
   - `pipeline: SUMM`
 - No new dependencies added to `pyproject.toml`.
 - `SUMM.md` compatibility checks remain in place to avoid command-path behavior drift.
--  TLDR: >>SUMM is now entirely deterministic and *not* LLM summary. Faster and even more reflective of raw file (albeit somewhat larger).
+-  ** TLDR: >>SUMM is now entirely deterministic and *not* LLM summary. Faster and even more reflective of raw file (albeit somewhat larger).
 
 ---
 

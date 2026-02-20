@@ -128,6 +128,8 @@ Tips:
 - Selectors apply to the current turn only.
 - Use selectors for explicit pipeline control when sticky modes are active.
 - `##mentats` remains Vault-only and does not use filesystem lock scope.
+- Non-Mentats `Confidence: ... | Source: ...` footer is router-normalized deterministically.
+- Mentats keeps its own `Sources: Vault` contract.
 
 ## Vision/OCR
 - `>>vision` / `>>vl` / `>>v` with image: direct vision answer

@@ -531,7 +531,8 @@ roles:
 - Uses Vodka (CTC + TR)
 - No refusal behavior
 - Adds context breadcrumbs
-- Includes confidence line
+- Includes confidence/source footer line
+- Footer is normalized by router rules (non-Mentats), not trusted as model self-rating
 
 #### Mentats (##mentats):
 - Uses Vault only (ignores filesystem KBs)
@@ -546,6 +547,10 @@ roles:
 - `>>list_files` lists lockable `SUMM_*.md` files in currently attached filesystem KBs.
 - Soft aliases (when a filesystem KB is attached): `lock SUMM_<name>.md`, `unlock`.
 - Strict soft alias (requires at least one attached filesystem KB): `list files` -> `>>list_files`.
+- Partial lock convenience (requires at least one attached filesystem KB):
+  - `lock <partial_name>` returns a deterministic suggestion:
+  - `Did you mean: >>lock SUMM_<name>.md ? [Y/N]`
+  - Reply `Y` to apply lock, `N` to cancel.
 - `>>detach all` also clears lock state.
 - `>>detach <kb>` also clears lock if the locked file belongs to that KB.
 - While locked, normal query grounding is deterministic and file-scoped.
@@ -554,6 +559,9 @@ roles:
 - If answer support is not in locked facts and model fallback is used, provenance is explicit:
   - `Source: Model (not in locked file)`
   - plus note line: `[Not found in locked source SUMM_<name>.md. Answer based on pre-trained data.]`
+- Confidence/source footer remains in standard format and is assigned deterministically by router rules.
+- In locked fallback cases, deterministic confidence is normalized to `medium` with explicit model-source labeling.
+- Mentats (`##mentats`) remains separate and keeps `Sources: Vault` output contract.
 
 #### Fun (##fun or >>fun):
 - Runs default (serious) → gets correct answer

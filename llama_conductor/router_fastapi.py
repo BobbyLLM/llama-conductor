@@ -11,7 +11,7 @@ CHANGES IN v1.2.0-refactored:
   - quotes.py: Quote loading and tone inference
   - streaming.py: SSE streaming responses
   - vault_ops.py: Vault and SUMM operations
-  - commands/: Command handlers (cliniko, handlers)
+  - commands/: Command handlers
 - router_fastapi.py now ~700 lines (was 2,373)
 - Zero breaking changes - all functionality preserved
 - All imports lazy-loaded for optional dependencies
@@ -87,6 +87,11 @@ except Exception:
     build_scratchpad_facts_block = None  # type: ignore
     wants_exhaustive_query = None  # type: ignore
     build_scratchpad_dump_text = None  # type: ignore
+
+try:
+    from .sources_footer import normalize_sources_footer  # type: ignore
+except Exception:
+    normalize_sources_footer = None  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +347,29 @@ def _apply_locked_output_policy(text: str, state: SessionState) -> str:
     return _rewrite_source_line(t, f"Source: Locked file ({locked_file})")
 
 
+def _apply_deterministic_footer(
+    *,
+    text: str,
+    state: SessionState,
+    lock_active: bool,
+    scratchpad_grounded: bool,
+    has_facts_block: bool,
+) -> str:
+    if not normalize_sources_footer:
+        return text
+    try:
+        return normalize_sources_footer(
+            text=text,
+            lock_active=lock_active,
+            scratchpad_grounded=scratchpad_grounded,
+            has_facts_block=has_facts_block,
+            rag_hits=int(getattr(state, "rag_last_hits", 0) or 0),
+            locked_fact_lines=int(getattr(state, "locked_last_fact_lines", 0) or 0),
+        )
+    except Exception:
+        return text
+
+
 def _soft_alias_command(text: str, state: SessionState) -> Optional[str]:
     """Optional bare-text aliases for scratchpad ergonomics.
 
@@ -475,15 +503,15 @@ async def v1_chat_completions(req: Request):
 
     def _openwebui_title_for(t: str) -> str:
         t_l = t.lower()
-        if "cliniko" in t_l:
-            return "Cliniko Pipeline"
+        if "clinical" in t_l or "medical" in t_l:
+            return "Clinical Pipeline"
         if "router" in t_l or "fastapi" in t_l:
             return "Router Debugging"
         return "Chat Summary"
 
     if _is_openwebui_title_task(user_text_raw):
-        CLINIKO_DEBUG = cfg_get("cliniko.debug", True)
-        if CLINIKO_DEBUG:
+        ROUTER_DEBUG = cfg_get("router.debug", False)
+        if ROUTER_DEBUG:
             print("[DEBUG] openwebui title task bypass", flush=True)
         title_json = json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
         return JSONResponse(_make_openai_response(title_json))
@@ -965,6 +993,13 @@ async def v1_chat_completions(req: Request):
             text = disclaimer + text
         if lock_active:
             text = _apply_locked_output_policy(text, state)
+        text = _apply_deterministic_footer(
+            text=text,
+            state=state,
+            lock_active=lock_active,
+            scratchpad_grounded=scratchpad_grounded,
+            has_facts_block=bool((facts_block or "").strip()),
+        )
         
         # Auto-detach if this was a trust >>attach all operation
         if state.auto_detach_after_response:
@@ -1001,6 +1036,13 @@ async def v1_chat_completions(req: Request):
             text = disclaimer + text
         if lock_active:
             text = _apply_locked_output_policy(text, state)
+        text = _apply_deterministic_footer(
+            text=text,
+            state=state,
+            lock_active=lock_active,
+            scratchpad_grounded=scratchpad_grounded,
+            has_facts_block=bool((facts_block or "").strip()),
+        )
         
         # Auto-detach if this was a trust >>attach all operation
         if state.auto_detach_after_response:
@@ -1041,6 +1083,13 @@ async def v1_chat_completions(req: Request):
             text = disclaimer + text
         if lock_active:
             text = _apply_locked_output_policy(text, state)
+        text = _apply_deterministic_footer(
+            text=text,
+            state=state,
+            lock_active=lock_active,
+            scratchpad_grounded=scratchpad_grounded,
+            has_facts_block=bool((facts_block or "").strip()),
+        )
         
         # Auto-detach if this was a trust >>attach all operation
         if state.auto_detach_after_response:
@@ -1080,6 +1129,13 @@ async def v1_chat_completions(req: Request):
         text = disclaimer + text
     if lock_active:
         text = _apply_locked_output_policy(text, state)
+    text = _apply_deterministic_footer(
+        text=text,
+        state=state,
+        lock_active=lock_active,
+        scratchpad_grounded=scratchpad_grounded,
+        has_facts_block=bool((facts_block or "").strip()),
+    )
     
     # Auto-detach AFTER disclaimer check
     if state.auto_detach_after_response:
