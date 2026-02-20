@@ -68,7 +68,7 @@ def _compute_confidence(
     locked_fact_lines: int,
 ) -> str:
     if model_fallback or source == "Model":
-        return "medium"
+        return "unverified"
     if source in {"User", "Contextual", "Mixed"}:
         return "medium"
     if source == "Docs":
@@ -92,7 +92,7 @@ def normalize_sources_footer(
     """Normalize confidence footer deterministically for non-Mentats outputs."""
     t = (text or "").strip()
     if not t:
-        return "Confidence: low | Source: Model"
+        return "Confidence: unverified | Source: Model"
 
     # Mentats contract is separate and must remain unchanged.
     if "sources: vault" in t.lower():
