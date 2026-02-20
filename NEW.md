@@ -2,23 +2,27 @@
 
 *** V1.2.4 (latest)
 
-Deterministic confidence/source footer normalization:
+Deterministic confidence/source footer normalization (non-Mentats paths):
 
-- Added `sources_footer.py` and integrated deterministic footer normalization.
+- Added `sources_footer.py` and integrated deterministic footer normalization into non-Mentats response paths.
 - Footer shape is unchanged:
   - `Confidence: <low|medium|high|top> | Source: <Model|Docs|User|Contextual|Mixed>`
-- Footer assignment is now *router-rule-based* (not model self-grading), using current grounding signals:
+- Footer assignment is now router-rule-based (not model self-grading), using current grounding signals:
   - lock/scratchpad/facts grounding state
   - lock fallback state
   - retrieval hit indicators
-- Model fallback confidence is normalized to `medium` (with explicit `Source: Model`) to avoid pessimistic under-confidence on known-stable facts.
+- Model fallback confidence is normalized to `unverified` (with explicit `Source: Model`) to signal non-grounded answers without implying correctness.
 - Existing explicit provenance lines remain intact:
   - lock grounding: `Source: Locked file (SUMM_<name>.md)`
   - lock fallback: `Source: Model (not in locked file)` + not-found note
   - scratchpad grounding: `Source: Scratchpad`
 - Mentats contract is unchanged and still uses `Sources: Vault` (no footer override).
 - No new dependencies added.
-- **TLDR:Confidence now represents DIRECT sourcing, per above. No more 'good enough' indicators
+- Metadata/docs remediation (no command behavior change):
+  - Router runtime version reporting now uses single-source `llama_conductor/__about__.py`.
+  - `/healthz` version now resolves from `__version__` (no hardcoded drift).
+  - `DOCS-TRUTH-MAP.md` active list cleaned to remove stale `llama_conductor/SUMM.md`.
+  - Added pre-release checker: `tests/pre_release_consistency_check.py` (version/license/docs consistency, fail-loud).
 
 ---
 
@@ -47,7 +51,7 @@ Locked SUMM grounding + lock-safe provenance behavior:
 - No SUMM pipeline changes:
   - `>>summ` mechanics and provenance remain unchanged
   - `>>move to vault` mechanics remain unchanged
-  - ** TLDR: you can now >>lock a SUMM<name>.md file and reason ONLY over that file, similar to >>scratch pipeline...but without having to copy paste. Should the information NOT be within the locked file, the model will attempt to answer based on pre-trained data and will LOUDLY state "not in locked file; here's my best guess". I hope that this (along with the stdlib summary extraction method) further improves you confidence in provided answers. As always - glassbox, fail states LOUD, trust-but-verify. 
+  - TLDR: you can now >>lock a SUMM<name>.md file and reason ONLY over that file, similar to >>scratch pipeline...but without having to copy paste. Should the information NOT be within the locked file, the model will attempt to answer based on pre-trained data and will LOUDLY state "not in locked file; here's my best guess". I hope that this (along with the stdlib summary extraction method) further improves you confidence in provided answers. As always - glassbox, fail states LOUD, trust-but-verify. 
 
 ---
 
@@ -67,7 +71,7 @@ Deterministic `>>summ` pipeline swap (surgical refactor):
   - `pipeline: SUMM`
 - No new dependencies added to `pyproject.toml`.
 - Removed legacy `SUMM.md` sentinel dependency from `>>summ` / `>>move` command paths (no behavior change in pipeline mechanics).
--  ** TLDR: >>SUMM is now entirely deterministic and *not* LLM summary. Faster and even more reflective of raw file (albeit somewhat larger).
+-  TLDR: >>SUMM is now entirely deterministic and *not* LLM summary. Faster and even more reflective of raw file (albeit somewhat larger).
 
 ---
 

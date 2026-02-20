@@ -36,3 +36,4 @@ __pycache__/
 # Cliniko-related local/private artifacts
 *cliniko*
 *CLINIKO*
+docs/PUSH-GUARD-FAQ.md

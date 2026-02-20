@@ -1,23 +1,7 @@
-# trust_pipeline.py
-# version 1.1.1
-"""
->>trust mode - Tool recommendation pipeline (invariants-compliant)
+"""Deterministic `>>trust` recommendation engine.
 
-This is a sidecar that analyzes queries and recommends appropriate tools.
-It DOES NOT auto-execute anything - only suggests options to the user.
-
-Design principles:
-- Preserves user control and explicit routing
-- Remains transparent and predictable
-- No auto-execution, no implicit routing, no escalation
-- Router stays dumb (just routes to this pipeline)
-
-v1.1.1 changes (surgical, backwards-compatible):
-- Recognize encyclopedia / wiki-shaped queries and recommend >>wiki
-- Improve currency/exchange detection (e.g., "1 AUD to USD") and recommend >>exchange
-- Keep deterministic regex/heuristic matching (no model calls, no external lookups)
-- Improve >>wiki usability: suggest article-title commands for question-shaped queries
-- Recognize single-token lowercase encyclopedia lookups (e.g., 'deathclaw')
+Analyzes a query and returns ranked tool suggestions.
+Does not auto-execute tools or mutate routing state.
 """
 
 from typing import List, Dict, Any, Set

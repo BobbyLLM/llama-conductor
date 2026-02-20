@@ -1,26 +1,10 @@
-# mentats.py
-# version 1.0.3
-"""Mentats pipeline: 3-pass deep reasoning harness (Draft -> Critique -> Final).
+﻿"""Mentats deep-reasoning pipeline (Vault-grounded).
 
-CHANGES IN v1.0.3:
-- NUCLEAR anti-hallucination enforcement (prompts rewritten to be MUCH more aggressive)
-- Step 1: Explicit REFUSAL instructions when facts insufficient
-- Step 2: Critic actively hunts for ANY mention of entities not in FACTS_USED
-- Step 3: Preserves refusals, does NOT try to fix them
-- All numeric values must match EXACTLY (no rounding, no ~approximations)
-
-Invariant-critical changes in v1.0.1:
-- Mentats MUST reason only from authoritative FACTS_BLOCK (Vault-derived).
-- Mentats MUST NOT use chat history or Vodka memory.
-  (Router guarantees isolation; Mentats also ignores these inputs defensively.)
-- Final answer MUST include: 'Sources: Vault' (inside FINAL_ANSWER).
-
-This module stays fail-open for minor formatting drift (small local models).
-It logs each step's raw output into mentats_debug.log for inspection.
+Runs multi-pass draft/critique/final synthesis with strict
+source constraints and explicit `Sources: Vault` contract.
 """
 
 from __future__ import annotations
-
 from typing import List, Dict, Any, Callable
 import os
 import time
@@ -377,3 +361,4 @@ def run_mentats(
     _log_mentats_debug("STEP3", query, final_output, session_id=session_id)
 
     return final_output
+

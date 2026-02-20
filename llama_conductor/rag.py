@@ -1,24 +1,10 @@
-# rag.py
-# version 1.0.1
-"""
-RAG layer for MoA router.
+﻿"""Qdrant RAG retrieval/rerank layer.
 
-Responsibilities:
-    - Embed queries with intfloat/e5-small-v2
-    - Retrieve candidate chunks from Qdrant, filtered by KB tag(s)
-    - Rerank candidates with cross-encoder/ms-marco-TinyBERT-L-2-v2
-    - Build a compact FACTS block string for Serious / Mentats pipelines
-
-Hardening / compatibility:
-    - Uses NAMED VECTORS (VECTOR_NAME) consistently (ingest + query).
-    - Uses Qdrant Universal Query API via client.query_points(...) (preferred).
-    - Falls back to search_points(...) for older python clients if query_points is missing.
-    - Ensures collection exists and *matches* expected named vector + dimension.
-    - Does NOT silently delete data on mismatch by default (ALLOW_RECREATE_ON_MISMATCH = False).
+Builds compact FACTS blocks from vector search results
+for downstream reasoning pipelines.
 """
 
 from __future__ import annotations
-
 from pathlib import Path
 
 from dataclasses import dataclass
@@ -508,4 +494,5 @@ def get_rag_config() -> dict:
             effective[k] = v
 
     return effective
+
 

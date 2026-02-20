@@ -1,63 +1,10 @@
-# pipelines.py
-# version 1.0.6
-"""
-Specialized reasoning pipelines for llama-conductor.
+﻿"""Core non-Mentats reasoning pipelines.
 
-CHANGES IN v1.0.6:
-- CRITICAL: Synced CONTEXT window with Vodka settings for efficiency
-  * max_turn_pairs: 12→10 (matches vodka n_last_messages=10 = 20 messages)
-  * max_chars: 2400→2000 (tighter budget, still plenty of room)
-  * per_turn_max_chars: 400 (unchanged - preserves full responses)
-- FIXED: v1.0.5 was requesting 24 messages from vodka's pool of 20 (wasteful)
-- NOW: Perfect 1:1 sync - no wasted cycles, no mismatched expectations
-- RESULT: True CTC compliance for 4GB VRAM systems (Quadro P1000, etc.)
-- Total CONTEXT: ~2KB (vs 50KB bloat) - potato PC friendly
-- Prevents loops up to 20 turns while respecting hardware limits
-
-CHANGES IN v1.0.5:
-- FIX: Increased CONTEXT window AGAIN to prevent 12-18 turn loops
-  * max_turn_pairs: 8→12 (shows 24 messages instead of 16)
-  * max_chars: 1800→2400 (increases context size, still <3KB, CTC-compliant)
-  * Tested against EMOTIONAL_DAMAGE.md (looped at turn 18 with v1.0.4)
-  * Should prevent loops up to ~20 turns
-- Per-turn limit unchanged (400 chars preserves full responses)
-- Total CONTEXT still under 3KB - respects Vodka CTC philosophy
-
-CHANGES IN v1.0.4:
-- CRITICAL FIX: Added "User:" label to current message in prompt
-  * Without label, model thought unlabeled text was continuation of its own output
-  * Caused immediate parroting/looping (repeating previous response + echoing user input)
-  * Now formats current user message as "User: {text}" to match CONTEXT format
-- Kept v1.0.3 context window increase (prevents 6-8 turn loops)
-- Both fixes required to prevent all loop patterns
-
-CHANGES IN v1.0.3:
-- FIX: Increased RAW mode CONTEXT window to prevent loop issue
-  * max_turn_pairs: 4→8 (last 16 messages instead of 8)
-  * max_chars: 900→1800 (doubles context size, still CTC-compliant)
-  * per_turn_max_chars: 240→400 (preserves full responses)
-- This prevents model from repeating verbatim output when it can't see recent turns
-- Total CONTEXT still under 2KB - respects Vodka CTC philosophy
-
-CHANGES IN v1.0.2:
-- RAW mode now has minimal system prompt to prevent:
-  * Annoying preambles ("Raw mode active—no stiff formatting. I'm listening.")
-  * Mid-sentence cutoffs causing loops when user says "go on"
-  * Mode announcements and meta-commentary
-- System prompt keeps RAW conversational but gives structure to prevent failure modes
-- Increased recommended CTC limits for RAW (see vodka_filter.py settings below)
-
-CHANGES IN v1.0.1:
-- RAW mode now includes CONTEXT block (conversation history) so queries like "what have we discussed?"
-  work correctly instead of hallucinating. Model now has access to prior turns for disambiguation.
-
-Currently implements:
-  - RAW mode: conversational with minimal structure, keeps harness constraints (CTC, KB grounding, CONTEXT)
-  - Serious mode: structured output with confidence lines (see serious.py)
+Holds deterministic prompt assembly and mode-specific wrappers
+for raw/serious execution paths.
 """
 
 from __future__ import annotations
-
 from typing import List, Dict, Any, Callable, Optional, Tuple
 
 
@@ -308,3 +255,4 @@ def _extract_last_user_message(messages: List[Dict[str, Any]], fallback: str) ->
 #   - run_coder() – code generation with constraints
 #   - run_research() – deep retrieval + synthesis
 #   - run_creative() – creative writing with worldbuilding
+
