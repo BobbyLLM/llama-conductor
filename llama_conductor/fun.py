@@ -1,28 +1,10 @@
-# fun.py
-# version 1.0.9
-#
-# CHANGES IN v1.0.9:
-# - Removed redundant vodka.inlet/outlet calls (router already applies Vodka; was idempotent duplication)
-# - Fixed unbounded quote cache: switched from Dict[str, List[str]] to Dict[str, deque(maxlen=6)]
-#   Prevents memory leak from accumulating quotes indefinitely across sessions
-#
-# NOTE:
-# - This file does NOT implement routing or command handling; it only formats prompts and post-processes outputs.
-# - Any changes here are strictly inside the "Fun" generation path, and are designed to be fail-open
-#   (return a sane answer rather than raise).
-#
-# Behavior summary:
-# - [FUN] mode (run_fun): produce a correct base answer, then rewrite in a seed quote voice.
-#   Returns:
-#       <seed quote text ONLY on first line>
-#       <blank line>
-#       <rewrite body>
-#   The router wraps the first line into: [FUN] "<quote>"
-#
-# - [FUN REWRITE] helper (run_fun_rewrite): unchanged format; included for compatibility.
+﻿"""Fun-mode rewrite pipeline.
+
+Generates a grounded base answer and rewrites tone/voice
+without changing factual content.
+"""
 
 from __future__ import annotations
-
 from typing import List, Dict, Any, Callable, Optional, Tuple
 from collections import deque
 import random
@@ -527,3 +509,4 @@ def run_fun_rewrite(
         )
 
     return f"{mode_kicker}\n\n{rewritten}"
+

@@ -1,29 +1,12 @@
-# router_fastapi.py
-# version 1.2.0-refactored
-"""MoA Router (FastAPI) - Refactored
+﻿"""FastAPI orchestration layer for llama-conductor.
 
-CHANGES IN v1.2.0-refactored:
-- MAJOR REFACTOR: Split 2,373 lines into focused modules:
-  - config.py: Configuration management
-  - session_state.py: Session state dataclass
-  - helpers.py: Message parsing utilities
-  - model_calls.py: LLM API calls
-  - quotes.py: Quote loading and tone inference
-  - streaming.py: SSE streaming responses
-  - vault_ops.py: Vault and SUMM operations
-  - commands/: Command handlers
-- router_fastapi.py now ~700 lines (was 2,373)
-- Zero breaking changes - all functionality preserved
-- All imports lazy-loaded for optional dependencies
-
-This file is now the thin orchestration layer:
-- FastAPI app and routes
-- Main /v1/chat/completions endpoint
-- Pipeline routing logic
+Responsibilities:
+- expose API routes
+- route requests across command/selectors/pipelines
+- apply shared post-processing and response normalization
 """
 
 from __future__ import annotations
-
 import json
 import os
 import re
@@ -33,6 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 # Core modules (always required)
+from .__about__ import __version__
 from .config import cfg_get, ROLES, KB_PATHS, VAULT_KB_NAME, FS_TOP_K, FS_MAX_CHARS
 from .session_state import get_state, SessionState
 from .helpers import (
@@ -486,7 +470,7 @@ app = FastAPI()
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "version": "1.2.0-refactored"}
+    return {"ok": True, "version": __version__}
 
 
 @app.get("/v1/models")
@@ -553,15 +537,15 @@ async def v1_chat_completions(req: Request):
 
     def _openwebui_title_for(t: str) -> str:
         t_l = t.lower()
-        if "clinical" in t_l or "medical" in t_l:
-            return "Clinical Pipeline"
+        if "cliniko" in t_l:
+            return "Cliniko Pipeline"
         if "router" in t_l or "fastapi" in t_l:
             return "Router Debugging"
         return "Chat Summary"
 
     if _is_openwebui_title_task(user_text_raw):
-        ROUTER_DEBUG = cfg_get("router.debug", False)
-        if ROUTER_DEBUG:
+        CLINIKO_DEBUG = cfg_get("cliniko.debug", True)
+        if CLINIKO_DEBUG:
             print("[DEBUG] openwebui title task bypass", flush=True)
         title_json = json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
         return JSONResponse(_make_openai_response(title_json))
@@ -1108,4 +1092,5 @@ if __name__ == "__main__":
     host = str(cfg_get("server.host", "0.0.0.0"))
     port = int(cfg_get("server.port", 9000))
     uvicorn.run("router_fastapi:app", host=host, port=port, reload=False)
+
 

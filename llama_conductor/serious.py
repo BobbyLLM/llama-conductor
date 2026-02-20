@@ -1,24 +1,7 @@
-# serious.py
-# version 1.0.2
-"""
-Serious mode pipeline (/serious default posture).
+"""Serious-mode response pipeline.
 
-CHANGES IN v1.0.2:
-- Hardened logic edge case detection 
-- Fixed self-identification to use first person ("I am..." not "You are...")
-
-CHANGES IN v1.0.1:
-- Added contradiction detection (3-layer defense against "square circle" hallucinations)
-- Layer 1: Pre-prompt pattern matching for known contradictions
-- Layer 2: System prompt instructions for model-side detection
-- Layer 3: Forced LOW confidence when contradictions suspected
-
-This module:
-- Calls Vodka inlet() for CTC/FR and control commands (including ??).
-- Calls Vodka outlet() so "[ctx:...]" markers are expanded into verbatim stored text.
-- Uses the *modified* last user message after Vodka (so ?? rewrites work).
-- Adds a small CONTEXT section (summary + last few turns) so Serious can benefit from breadcrumbs.
-- Enforces a confidence line if the model forgets to add one.
+Applies strict answer formatting, contradiction handling,
+and confidence/source line enforcement.
 """
 
 from typing import List, Dict, Any, Callable, Optional, Tuple

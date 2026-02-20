@@ -1,21 +1,12 @@
-# vodka_filter.py
-# version 1.0.4
-"""
-Vodka v1.0.4 (no code changes - version bump for alignment)
-- Debug logging support (debug_log method, v1.0.3)
-- Graceful %Z timestamp parsing with fallback 
-- Deterministic memory store to JSON (Total Recall)
-- Manual save: "!! ... !!" OR message starts/ends with "!!"
-- Commands:
-    - "!! nuke" / "nuke !!"          -> delete all ctx notes, return early assistant reply
-    - "!! forget <query>"            -> delete matching ctx notes, return early assistant reply
-    - "?? <query>"                   -> rewrite last user msg into a memory-backed question block
-- Breadcrumb expansion:
-    - Any "[ctx:...]" markers are expanded on outlet()
+﻿"""Deterministic short-term memory filter (Vodka).
+
+Provides:
+- memory save/recall/delete controls (`!!`, `??`, forget/nuke)
+- compact context trimming for prompt hygiene
+- breadcrumb expansion during output processing
 """
 
 from __future__ import annotations
-
 from typing import Dict, List, Optional, Any, Tuple
 from pydantic import BaseModel, Field
 
@@ -958,3 +949,4 @@ class Filter:
 
 # Public alias for router code
 VodkaFilter = Filter
+

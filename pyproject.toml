@@ -8,7 +8,7 @@ version = "1.2.4"
 description = "LLM harness for trust, consistency, and proof"
 readme = "README.md"
 requires-python = ">=3.9"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 authors = [{ name = "BobbyLLM" }]
 keywords = ["llm", "rag", "router", "mentats", "vodka"]
 classifiers = [

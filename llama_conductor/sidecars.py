@@ -1,32 +1,12 @@
-# sidecars.py
-# version 1.0.3
-"""
-Non-LLM utility sidecars for llama-conductor.
+﻿"""Deterministic utility sidecars (non-LLM retrieval/calculation).
 
-CHANGES IN v1.0.3:
-- Weather geocoding switched from Open-Meteo to Nominatim (OpenStreetMap)
-- Better regional coverage: now handles small towns like "Carnarvon Western Australia"
-- No API key required, no rate limiting issues (1 req/sec is fine for chat)
-- Better display names from OSM
-
-CHANGES IN v1.0.2:
-- Wiki summary increased from 200 → 500 chars (full paragraph)
-- Weather API switched from wttr.in to Open-Meteo (no rate limiting, more reliable)
-- Added WMO weather code decoder for human-readable conditions
-- Weather now includes location geocoding, temp, condition, humidity, wind speed
-
-CHANGES IN v1.0.1:
-- Added >>wiki <topic> sidecar (Wikipedia summary via free JSON API)
-- Added >>exchange <query> sidecar (Currency conversion via Frankfurter API)
-- Added >>weather <location> sidecar (Weather via wttr.in)
-
-These are deterministic, inspectable tools that don't require model inference.
-Provides: calc, list (Vodka memories), find (quotes in KBs), flush (CTC cache),
-          wiki (Wikipedia), exchange (Frankfurter FX), weather (wttr.in).
+Includes helpers for:
+- calculator and memory utilities
+- quote/KB search helpers
+- wiki, exchange, and weather lookups
 """
 
 from __future__ import annotations
-
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
@@ -730,3 +710,4 @@ if __name__ == "__main__":
     # Test weather
     print("\n=== Testing >>weather ===")
     print(handle_weather_query("Perth"))
+
