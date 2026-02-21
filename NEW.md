@@ -21,7 +21,7 @@ Deterministic confidence/source footer normalization (non-Mentats paths):
 - Metadata/docs remediation (no command behavior change):
   - Router runtime version reporting now uses single-source `llama_conductor/__about__.py`.
   - `/healthz` version now resolves from `__version__` (no hardcoded drift).
-  - `DOCS-TRUTH-MAP.md` active list cleaned to remove stale `llama_conductor/SUMM.md`.
+  - `docs/index/DOCS-TRUTH-MAP.md` active list cleaned to remove stale `llama_conductor/SUMM.md`.
   - Added pre-release checker: `tests/pre_release_consistency_check.py` (version/license/docs consistency, fail-loud).
 
 ---
