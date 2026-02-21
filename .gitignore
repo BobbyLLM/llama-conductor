@@ -37,3 +37,7 @@ __pycache__/
 *cliniko*
 *CLINIKO*
 docs/PUSH-GUARD-FAQ.md
+
+# Never track docs truth maps (any location)
+DOCS-TRUTH-MAP.md
+**/DOCS-TRUTH-MAP.md
