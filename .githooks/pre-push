@@ -1,7 +1,0 @@
-#!/usr/bin/env sh
-set -eu
-
-echo "[git hook] pre-push guard starting..."
-python tests/pre_push_guard.py
-echo "[git hook] pre-push guard passed."
-

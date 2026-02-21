@@ -33,6 +33,8 @@ __pycache__/
 /llama_conductor/test tools/
 /llama_conductor/__pycache__/
 /docs/
+/.githooks/
+/tests/
 
 # Cliniko-related local/private artifacts
 *cliniko*
