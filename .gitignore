@@ -32,6 +32,7 @@ __pycache__/
 /llama_conductor/exercise_libraries/
 /llama_conductor/test tools/
 /llama_conductor/__pycache__/
+/docs/
 
 # Cliniko-related local/private artifacts
 *cliniko*
@@ -41,3 +42,7 @@ docs/PUSH-GUARD-FAQ.md
 # Never track docs truth maps (any location)
 DOCS-TRUTH-MAP.md
 **/DOCS-TRUTH-MAP.md
+
+# Keep local docs index/ops notes off remote
+docs/INDEX.md
+docs/operations/
