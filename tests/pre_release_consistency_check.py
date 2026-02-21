@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import Optional
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,11 +21,21 @@ ROUTER = ROOT / "llama_conductor" / "router_fastapi.py"
 LICENSE = ROOT / "LICENSE"
 README = ROOT / "README.md"
 FAQ = ROOT / "FAQ.md"
-TRUTH_MAP = ROOT / "DOCS-TRUTH-MAP.md"
+TRUTH_MAP_CANDIDATES = (
+    ROOT / "docs" / "index" / "DOCS-TRUTH-MAP.md",
+    ROOT / "DOCS-TRUTH-MAP.md",
+)
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _resolve_truth_map() -> Optional[Path]:
+    for candidate in TRUTH_MAP_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _extract_pyproject_field(text: str, key: str) -> str:
@@ -71,8 +82,10 @@ def _is_expected_missing_active_ref(ref: str, *, public_split: bool) -> bool:
     )
     expected_exact = {
         "FIX-THIS-CLINIKO.md",
+        "docs/cliniko/FIX-THIS-CLINIKO.md",
         "llama_conductor/CLINIKO-GOLD.md",
         "SMOKE-SCRATCHPAD.md",
+        "docs/validation/SMOKE-SCRATCHPAD.md",
     }
     if ref in expected_exact:
         return True
@@ -88,7 +101,7 @@ def main() -> int:
     license_text = _read(LICENSE)
     readme_text = _read(README)
     faq_text = _read(FAQ)
-    truth_map_text = _read(TRUTH_MAP)
+    truth_map_path = _resolve_truth_map()
 
     # 1) Version consistency
     pyproject_version = _extract_pyproject_field(pyproject_text, "version")
@@ -120,12 +133,16 @@ def main() -> int:
     if "agpl-3.0-or-later" not in faq_text.lower():
         errors.append("FAQ.md missing AGPL-3.0-or-later declaration")
 
-    # 3) Active-doc references must exist
+    # 3) Active-doc references must exist (if truth map is present)
     public_split = _is_public_split_repo()
-    for ref in _active_doc_refs(truth_map_text):
-        ref_path = ROOT / ref
-        if not ref_path.exists() and not _is_expected_missing_active_ref(ref, public_split=public_split):
-            errors.append(f"DOCS-TRUTH-MAP active doc reference missing on disk: {ref}")
+    if truth_map_path is not None:
+        truth_map_text = _read(truth_map_path)
+        for ref in _active_doc_refs(truth_map_text):
+            ref_path = ROOT / ref
+            if not ref_path.exists() and not _is_expected_missing_active_ref(ref, public_split=public_split):
+                errors.append(f"{truth_map_path.relative_to(ROOT)} active doc reference missing on disk: {ref}")
+    elif not public_split:
+        errors.append("Missing DOCS-TRUTH-MAP.md in non-public repo")
 
     if errors:
         print("[pre-release] FAIL")
@@ -136,7 +153,10 @@ def main() -> int:
     print("[pre-release] PASS")
     print(f"- version: {pyproject_version}")
     print(f"- license: {pyproject_license}")
-    print("- docs-truth-map active references: OK")
+    if truth_map_path is None:
+        print("- docs-truth-map: not present (skipped)")
+    else:
+        print("- docs-truth-map active references: OK")
     return 0
 
 
