@@ -1,4 +1,4 @@
-﻿# llama-conductor
+# llama-conductor
 ![llama-conductor banner](logo/zardoz.jpg)
 
 
@@ -10,10 +10,10 @@ llama-conductor is the **router/harness**. It does **not** ship a model, and it 
 
 You need these parts working together:
 
-1) **llama-swap** â†’ https://github.com/mostlygeek/llama-swap
-2) **llama.cpp (or other runner)** â†’ https://github.com/ggml-org/llama.cpp
-3) **Frontend UI (example: Open WebUI / OWUI)** â†’ https://github.com/open-webui/open-webui
-4) **Qdrant (Vault / RAG)** â†’ https://github.com/qdrant/qdrant
+1) **llama-swap** -> https://github.com/mostlygeek/llama-swap
+2) **llama.cpp (or other runner)** -> https://github.com/ggml-org/llama.cpp
+3) **Frontend UI (example: Open WebUI / OWUI)** -> https://github.com/open-webui/open-webui
+4) **Qdrant (Vault / RAG)** -> https://github.com/qdrant/qdrant
 
 **Minimum:** (1) + (2) + (3).
 
@@ -36,11 +36,11 @@ llama-conductor serve --host 0.0.0.0 --port 9000
 ## Table of contents
 
 - [Frequently Asked Questions (FAQ)](#frequently-asked-questions-faq)
-  - [What the hell is this thing â€” and why did you build it?](#what-the-hell-is-this-thing-and-why-did-you-build-it)
+  - [What the hell is this thing and why did you build it?](#what-the-hell-is-this-thing-and-why-did-you-build-it)
   - [What problems does this solve?](#what-problems-does-this-solve)
-    - [1) "Vibes-based answers" â€” how do I know if the LLM is lying?](#1-vibes-based-answers-how-do-i-know-if-the-llm-is-lying)
-    - [2) Goldfish memory â€” models forget or "confidently misremember"](#2-goldfish-memory-models-forget-or-confidently-misremember)
-    - [3) Context bloat â€” 400-message chat logs kill your potato PC](#3-context-bloat-400-message-chat-logs-kill-your-potato-pc)
+    - [1) "Vibes-based answers" - how do I know if the LLM is lying?](#1-vibes-based-answers-how-do-i-know-if-the-llm-is-lying)
+    - [2) Goldfish memory - models forget or "confidently misremember"](#2-goldfish-memory-models-forget-or-confidently-misremember)
+    - [3) Context bloat - 400-message chat logs kill your potato PC](#3-context-bloat-400-message-chat-logs-kill-your-potato-pc)
   - [What is Vodka?](#what-is-vodka)
     - [Vodka has two jobs:](#vodka-has-two-jobs)
     - [How it works:](#how-it-works)
@@ -113,14 +113,13 @@ llama-conductor serve --host 0.0.0.0 --port 9000
     - [SUMM files include metadata:](#summ-files-include-metadata)
     - [Vault stores full provenance:](#vault-stores-full-provenance)
   - [TIPS](#tips)
-  - [What's new in v1.0.9?](#whats-new-in-v110)
-  - [Questions? Run `>>help` in-chat or check the command cheat sheet.*](#questions-run-help-in-chat-or-check-the-command-cheat-sheet)
-
+  - [What's new (latest)?](#whats-new-latest)
+  - [Questions and Help](#questions-and-help)
 ---
 
 ## Frequently Asked Questions (FAQ)
 
-### What the hell is this thing â€” and why did you build it?
+### What the hell is this thing and why did you build it?
 
 **Llama-conductor** is a LLM harness for people who want **trust, consistency, and proof**.
 
@@ -134,7 +133,7 @@ I have ASD and a low tolerance for bullshit. I want shit to work the same 100% o
 
 ### What problems does this solve?
 
-#### 1) "Vibes-based answers" â€” how do I know if the LLM is lying?
+#### 1) "Vibes-based answers" - how do I know if the LLM is lying?
 
 You don't! 
 
@@ -142,7 +141,7 @@ You don't!
 ```
 You: What's the flag for XYZ in llama.cpp?
 Model: It's --xyz-mode! (confident bullshit)
-You: [tries it] â†’ doesn't work
+You: [tries it] -> doesn't work
 Model: Oh sorry! Try --enable-xyz! (more bullshit)
 ```
 
@@ -150,7 +149,7 @@ Model: Oh sorry! Try --enable-xyz! (more bullshit)
 ```
 You: ##mentats What's the flag for XYZ in llama.cpp?
 Mentats: [queries Vault only]
-Mentats: REFUSAL â€” "The Vault contains no relevant knowledge for this query."
+Mentats: REFUSAL - "The Vault contains no relevant knowledge for this query."
 
 [later, after you >>summ the llama.cpp docs]
 You: ##mentats What's the flag for XYZ in llama.cpp?
@@ -159,14 +158,14 @@ Mentats: --enable-xyz [cite: llama.cpp docs, SHA: abc123...]
 ```
 
 **How it works:**
-1. `>>attach <kb>` â€” attach your curated docs (filesystem folders)
-2. `>>summ new` â€” generate summaries with SHA-256 provenance
-3. `>>move to vault` â€” promote summaries into Qdrant RAG
-4. `##mentats <query>` â€” deep reasoning, grounded in Vault only
+1. `>>attach <kb>` - attach your curated docs (filesystem folders)
+2. `>>summ new` - generate summaries with SHA-256 provenance
+3. `>>move to vault` - promote summaries into Qdrant RAG
+4. `##mentats <query>` - deep reasoning, grounded in Vault only
 
 ---
 
-#### 2) Goldfish memory â€” models forget or "confidently misremember"
+#### 2) Goldfish memory - models forget or "confidently misremember"
 
 **WITHOUT llama-conductor:**
 ```
@@ -174,7 +173,7 @@ You: Remember my server is at 203.0.113.42
 Model: Got it!
 [100 messages later]
 You: What's my server IP?
-Model: 127.0.0.1 ðŸ¥°
+Model: 127.0.0.1 
 ```
 
 **WITH llama-conductor:**
@@ -196,7 +195,7 @@ Vodka: Your server is at 203.0.113.42 [TTL=3 days, touches=1]
 
 ---
 
-#### 3) Context bloat â€” 400-message chat logs kill your potato PC
+#### 3) Context bloat - 400-message chat logs kill your potato PC
 
 **WITHOUT llama-conductor:**
 ```
@@ -291,7 +290,7 @@ Think of it like **cake mix vs a whole cake**:
 
 3. **Vodka expands on read** (outlet phase):
    ```
-   [ctx:abc123xyz] â†’ "my server is at 203.0.113.42 [TTL=3, touches=1]"
+   [ctx:abc123xyz] -> "my server is at 203.0.113.42 [TTL=3, touches=1]"
    ```
 
 #### Why this is powerful:
@@ -374,7 +373,7 @@ Every fact has a lifespan:
        return "The Vault contains no relevant knowledge..."
    ```
 
-3. **3-pass workflow** (Thinker â†’ Critic â†’ Thinker):
+3. **3-pass workflow** (Thinker -> Critic -> Thinker):
    - **Step 1 (Thinker):** Draft answer using only FACTS_BLOCK
    - **Step 2 (Critic):** Check for overstatement, constraint violations
    - **Step 3 (Thinker):** Fix issues, output structured answer
@@ -414,7 +413,7 @@ Every fact has a lifespan:
    ```
    >>move to vault
    ```
-   Chunks + embeds summaries â†’ Qdrant as `kb="vault"`
+   Chunks + embeds summaries -> Qdrant as `kb="vault"`
 
 3. **Query with Mentats**:
    ```
@@ -424,7 +423,7 @@ Every fact has a lifespan:
 
    ```
    ```
-   Shows: Vault chunk â†’ SUMM file â†’ original doc â†’ SHA verification
+   Shows: Vault chunk -> SUMM file -> original doc -> SHA verification
 
 #### Why Vault vs filesystem KBs?
 
@@ -434,7 +433,7 @@ Every fact has a lifespan:
 | Speed | File reads | Qdrant vector search |
 | Mentats | Ignored | Required |
 
-**Workflow:** Filesystem KBs â†’ SUMM â†’ Vault â†’ Mentats
+**Workflow:** Filesystem KBs -> SUMM -> Vault -> Mentats
 
 ---
 
@@ -450,9 +449,9 @@ certutil -hashfile C:\docs\c64\original\c64_facts.pdf SHA256
 sha256sum /docs/c64/original/c64_facts.pdf
 ```
 
-**If SHA matches:** Source is authentic and untampered âœ…
+**If SHA matches:** Source is authentic and untampered [OK]
 
-**If SHA doesn't match:** Document was modified after SUMM (tampered or legit edit) âš ï¸
+**If SHA doesn't match:** Document was modified after SUMM (tampered or legit edit) [WARN]
 
 ---
 
@@ -474,7 +473,7 @@ sha256sum /docs/c64/original/c64_facts.pdf
 #### 3) Filesystem KBs are just folders:
 - No embedding every doc on every query
 - SUMM files are pre-processed once
-- RAG hits are bounded (by default: top_k=6 â†’ rerank to 4)
+- RAG hits are bounded (by default: top_k=6 -> rerank to 4)
 
 #### 4) Mentats is efficient:
 - Only runs when explicitly invoked (##mentats)
@@ -503,7 +502,7 @@ Dealer's choice, really.
 
 #### Those model reccs are GARBAGE, dude
 - So choose your own. What am I, your Rabbi?
-- Huggingface is over there â†’ https://huggingface.co/DavidAU ; https://huggingface.co/unsloth ; https://huggingface.co/TheBloke
+- Huggingface is over there -> https://huggingface.co/DavidAU ; https://huggingface.co/unsloth ; https://huggingface.co/TheBloke
 - My personal choices: 
     * Thinker: Qwen3-4B-Hivemind-Inst-Q4_K_M-imat.gguf
 	* Critic: Phi-4-mini-instruct-Q4_K_M.gguf
@@ -539,7 +538,7 @@ roles:
 - Ignores `>>lock` scope (lock affects normal filesystem-grounded queries only)
 - No Vodka, no chat history (isolated)
 - Refuses if no Vault facts
-- 3-pass reasoning (Thinker â†’ Critic â†’ Thinker)
+- 3-pass reasoning (Thinker -> Critic -> Thinker)
 
 #### Locked SUMM grounding (`>>lock`):
 - `>>lock SUMM_<name>.md` scopes normal query grounding to one SUMM file from attached filesystem KBs.
@@ -560,11 +559,11 @@ roles:
   - `Source: Model (not in locked file)`
   - plus note line: `[Not found in locked source SUMM_<name>.md. Answer based on pre-trained data.]`
 - Confidence/source footer remains in standard format and is assigned deterministically by router rules.
-- In locked fallback cases, deterministic confidence is normalized to `medium` with explicit model-source labeling.
+- In locked fallback cases, deterministic confidence is normalized to `unverified` with explicit model-source labeling.
 - Mentats (`##mentats`) remains separate and keeps `Sources: Vault` output contract.
 
 #### Fun (##fun or >>fun):
-- Runs default (serious) â†’ gets correct answer
+- Runs default (serious) -> gets correct answer
 - Adds an appropriate quote from quotes.md (100 quotes included. Edit, delete, add your own. Keep the formatting shown)
 - Does NOT change facts or confidence
 - **Never** runs on Mentats output
@@ -581,14 +580,14 @@ Labor Relations Act of 2024?
 
 The Bread Labor Relations Act of 2024 does not exist as a real-world law. Sentient yeast is not recognized in current labor jurisprudence. You cannot legally fire sentient yeast because the concept of sentient yeast and a corresponding labor law is fictional.
 
-The scenario hinges on a humorous premise: that yeast can achieve consciousness and form unions. Since this is not grounded in actual legal frameworks or biological consensus, there is no existing statute that defines â€œfiring sentient yeastâ€ as a violation or permits such actions.
+The scenario hinges on a humorous premise: that yeast can achieve consciousness and form unions. Since this is not grounded in actual legal frameworks or biological consensus, there is no existing statute that defines “firing sentient yeast" as a violation or permits such actions.
 
 Confidence: top | Source: Model
 
 ```
 
 #### Fun Rewrite (>>fr):
-- Runs default (serious) â†’ gets correct answer
+- Runs default (serious) -> gets correct answer
 - Performs sentiment analysis on user input and model output
 - Picks matching quote from quotes.md as SEED (sarcasm, tiredness, incredulity...)
 - **REWRITES** answer in that SEED's voice/style
@@ -645,7 +644,7 @@ Confidence: high | Source: Model
 
 **The stack:**
 ```
-Backend [llama.cpp + llama-swap] â†â†’ llama-conductor â†â†’ Frontend [OWUI/SillyTavern/LibreChat]
+Backend [llama.cpp + llama-swap] <--> llama-conductor <--> Frontend [OWUI/SillyTavern/LibreChat]
 ```
 
 **How it flows:**
@@ -855,7 +854,7 @@ llama_swap_headers:
 - Run `##mentats` first (not a normal query)
 
 #### "PROVENANCE MISSING"
-- Vault entry from before v1.0.9?
+- Vault entry from older versions?
 - Re-run `>>move to vault` to add provenance
 
 #### SHA mismatch
@@ -968,7 +967,7 @@ pipeline: SUMM
 ```
 
 ```
-Answer â†’ Vault chunk â†’ SUMM file â†’ Original doc â†’ SHA verification
+Answer -> Vault chunk -> SUMM file -> Original doc -> SHA verification
 ```
 
 **Why this matters:**
@@ -989,42 +988,18 @@ Answer â†’ Vault chunk â†’ SUMM file â†’ Original doc â†’ SH
 
 ---
 
-### What's new in v1.0.9?
+### What's new (latest)?
 
-- **FIX:** Fun/FR modes properly isolated from Mentats
-- **FIX:** Image handling auto-routes to vision pipeline
-- **FIX:** Mentats selector reliability improved
-- **IMPROVED:** Error messages for mode conflicts
+- FIX: Session-state profile controls (>>profile) now support practical direct/sarcasm/snark tuning.
+- FIX: Profile behavior now resets cleanly on >>detach all and >>flush.
+- IMPROVED: Fun/Fun Rewrite tone alignment is more consistent with profile settings.
+- IMPROVED: Response stability under mixed workflows is better than older builds.
 
-### Questions? Run `>>help` in-chat or check the command cheat sheet.*
 
-## How does `>>profile` work?
+### Questions and Help
 
-`>>profile` is session-state style control. It is deterministic, in-memory, and resets with session detach/flush flows.
-
-Quick use:
-
-- `>>profile show`
-- `>>profile set correction_style=direct`
-- `>>profile set sarcasm_level=medium`
-- `>>profile set snark_tolerance=high`
-- `>>profile reset`
-- `>>profile on` / `>>profile off`
-
-Shortcuts:
-
-- `>>profile casual`
-- `>>profile feral`
-- `>>profile turbo`
-
-Important behavior:
-
-- Manual `>>profile set` values are sticky until changed or reset.
-- `>>detach all` resets profile state.
-- `>>flush` resets profile/style runtime identity (and clears CTC cache).
-- Mentats provenance contract is unchanged (`Sources: Vault`).
-- Non-Mentats answers may append:
-  - `Profile: <style> | Sarc: <level> | Snark: <level>`
 ## License
 AGPL-3.0-or-later. See `LICENSE`
+
+
 
