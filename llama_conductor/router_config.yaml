@@ -50,7 +50,29 @@ vodka:
   keep_first: false
   max_chars: 6000
   enable_summary: true
+  summary_every_n_user_msgs: 4
+  summary_max_words: 80
+  summary_inject_max_units: 3
+  summary_inject_max_chars: 500
+  summary_memory_max_units: 96
   summary_segments_per_message: 8
+  summary_require_session_id: true
+  summary_include_assistant: false
+  summary_store_pii: false
+  summary_pii_redaction_token: "[REDACTED]"
+
+# Serious-mode generation tuning
+serious:
+  max_tokens: 384
+
+# Recall semantic layer (deterministic first, semantic formatter with fallback)
+recall:
+  semantic_layer_enabled: true
+  semantic_role: "thinker"
+  semantic_max_tokens: 260
+  semantic_temperature: 0.1
+  semantic_top_p: 0.9
+  semantic_unknown_ratio_max: 0.28
 
 # Vault chunking (for >>move to vault ingestion)
 vault:
