@@ -93,3 +93,25 @@ Then finish it. Because I'm with you till the end of the line.
 Yes, this is Tony Stank. You're in the right place.
 Good men don't need rules. Today is not the day to find out why I have so many.
 She's my carer. She cares so I don't have to.
+
+## warm supportive compassionate hopeful resilient
+I'm not your failure, Obi-Wan.
+Do, or do not. There is no try.
+If there's no bigger meaning, if there's no win, then the smallest act of kindness is the greatest thing in the world.
+I will not die a monster.
+You stay. I go. No following.
+Life is a pile of good things and bad things. The good things don't always soften the bad things, but vice versa, the bad things don't necessarily spoil the good things or make them unimportant.
+You were fantastic. Absolutely fantastic. And you know what? So was I.
+I summon you to fulfill your oath.
+The Dude abides.
+It's not about how hard you hit. It's about how hard you can get hit and keep moving forward.
+It all just disappears, doesn't it? Everything you are, gone in a moment, like breath on a mirror.
+The universe is big. It's vast and complicated and ridiculous. And sometimes, very rarely, impossible things just happen, and we call them miracles.
+Nothing's sad until it's over, and then everything is.
+Laugh hard. Run fast. Be kind.
+Sometimes, the only choices you have are bad ones, but you still have to choose.
+It's my estimation that every man ever got a statue made of him was one kind of sumbitch or another.
+And how can man die better than facing fearful odds, for the ashes of his fathers and the temples of his gods.
+We are not now that strength which in old days moved earth and heaven. That which we are, we are.
+Though much is taken, much abides.
+If you can fill the unforgiving minute with sixty seconds' worth of distance run, yours is the Earth and everything that's in it, and, which is more, you'll be a Man, my son.

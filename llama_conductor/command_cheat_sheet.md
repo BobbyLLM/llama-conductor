@@ -1,4 +1,4 @@
-# Router Command Cheat Sheet
+﻿# Router Command Cheat Sheet
 
 ## Core command prefixes
 - `>>` router/system commands
@@ -12,16 +12,29 @@ Tips:
 ## Quick utilities (`>>`)
 - `>>help` show this sheet
 - `>>status` show session state
+- `>>profile show` show interaction profile (session-ephemeral)
+- `>>profile set <field>=<value>` set profile field
+- `>>profile reset` reset profile defaults/scores
+- `>>profile on` / `>>profile off` enable/disable profile adapter
+- `>>profile <direct|neutral|softened>` quick correction style set
+- `>>profile snark <low|medium|high>` quick snark tolerance set
+- `>>profile sarcasm <off|low|medium|high>` quick sarcasm set
+- `>>profile profanity <on|off>` quick profanity gate set
+- `>>profile verbosity <compact|standard|expanded>` quick verbosity set
+- `>>profile sensitive <on|off>` toggle sensitive-context override
+- `>>profile <casual|feral|turbo>` quick preset (`turbo` = `feral`)
 - `>>calc <expression>` calculator (`+ - * / %`, `**` = power), parentheses, functions (`sqrt/log/sin/cos`)
 - `>>wiki <topic>` Wikipedia summary fetch
 - `>>exchange <query>` currency conversion (via Frankfurter API, real-time rates)
 - `>>weather <location>` current weather (via Open-Meteo API; use single word or "City Country")
 - `>>find <query>` search attached KB files
 - `>>peek <query>` preview KB retrieval chunks for the query
-- `>>flush` clear CTC history cache
+- `>>flush` clear CTC history cache and reset session profile/style identity (does not detach KBs)
 Tips:
 - Use these when you want a direct tool result rather than a free-form chat answer.
 - API-backed commands (`wiki`, `exchange`, `weather`) can fail if upstream services are unavailable.
+- Soft aliases are supported: `profile show|set|reset|on|off`.
+- Manual `>>profile set` values are pinned and take precedence over inferred updates until changed again or reset.
 
 ## KB attachment (`>>`)
 - `>>list_kb` list known and attached KBs
@@ -79,28 +92,6 @@ Tips:
 - `>>list` may show more records than a normal follow-up reasoning turn uses; to query against all contents (eg: "compare xyz to abc"), run `>>scratchpad show all` first, then ask the question.
 - Raw captures are stored at `total_recall/session_kb/<session_id>.jsonl`.
 
-## Sticky modes (`>>`)
-- `>>fun` / `>>f` / `>>F` enable Fun mode
-- `>>fun off` / `>>f off` / `>>F off` disable Fun mode
-- `>>fr` / `>>FR` / `>>fun_rewrite` enable Fun Rewrite
-- `>>fr off` / `>>FR off` / `>>fun_rewrite off` disable Fun Rewrite
-- `>>raw` enable Raw mode
-- `>>raw off` disable Raw mode
-Tips:
-- Sticky modes persist until turned off.
-- Per-turn selectors can bypass sticky behavior for that turn.
-
-## SUMM and Vault (`>>`)
-- `>>summ new` summarize new raw files in attached KB folders
-- `>>move to vault` embed attached KB summaries into Vault
-- `>>move new to vault` embed only the newest `SUMM_*.md` per attached KB into Vault
-Tips:
-- `>>summ new` processes new raw docs in currently attached KB folders.
-- `>>summ` is deterministic/extractive in current builds (no LLM call in the SUMM generation step).
-- `>>move to vault` promotes summaries for Vault retrieval; it does not make Vault attachable via `>>attach`.
-- `>>move_to_vault new` and `>>mtv new` are equivalent shorthand for newest-only promotion.
-- SUMM mechanics are unchanged: creates `SUMM_*.md`, moves source docs into `/original/`, and keeps provenance headers.
-
 ## Tool recommendation (`>>`)
 - `>>trust <query>` suggests best tool path (A/B/C)
 Tips:
@@ -118,7 +109,7 @@ Query:
 - `?? list` list Vodka memories (TTL, touch count, creation date)
 Tips:
 - `!!` writes/manages memory; `??` reads/rewrites with memory context.
-- `!! nuke` clears Vodka memory only; `>>flush` clears CTC cache only.
+- `!! nuke` clears Vodka memory only; `>>flush` clears CTC cache and resets profile/style runtime state.
 
 ## One-turn selectors (`##`)
 - `##mentats <question>` Vault-only run
@@ -129,6 +120,22 @@ Tips:
 - Use selectors for explicit pipeline control when sticky modes are active.
 - `##mentats` remains Vault-only and does not use filesystem lock scope.
 - Non-Mentats `Confidence: ... | Source: ...` footer is router-normalized deterministically.
+- Non-Mentats profile footer is appended deterministically:
+  - `Profile: <correction_style> | Sarc: <level> | Snark: <level>`
+  - How to read footer fields:
+    - `Profile` = correction style axis (`softened|neutral|direct`)
+      - `softened`: gentler correction framing
+      - `neutral`: standard/default correction framing
+      - `direct`: terse explicit correction framing
+    - `Sarc` = sarcasm level (`off|low|medium|high`)
+      - controls irony/playful mockery intensity
+    - `Snark` = snark tolerance (`low|medium|high`)
+      - controls how sharp/blunt combative framing is allowed
+  - Example: `Profile: neutral | Sarc: medium | Snark: high`
+    - means standard correction style, medium sarcasm, high sharpness tolerance.
+  - Inference is rule/marker-based (deterministic), not LLM semantic inference.
+  - `snark` and `sarcasm` are separate traits; profanity can raise snark faster than sarcasm.
+  - So `Profile: neutral | Sarc: off | Snark: high` can be expected in some sessions.
 - Mentats keeps its own `Sources: Vault` contract.
 
 ## Vision/OCR
@@ -145,8 +152,17 @@ Tips:
 - `locked_summ_file` currently locked SUMM filename (empty = no lock)
 - `locked_summ_kb` KB that owns the locked SUMM file (empty = no lock)
 - `pending_lock_candidate` pending Y/N lock suggestion target (empty = none)
+- `pending_sensitive_confirm_query` pending Y/N sensitive-confirm query (empty = none)
 - `fun_sticky` whether sticky Fun mode is currently enabled
 - `fun_rewrite_sticky` whether sticky Fun Rewrite mode is currently enabled
+- `profile_enabled` whether style adapter is currently enabled
+- `profile_confidence` inferred profile confidence score (`0.00-1.00`)
+- `profile_effective_strength` runtime strength of profile constraints (`0.00-1.00`)
+- `profile_output_compliance` rolling score of output/profile contract match (`0.00-1.00`)
+- `profile_blocked_nicknames` session-blocked nicknames (from explicit user disallow prompts)
+- `profile_last_updated_turn` latest user turn that updated profile state
+- `serious_ack_reframe_streak` current consecutive serious-mode meta-ack streak
+- `serious_repeat_streak` current consecutive serious-mode near-duplicate output streak
 - `last_query` most recent filesystem-KB retrieval query
 - `last_hits` retrieval hit indicator (`0`=no matches; `>0`=matches found)
 - `vault_last_query` most recent Vault retrieval query
@@ -154,3 +170,4 @@ Tips:
 Tips:
 - If an answer is weak and hits are `0`, the issue is likely missing retrieval; if hits are non-zero, the issue is more likely synthesis/interpretation quality.
 - Hit counts are a quick clue, not a quality grade.
+

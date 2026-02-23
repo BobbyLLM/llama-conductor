@@ -9,10 +9,15 @@ Responsibilities:
 from __future__ import annotations
 import json
 import os
+import random
 import re
+import traceback
+from difflib import SequenceMatcher
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, StreamingResponse
 
 # Core modules (always required)
@@ -31,6 +36,14 @@ from .model_calls import call_model_prompt, call_model_messages
 from .quotes import infer_tone as _infer_tone, pick_quote_for_tone as _pick_quote_for_tone, quotes_by_tag as _quotes_by_tag
 from .streaming import make_openai_response as _make_openai_response, stream_sse as _stream_sse
 from .commands import handle_command
+from .interaction_profile import (
+    build_constraints_block as build_profile_constraints_block,
+    classify_sensitive_context,
+    compute_effective_strength,
+    effective_profile,
+    has_non_default_style,
+    update_profile_from_user_turn,
+)
 
 # Required modules
 from .vodka_filter import Filter as VodkaFilter
@@ -76,10 +89,21 @@ try:
 except Exception:
     normalize_sources_footer = None  # type: ignore
 
+try:
+    from .style_adapter import rewrite_response_style, score_output_compliance  # type: ignore
+except Exception:
+    rewrite_response_style = None  # type: ignore
+    score_output_compliance = None  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Pipeline Helpers
 # ---------------------------------------------------------------------------
+
+async def _run_sync(func, /, *args, **kwargs):
+    """Run blocking/sync work off the event loop to keep router responsive."""
+    return await run_in_threadpool(func, *args, **kwargs)
+
 
 def build_fs_facts(query: str, state: SessionState) -> str:
     """Build facts block from filesystem KBs."""
@@ -150,7 +174,15 @@ def build_vault_facts(query: str, state: SessionState) -> str:
     return txt or ""
 
 
-def run_fun_rewrite_fallback(*, session_id: str, user_text: str, history: List[Dict[str, Any]], vodka: VodkaFilter, facts_block: str) -> str:
+def run_fun_rewrite_fallback(
+    *,
+    session_id: str,
+    user_text: str,
+    history: List[Dict[str, Any]],
+    vodka: VodkaFilter,
+    facts_block: str,
+    state: SessionState,
+) -> str:
     """Two-pass Fun Rewrite implemented in-router (only used if fun.py doesn't provide it)."""
 
     # pass 1: serious answer (not shown)
@@ -166,7 +198,8 @@ def run_fun_rewrite_fallback(*, session_id: str, user_text: str, history: List[D
     ).strip()
 
     tone = _infer_tone(user_text, base)
-    quote = _pick_quote_for_tone(tone) or ""
+    pool = _build_fun_quote_pool(state=state, user_text=user_text, tone=tone)
+    quote = random.choice(pool) if pool else (_pick_quote_for_tone(tone) or "")
 
     # pass 2: rewrite
     rewrite_prompt = (
@@ -199,6 +232,104 @@ _QUOTE_STOPWORDS = {
     "what", "which", "who", "whom", "whose", "when", "where", "why", "how", "do", "does", "did",
     "can", "could", "should", "would", "from", "about", "tell", "me", "more", "all", "any",
 }
+
+_SNARK_TAGS = {"snark", "sarcastic", "banter", "quips", "one-liners", "deadpan", "dry", "threat", "warning"}
+_WARM_TAGS = {"warm", "supportive", "compassionate", "hopeful", "resilient"}
+_DIRECT_TAGS = {"resilient", "dry", "deadpan"}
+
+
+def _unique_quotes_for_tags(qb: Dict[str, List[str]], tags: List[str]) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for tag in tags:
+        for q in qb.get((tag or "").lower(), []) or []:
+            k = (q or "").strip().lower()
+            if not k or k in seen:
+                continue
+            seen.add(k)
+            out.append(q)
+    return out
+
+
+def _build_fun_quote_pool(*, state: SessionState, user_text: str, tone: str) -> List[str]:
+    """
+    Minimal deterministic quote prefilter for Fun mode.
+    Combines inferred tone and profile traits, then falls back safely.
+    """
+    qb = _quotes_by_tag()
+    if not qb:
+        return []
+
+    include_tags: List[str] = ["default"]
+    t = (tone or "").strip().lower()
+    if t:
+        include_tags.append(t)
+
+    exclude_snark = False
+    if bool(getattr(state, "profile_enabled", False)):
+        try:
+            prof = effective_profile(state.interaction_profile, user_text)
+            if prof.correction_style == "softened":
+                include_tags.extend(sorted(_WARM_TAGS))
+            elif prof.correction_style == "direct":
+                include_tags.extend(sorted(_DIRECT_TAGS))
+
+            if prof.sarcasm_level in ("medium", "high") or prof.snark_tolerance in ("medium", "high"):
+                include_tags.extend(sorted(_SNARK_TAGS))
+            else:
+                exclude_snark = True
+        except Exception:
+            pass
+
+    pool = _unique_quotes_for_tags(qb, include_tags)
+    if not pool:
+        pool = _unique_quotes_for_tags(qb, list(qb.keys()))
+
+    if exclude_snark:
+        snark_set = {q.strip().lower() for q in _unique_quotes_for_tags(qb, sorted(_SNARK_TAGS))}
+        filtered = [q for q in pool if q.strip().lower() not in snark_set]
+        if filtered:
+            pool = filtered
+
+    return pool
+
+_SENSITIVE_CONFIRM_INTENT_RE = re.compile(
+    r"\b(sext|sexy|dirty|horny|erotic|nude|blowjob|handjob|cum|tits?|boobs?|dick|pussy|slut|whore|fuck|fucking|go fuck|eat shit)\b",
+    re.IGNORECASE,
+)
+
+_NICKNAME_BLOCK_PATTERNS = [
+    re.compile(
+        r"\b(?:don['â€™]?t|do not|stop)\s+call(?:ing)?\s+me\s+([a-z0-9][a-z0-9 '\-]{1,60}?)(?=(?:\s*(?:[.!?,;:]|$)))",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bi\s+am\s+not\s+([a-z0-9][a-z0-9 '\-]{1,60}?)(?=(?:\s+(?:you|ya|u)\b|\s*(?:[.!?,;:]|$)))",
+        re.IGNORECASE,
+    ),
+]
+
+_ACK_REFRAME_LOOP_RE = re.compile(
+    r"("
+    r"you['â€™]re right"
+    r"|you have made it clear"
+    r"|let['â€™]s move past repetition"
+    r"|missed (?:the )?emotional tone"
+    r"|overly mechanical"
+    r"|i should (?:be )?more attuned"
+    r"|my (?:last )?reply was stiff"
+    r")",
+    re.IGNORECASE,
+)
+
+_PROFILE_FOOTER_FRAGMENT_RE = re.compile(
+    r"Profile:\s*[^|\n]{1,40}\|\s*Sarc:\s*[^|\n]{1,20}\|\s*Snark:\s*[^|\n]{1,20}",
+    re.IGNORECASE,
+)
+
+_SERIOUS_TASK_FORWARD_FALLBACK = (
+    "Understood. No more meta. Give me the exact task and desired output format, and I will answer directly."
+)
 
 
 def _quote_query_tokens(text: str) -> set[str]:
@@ -235,6 +366,143 @@ def _scratchpad_quote_lines(
         if len(out) >= max_quotes:
             break
     return out
+
+
+def _strip_footer_lines_for_scan(text: str) -> str:
+    keep: List[str] = []
+    for ln in (text or "").splitlines():
+        low = (ln or "").strip().lower()
+        if low.startswith("confidence:"):
+            continue
+        if low.startswith("source:") or low.startswith("sources:"):
+            continue
+        keep.append(ln)
+    return "\n".join(keep).strip()
+
+
+def _is_ack_reframe_only(text: str) -> bool:
+    body = _strip_footer_lines_for_scan(text)
+    if not body:
+        return False
+    if len(body) > 420:
+        return False
+    if not _ACK_REFRAME_LOOP_RE.search(body):
+        return False
+    lines = [ln.strip() for ln in body.splitlines() if ln.strip() and not ln.strip().startswith("[FUN]")]
+    if not lines:
+        return False
+    # Ack-loop responses are short and meta-heavy with no concrete payload.
+    return len(lines) <= 5
+
+
+def _clean_nickname_candidate(raw: str) -> str:
+    s = (raw or "").strip().strip("'\"`")
+    if not s:
+        return ""
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    s = re.sub(
+        r"\b(?:you|ya|u|dumb|stupid|fucking|fuckin|fuck|cunt|bitch|retard|asshole|muppet|idiot)\b.*$",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    ).strip()
+    s = s.strip("-_.,;:!? ")
+    if len(s) < 2:
+        return ""
+    if len(s) > 48:
+        s = s[:48].strip()
+    return s
+
+
+def _normalize_signature_text(text: str) -> str:
+    s = (text or "").lower()
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    if len(s) > 220:
+        s = s[:220].strip()
+    return s
+
+
+def _fun_body_lines(text: str) -> List[str]:
+    lines: List[str] = []
+    for ln in (text or "").splitlines():
+        s = (ln or "").strip()
+        if not s:
+            continue
+        low = s.lower()
+        if s.startswith("[FUN]"):
+            continue
+        if low.startswith("confidence:") or low.startswith("source:") or low.startswith("sources:"):
+            continue
+        lines.append(s)
+    return lines
+
+
+def _enforce_fun_antiparrot(text: str, user_text: str) -> str:
+    """Prevent low-value mirroring/parroting in fun output."""
+    t = (text or "").strip()
+    if not t:
+        return t
+    body_lines = _fun_body_lines(t)
+    if not body_lines:
+        return t
+
+    body = " ".join(body_lines)
+    bnorm = _normalize_signature_text(body)
+    unorm = _normalize_signature_text(user_text)
+    if not bnorm or not unorm:
+        return t
+
+    sim = SequenceMatcher(None, bnorm, unorm).ratio()
+    body_low = body.lower()
+    user_low = (user_text or "").strip().lower()
+    likely_echo = (
+        sim >= 0.82
+        or body_low.startswith(user_low[: min(len(user_low), 80)])
+        or (len(body_lines) == 1 and sim >= 0.72)
+    )
+    if not likely_echo:
+        return t
+
+    # Preserve the leading FUN quote line if present.
+    quote_line = ""
+    for ln in t.splitlines():
+        if (ln or "").strip().startswith("[FUN]"):
+            quote_line = (ln or "").strip()
+            break
+
+    replacement = (
+        "Heard you. I won't parrot you back.\n\n"
+        "Pick one: banter, direct answer, or rewrite request."
+    )
+    return f"{quote_line}\n\n{replacement}".strip() if quote_line else replacement
+
+
+def _extract_blocked_nicknames(user_text: str) -> List[str]:
+    found: List[str] = []
+    t = user_text or ""
+    for rx in _NICKNAME_BLOCK_PATTERNS:
+        for m in rx.finditer(t):
+            nick = _clean_nickname_candidate(m.group(1))
+            if nick and nick not in found:
+                found.append(nick)
+    return found
+
+
+def _update_blocked_nicknames(state: SessionState, user_text: str) -> None:
+    for nick in _extract_blocked_nicknames(user_text):
+        state.profile_blocked_nicknames.add(nick)
+
+
+def _requires_sensitive_confirm(state: SessionState, user_text: str) -> bool:
+    t = (user_text or "").strip()
+    if not t:
+        return False
+    if getattr(getattr(state, "interaction_profile", None), "sensitive_override", False):
+        return False
+    if not classify_sensitive_context(t):
+        return False
+    return bool(_SENSITIVE_CONFIRM_INTENT_RE.search(t))
 
 
 def _sanitize_scratchpad_grounded_output(text: str) -> str:
@@ -353,15 +621,72 @@ def _apply_deterministic_footer(
         return text
 
 
+def _strip_profile_footer_lines(text: str) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+    # Remove profile footer fragments even when they were inlined into body text.
+    t = _PROFILE_FOOTER_FRAGMENT_RE.sub("", t)
+    out: List[str] = []
+    for ln in t.splitlines():
+        s = (ln or "").strip()
+        if not s:
+            out.append("")
+            continue
+        if s.lower().startswith("profile:"):
+            continue
+        # remove trailing leftovers like dangling separators from a stripped fragment
+        s = re.sub(r"\s{2,}", " ", s).rstrip(" |")
+        if s:
+            out.append(s)
+    # Collapse blank runs and return normalized text.
+    collapsed: List[str] = []
+    blank = 0
+    for ln in out:
+        if not (ln or "").strip():
+            blank += 1
+            if blank > 1:
+                continue
+        else:
+            blank = 0
+        collapsed.append(ln)
+    return "\n".join(collapsed).strip()
+
+
+def _append_profile_footer(*, text: str, state: SessionState, user_text: str) -> str:
+    """Append compact profile footer line, preserving deterministic confidence/source footer."""
+    if not bool(cfg_get("footer.profile.enabled", True)):
+        return text
+    if not bool(getattr(state, "profile_enabled", False)):
+        return text
+
+    try:
+        prof = effective_profile(state.interaction_profile, user_text)
+        style = str(getattr(prof, "correction_style", "neutral"))
+        sarc = str(getattr(prof, "sarcasm_level", "off"))
+        snark = str(getattr(prof, "snark_tolerance", "low"))
+        line = f"Profile: {style} | Sarc: {sarc} | Snark: {snark}"
+    except Exception:
+        return text
+
+    base = _strip_profile_footer_lines(text)
+    if not base:
+        return line
+    return f"{base}\n{line}"
+
+
 def _finalize_chat_response(
     *,
     text: str,
+    user_text: str,
     state: SessionState,
     lock_active: bool,
     scratchpad_grounded: bool,
     scratchpad_quotes: List[str],
     has_facts_block: bool,
     stream: bool,
+    mode: str = "serious",
+    sensitive_override_once: bool = False,
 ):
     """Apply shared post-processing and return HTTP response."""
     if scratchpad_grounded:
@@ -386,6 +711,89 @@ def _finalize_chat_response(
     if lock_active:
         text = _apply_locked_output_policy(text, state)
 
+    if rewrite_response_style is not None:
+        try:
+            sensitive = classify_sensitive_context(user_text)
+            text = rewrite_response_style(
+                text,
+                enabled=bool(getattr(state, "profile_enabled", False)),
+                correction_style=str(
+                    getattr(getattr(state, "interaction_profile", None), "correction_style", "neutral")
+                ),
+                user_text=user_text,
+                sensitive_context=sensitive,
+                sensitive_override=bool(getattr(state.interaction_profile, "sensitive_override", False))
+                or bool(sensitive_override_once),
+                blocked_nicknames=sorted(getattr(state, "profile_blocked_nicknames", set())),
+            )
+        except Exception:
+            pass
+
+    if mode in ("fun", "fun_rewrite"):
+        try:
+            text = _enforce_fun_antiparrot(text, user_text)
+        except Exception:
+            pass
+
+    if mode == "serious":
+        try:
+            if _is_ack_reframe_only(text):
+                if int(getattr(state, "serious_ack_reframe_streak", 0) or 0) >= 1:
+                    text = _SERIOUS_TASK_FORWARD_FALLBACK
+                    state.serious_ack_reframe_streak = 0
+                else:
+                    state.serious_ack_reframe_streak = 1
+            else:
+                state.serious_ack_reframe_streak = 0
+            body = _strip_footer_lines_for_scan(text)
+            sig = _normalize_signature_text(body)
+            prev = str(getattr(state, "serious_last_body_signature", "") or "")
+            repeat = int(getattr(state, "serious_repeat_streak", 0) or 0)
+            if sig and prev and len(sig) >= 40 and len(prev) >= 40:
+                sim = SequenceMatcher(None, prev, sig).ratio()
+                if sim >= 0.90:
+                    repeat += 1
+                else:
+                    repeat = 0
+            else:
+                repeat = 0
+            if repeat >= 1:
+                text = _SERIOUS_TASK_FORWARD_FALLBACK
+                state.serious_repeat_streak = 0
+                state.serious_last_body_signature = ""
+            else:
+                state.serious_repeat_streak = repeat
+                state.serious_last_body_signature = sig
+        except Exception:
+            pass
+
+    if score_output_compliance is not None and getattr(state, "profile_enabled", False):
+        try:
+            score = score_output_compliance(
+                text,
+                correction_style=str(getattr(state.interaction_profile, "correction_style", "neutral")),
+                user_text=user_text,
+                blocked_nicknames=sorted(getattr(state, "profile_blocked_nicknames", set())),
+            )
+            prev = float(getattr(state, "profile_output_compliance", 0.0) or 0.0)
+            state.profile_output_compliance = (prev * 0.7) + (score * 0.3)
+            state.profile_effective_strength = compute_effective_strength(
+                state.interaction_profile,
+                enabled=state.profile_enabled,
+                output_compliance=state.profile_output_compliance,
+            )
+            # Clamp overstated output-compliance when user is pushing back explicitly.
+            u_low = (user_text or "").lower()
+            if any(k in u_low for k in ("useless", "stiff", "stop talking like", "read the room", "fuck off", "bullshit")):
+                state.profile_output_compliance = min(state.profile_output_compliance, 0.65)
+                state.profile_effective_strength = compute_effective_strength(
+                    state.interaction_profile,
+                    enabled=state.profile_enabled,
+                    output_compliance=state.profile_output_compliance,
+                )
+        except Exception:
+            pass
+
     text = _apply_deterministic_footer(
         text=text,
         state=state,
@@ -393,6 +801,7 @@ def _finalize_chat_response(
         scratchpad_grounded=scratchpad_grounded,
         has_facts_block=has_facts_block,
     )
+    text = _append_profile_footer(text=text, state=state, user_text=user_text)
 
     # Auto-detach if this was a trust >>attach all operation.
     if state.auto_detach_after_response:
@@ -423,6 +832,16 @@ def _soft_alias_command(text: str, state: SessionState) -> Optional[str]:
     # Global exact alias (strict match only).
     if t.lower() == "status":
         return ">>status"
+    if t.lower() == "profile show":
+        return ">>profile show"
+    if t.lower() == "profile reset":
+        return ">>profile reset"
+    if t.lower() == "profile on":
+        return ">>profile on"
+    if t.lower() == "profile off":
+        return ">>profile off"
+    if t.lower().startswith("profile set "):
+        return ">>" + t
 
     attached = set(getattr(state, "attached_kbs", set()) or set())
     fs_attached = {k for k in attached if k in KB_PATHS and k != VAULT_KB_NAME}
@@ -468,6 +887,29 @@ def _soft_alias_command(text: str, state: SessionState) -> Optional[str]:
 app = FastAPI()
 
 
+def _format_router_exception(exc: Exception) -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tb = traceback.format_exc()
+    log = f"[router][unhandled][{ts}] {exc.__class__.__name__}: {exc}\n{tb}"
+    try:
+        print(log, flush=True)
+    except Exception:
+        pass
+    return f"[router error: unhandled {exc.__class__.__name__}: {exc}]"
+
+
+@app.middleware("http")
+async def _chat_exception_guard(request: Request, call_next):
+    """Fail-soft for chat route so clients do not see transport-level failures."""
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        text = _format_router_exception(exc)
+        if request.url.path == "/v1/chat/completions":
+            return JSONResponse(_make_openai_response(text), status_code=200)
+        return JSONResponse({"ok": False, "error": text}, status_code=500)
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "version": __version__}
@@ -487,10 +929,27 @@ def v1_models():
 
 def _session_id_from_request(req: Request, body: Dict[str, Any]) -> str:
     """Extract session ID from request."""
-    # Prefer explicit header (OWUI can set it)
-    sid = req.headers.get("x-session-id") or req.headers.get("x-chat-id")
+    # Prefer explicit chat/session headers.
+    sid = (
+        req.headers.get("x-chat-id")
+        or req.headers.get("x-session-id")
+        or req.headers.get("x-openwebui-chat-id")
+    )
     if sid:
         return sid.strip()
+
+    # Common body-level chat/session ids.
+    for key in ("chat_id", "conversation_id", "session_id", "id"):
+        v = body.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+
+    meta = body.get("metadata")
+    if isinstance(meta, dict):
+        for key in ("chat_id", "conversation_id", "session_id", "id"):
+            v = meta.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
 
     # Fallback to OpenAI user field
     user = body.get("user")
@@ -502,6 +961,8 @@ def _session_id_from_request(req: Request, body: Dict[str, Any]) -> str:
         host = req.client.host if req.client else "local"
     except Exception:
         host = "local"
+
+    # Final fallback: stable per-host id.
     return f"sess-{host}"
 
 
@@ -537,15 +998,13 @@ async def v1_chat_completions(req: Request):
 
     def _openwebui_title_for(t: str) -> str:
         t_l = t.lower()
-        if "cliniko" in t_l:
-            return "Cliniko Pipeline"
         if "router" in t_l or "fastapi" in t_l:
             return "Router Debugging"
         return "Chat Summary"
 
     if _is_openwebui_title_task(user_text_raw):
-        CLINIKO_DEBUG = cfg_get("cliniko.debug", True)
-        if CLINIKO_DEBUG:
+        ROUTER_DEBUG = cfg_get("router.debug", False)
+        if ROUTER_DEBUG:
             print("[DEBUG] openwebui title task bypass", flush=True)
         title_json = json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
         return JSONResponse(_make_openai_response(title_json))
@@ -572,13 +1031,22 @@ async def v1_chat_completions(req: Request):
             state.fun_sticky = False
             state.fun_rewrite_sticky = False
         # Auto-route to vision pipeline
-        text = call_model_messages(role="vision", messages=raw_messages, max_tokens=700, temperature=0.2, top_p=0.9)
+        text = await _run_sync(
+            call_model_messages,
+            role="vision",
+            messages=raw_messages,
+            max_tokens=700,
+            temperature=0.2,
+            top_p=0.9,
+        )
         if stream:
             return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
         return JSONResponse(_make_openai_response(text))
 
     # Check for per-turn selectors (##) FIRST
     selector, user_text = _split_selector(user_text_raw)
+    sensitive_override_once = False
+    _update_blocked_nicknames(state, user_text_raw)
     
     # CRITICAL: Check if user is responding to pending trust recommendations (A/B/C/D/E)
     if state.pending_trust_recommendations:
@@ -695,6 +1163,32 @@ async def v1_chat_completions(req: Request):
             return JSONResponse(_make_openai_response(text))
         # Non-Y/N input clears stale confirmation and proceeds normally.
         state.pending_lock_candidate = ""
+
+    # Pending sensitive confirmation (Y/N).
+    if selector == "" and state.pending_sensitive_confirm_query:
+        yn = (user_text_raw or "").strip().lower()
+        if yn in ("y", "yes"):
+            resumed_query = state.pending_sensitive_confirm_query
+            state.pending_sensitive_confirm_query = ""
+            user_text_raw = resumed_query
+            selector, user_text = _split_selector(user_text_raw)
+            sensitive_override_once = True
+            for i in range(len(raw_messages) - 1, -1, -1):
+                if raw_messages[i].get("role") == "user":
+                    raw_messages[i]["content"] = resumed_query
+                    break
+        elif yn in ("n", "no"):
+            state.pending_sensitive_confirm_query = ""
+            text = "[router] Sensitive request cancelled"
+            if stream:
+                return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+            return JSONResponse(_make_openai_response(text))
+        else:
+            state.pending_sensitive_confirm_query = ""
+            text = "[router] Sensitive request cancelled (default N)"
+            if stream:
+                return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+            return JSONResponse(_make_openai_response(text))
     
     # Only treat as session command if NOT a per-turn selector
     if selector == "":
@@ -747,6 +1241,18 @@ async def v1_chat_completions(req: Request):
                 if stream:
                     return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
                 return JSONResponse(_make_openai_response(text))
+
+    # Sensitive-context confirmation gate (deterministic).
+    if (
+        not sensitive_override_once
+        and not _is_command(user_text_raw)
+        and _requires_sensitive_confirm(state, user_text_raw)
+    ):
+        state.pending_sensitive_confirm_query = user_text_raw
+        text = "[router] This request is sensitive in a professional context. Continue anyway? [Y/N]"
+        if stream:
+            return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+        return JSONResponse(_make_openai_response(text))
     
     print(f"[DEBUG] selector={selector!r}, user_text={user_text!r}", flush=True)
 
@@ -795,11 +1301,36 @@ async def v1_chat_completions(req: Request):
             return JSONResponse(_make_openai_response(last_msg_content))
     
     history_text_only = normalize_history(raw_messages)
+
+    if state.profile_enabled:
+        try:
+            state.profile_turn_counter += 1
+            update_profile_from_user_turn(
+                state.interaction_profile,
+                state.profile_turn_counter,
+                user_text_raw,
+            )
+            state.profile_effective_strength = compute_effective_strength(
+                state.interaction_profile,
+                enabled=state.profile_enabled,
+                output_compliance=state.profile_output_compliance,
+            )
+        except Exception:
+            pass
+    else:
+        state.profile_effective_strength = 0.0
     
     # Vision / OCR selectors (explicit ##vision or ##ocr)
     if selector in ("vision", "ocr"):
         role = "vision"
-        text = call_model_messages(role=role, messages=raw_messages, max_tokens=700, temperature=0.2, top_p=0.9)
+        text = await _run_sync(
+            call_model_messages,
+            role=role,
+            messages=raw_messages,
+            max_tokens=700,
+            temperature=0.2,
+            top_p=0.9,
+        )
         if stream:
             return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
         return JSONResponse(_make_openai_response(text))
@@ -851,7 +1382,8 @@ async def v1_chat_completions(req: Request):
 
         print(f"[DEBUG] About to call run_mentats with vault_facts length={len(vault_facts)}", flush=True)
         try:
-            text = run_mentats(
+            text = (await _run_sync(
+                run_mentats,
                 session_id,
                 user_text,
                 [],
@@ -862,7 +1394,7 @@ async def v1_chat_completions(req: Request):
                 facts_collection=VAULT_KB_NAME,
                 thinker_role="thinker",
                 critic_role="critic",
-            ).strip()
+            )).strip()
             print(f"[DEBUG] run_mentats returned {len(text)} chars", flush=True)
         except Exception as e:
             print(f"[DEBUG] run_mentats CRASHED: {e}", flush=True)
@@ -907,8 +1439,17 @@ async def v1_chat_completions(req: Request):
     scratchpad_quotes: List[str] = []
     scratchpad_grounded = False
     constraints_block = ""
+    if state.profile_enabled:
+        try:
+            if state.profile_effective_strength >= 0.35 or has_non_default_style(state.interaction_profile):
+                constraints_block = build_profile_constraints_block(state.interaction_profile, user_text)
+        except Exception:
+            constraints_block = ""
     if lock_active:
-        constraints_block = _lock_constraints_block(state.locked_summ_file)
+        lock_constraints = _lock_constraints_block(state.locked_summ_file)
+        constraints_block = (
+            f"{lock_constraints}\n\n{constraints_block}".strip() if constraints_block else lock_constraints
+        )
     scratchpad_exhaustive = False
     scratchpad_exhaustive_mode = str(cfg_get("scratchpad.exhaustive_response_mode", "raw") or "raw").strip().lower()
     if (not lock_active) and "scratchpad" in state.attached_kbs and build_scratchpad_facts_block is not None:
@@ -927,12 +1468,17 @@ async def v1_chat_completions(req: Request):
                 scratchpad_grounded = True
                 scratchpad_quotes = _scratchpad_quote_lines(sp_block, query=user_text)
                 facts_block = f"{facts_block}\n\n{sp_block}".strip() if facts_block else sp_block
-                constraints_block = (
+                scratchpad_constraints = (
                     "Grounding mode: SCRATCHPAD_ONLY.\n"
                     "- Use only FACTS provided in this turn (scratchpad facts).\n"
                     "- If FACTS are insufficient, say so explicitly.\n"
                     "- Do not use pretrained/background knowledge.\n"
                     "- Keep claims constrained to provided facts."
+                )
+                constraints_block = (
+                    f"{scratchpad_constraints}\n\n{constraints_block}".strip()
+                    if constraints_block
+                    else scratchpad_constraints
                 )
         except Exception:
             pass
@@ -957,7 +1503,8 @@ async def v1_chat_completions(req: Request):
     if fun_mode == "fun":
         if run_fun is None:
             # fallback: do serious then rewrite in-router
-            base = run_serious(
+            base = (await _run_sync(
+                run_serious,
                 session_id=session_id,
                 user_text=user_text,
                 history=history_text_only,
@@ -966,14 +1513,15 @@ async def v1_chat_completions(req: Request):
                 facts_block=facts_block,
                 constraints_block=constraints_block,
                 thinker_role="thinker",
-            ).strip()
-            tone = _infer_tone(user_text, base)
+            )).strip()
+            tone = await _run_sync(_infer_tone, user_text, base)
             quote = _pick_quote_for_tone(tone)
             out = f'[FUN] "{quote}"\n\n{base}' if quote else f"[FUN]\n\n{base}"
             text = out
         else:
             # Build a tone-matched pool and let fun.py randomize within it
-            base_preview = run_serious(
+            base_preview = (await _run_sync(
+                run_serious,
                 session_id=session_id,
                 user_text=user_text,
                 history=history_text_only,
@@ -982,12 +1530,12 @@ async def v1_chat_completions(req: Request):
                 facts_block=facts_block,
                 constraints_block=constraints_block,
                 thinker_role="thinker",
-            ).strip()
-            tone = _infer_tone(user_text, base_preview)
-            qb = _quotes_by_tag()
-            pool = [q for quotes_list in qb.values() for q in quotes_list] if qb else []
+            )).strip()
+            tone = await _run_sync(_infer_tone, user_text, base_preview)
+            pool = _build_fun_quote_pool(state=state, user_text=user_text, tone=tone)
 
-            styled = run_fun(
+            styled = (await _run_sync(
+                run_fun,
                 session_id=session_id,
                 user_text=user_text,
                 history=history_text_only,
@@ -996,7 +1544,7 @@ async def v1_chat_completions(req: Request):
                 vodka=vodka,
                 call_model=call_model_prompt,
                 thinker_role="thinker",
-            ).strip()
+            )).strip()
 
             # Ensure required top line is explicit and quoted
             lines = styled.splitlines()
@@ -1012,36 +1560,45 @@ async def v1_chat_completions(req: Request):
 
         return _finalize_chat_response(
             text=text,
+            user_text=user_text,
             state=state,
             lock_active=lock_active,
             scratchpad_grounded=scratchpad_grounded,
             scratchpad_quotes=scratchpad_quotes,
             has_facts_block=bool((facts_block or "").strip()),
             stream=stream,
+            mode="fun",
+            sensitive_override_once=sensitive_override_once,
         )
 
     if fun_mode == "fun_rewrite":
-        text = run_fun_rewrite_fallback(
+        text = (await _run_sync(
+            run_fun_rewrite_fallback,
             session_id=session_id,
             user_text=user_text,
             history=history_text_only,
             vodka=vodka,
             facts_block=facts_block,
-        ).strip()
+            state=state,
+        )).strip()
 
         return _finalize_chat_response(
             text=text,
+            user_text=user_text,
             state=state,
             lock_active=lock_active,
             scratchpad_grounded=scratchpad_grounded,
             scratchpad_quotes=scratchpad_quotes,
             has_facts_block=bool((facts_block or "").strip()),
             stream=stream,
+            mode="fun_rewrite",
+            sensitive_override_once=sensitive_override_once,
         )
 
     # RAW mode (bypass Serious formatting, keep CTC + KB grounding)
     if state.raw_sticky and run_raw:
-        text = run_raw(
+        text = (await _run_sync(
+            run_raw,
             session_id=session_id,
             user_text=user_text,
             history=history_text_only,
@@ -1050,20 +1607,33 @@ async def v1_chat_completions(req: Request):
             facts_block=facts_block,
             constraints_block=constraints_block,
             thinker_role="thinker",
-        ).strip()
+        )).strip()
 
         return _finalize_chat_response(
             text=text,
+            user_text=user_text,
             state=state,
             lock_active=lock_active,
             scratchpad_grounded=scratchpad_grounded,
             scratchpad_quotes=scratchpad_quotes,
             has_facts_block=bool((facts_block or "").strip()),
             stream=stream,
+            mode="raw",
+            sensitive_override_once=sensitive_override_once,
         )
 
     # Normal serious
-    text = run_serious(
+    if int(getattr(state, "serious_ack_reframe_streak", 0) or 0) >= 1:
+        anti_loop = (
+            "Anti-loop rule:\n"
+            "- Previous turn already used acknowledgement/reframe.\n"
+            "- Do NOT output another meta acknowledgement about tone/process.\n"
+            "- Provide direct task-forward content in <=2 sentences."
+        )
+        constraints_block = f"{constraints_block}\n\n{anti_loop}".strip() if constraints_block else anti_loop
+
+    text = (await _run_sync(
+        run_serious,
         session_id=session_id,
         user_text=user_text,
         history=history_text_only,
@@ -1072,16 +1642,19 @@ async def v1_chat_completions(req: Request):
         facts_block=facts_block,
         constraints_block=constraints_block,
         thinker_role="thinker",
-    ).strip()
+    )).strip()
 
     return _finalize_chat_response(
         text=text,
+        user_text=user_text,
         state=state,
         lock_active=lock_active,
         scratchpad_grounded=scratchpad_grounded,
         scratchpad_quotes=scratchpad_quotes,
         has_facts_block=bool((facts_block or "").strip()),
         stream=stream,
+        mode="serious",
+        sensitive_override_once=sensitive_override_once,
     )
 
 

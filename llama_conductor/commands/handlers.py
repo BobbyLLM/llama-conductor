@@ -12,6 +12,13 @@ from ..config import (
     FS_MAX_CHARS,
 )
 from ..session_state import SessionState
+from ..interaction_profile import (
+    SETTABLE_FIELDS,
+    compute_effective_strength,
+    profile_set,
+    render_profile_show,
+    reset_profile,
+)
 from ..helpers import is_command, strip_cmd_prefix, parse_args
 from ..vault_ops import summ_new_in_kb, move_summ_to_vault
 
@@ -105,6 +112,19 @@ def _clear_pending_lock(state: SessionState) -> None:
     state.pending_lock_candidate = ""
 
 
+def _reset_profile_runtime_state(state: SessionState) -> None:
+    """Reset session interaction-profile state to defaults."""
+    reset_profile(state.interaction_profile)
+    state.profile_turn_counter = 0
+    state.profile_effective_strength = 0.0
+    state.profile_output_compliance = 0.0
+    state.profile_blocked_nicknames.clear()
+    state.serious_ack_reframe_streak = 0
+    state.serious_last_body_signature = ""
+    state.serious_repeat_streak = 0
+    state.pending_sensitive_confirm_query = ""
+
+
 def _list_lockable_summ_files(state: SessionState) -> List[str]:
     """Return lockable SUMM files across attached filesystem KBs."""
     rows: List[str] = []
@@ -152,8 +172,17 @@ def _render_status(session_id: str, state: SessionState) -> str:
         f"locked_summ_file={state.locked_summ_file!r}\n"
         f"locked_summ_kb={state.locked_summ_kb!r}\n"
         f"pending_lock_candidate={state.pending_lock_candidate!r}\n"
+        f"pending_sensitive_confirm_query={state.pending_sensitive_confirm_query!r}\n"
         f"fun_sticky={state.fun_sticky}\n"
         f"fun_rewrite_sticky={state.fun_rewrite_sticky}\n"
+        f"profile_enabled={state.profile_enabled}\n"
+        f"profile_confidence={state.interaction_profile.confidence:.2f}\n"
+        f"profile_effective_strength={state.profile_effective_strength:.2f}\n"
+        f"profile_output_compliance={state.profile_output_compliance:.2f}\n"
+        f"profile_blocked_nicknames={sorted(state.profile_blocked_nicknames)!r}\n"
+        f"profile_last_updated_turn={state.interaction_profile.last_updated_turn}\n"
+        f"serious_ack_reframe_streak={state.serious_ack_reframe_streak}\n"
+        f"serious_repeat_streak={state.serious_repeat_streak}\n"
         f"last_query={state.rag_last_query!r}\n"
         f"last_hits={state.rag_last_hits}\n"
         f"vault_last_query={state.vault_last_query!r}\n"
@@ -296,6 +325,128 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
     if out is not None:
         return out
 
+    # profile controls
+    if parts and parts[0].lower() == "profile":
+        def _norm_level(v: str) -> str:
+            low_v = (v or "").strip().lower()
+            if low_v in ("med", "mid"):
+                return "medium"
+            return low_v
+
+        def _as_bool_text(v: str) -> str:
+            low_v = (v or "").strip().lower()
+            if low_v in ("on", "yes", "y", "1", "true"):
+                return "true"
+            if low_v in ("off", "no", "n", "0", "false"):
+                return "false"
+            return low_v
+
+        sub = parts[1].lower() if len(parts) > 1 else "show"
+        # User-friendly shorthand aliases.
+        if sub in ("direct", "neutral", "softened"):
+            ok, msg = profile_set(state.interaction_profile, "correction_style", sub)
+            return msg if ok else f"[profile] invalid style: {sub}"
+        if sub in ("snark", "sarcasm", "profanity", "verbosity", "sensitive_override", "sensitive"):
+            if len(parts) < 3:
+                if sub == "snark":
+                    return "[profile] usage: >>profile snark <low|medium|high>"
+                if sub == "sarcasm":
+                    return "[profile] usage: >>profile sarcasm <off|low|medium|high>"
+                if sub == "profanity":
+                    return "[profile] usage: >>profile profanity <on|off>"
+                if sub == "verbosity":
+                    return "[profile] usage: >>profile verbosity <compact|standard|expanded>"
+                return "[profile] usage: >>profile sensitive <on|off>"
+            raw_val = " ".join(parts[2:]).strip()
+            if sub == "snark":
+                return profile_set(state.interaction_profile, "snark_tolerance", _norm_level(raw_val))[1]
+            if sub == "sarcasm":
+                return profile_set(state.interaction_profile, "sarcasm_level", _norm_level(raw_val))[1]
+            if sub == "profanity":
+                return profile_set(state.interaction_profile, "profanity_ok", _as_bool_text(raw_val))[1]
+            if sub == "verbosity":
+                return profile_set(state.interaction_profile, "verbosity", raw_val)[1]
+            return profile_set(state.interaction_profile, "sensitive_override", _as_bool_text(raw_val))[1]
+        if sub in ("casual", "feral", "turbo"):
+            # Shortcut presets.
+            p = state.interaction_profile
+            if sub == "casual":
+                profile_set(p, "correction_style", "direct")
+                profile_set(p, "verbosity", "compact")
+                profile_set(p, "snark_tolerance", "high")
+                profile_set(p, "sarcasm_level", "medium")
+                profile_set(p, "profanity_ok", "false")
+                return "[profile] override applied: casual"
+            # 'feral' and 'turbo' are equivalent.
+            profile_set(p, "correction_style", "direct")
+            profile_set(p, "verbosity", "compact")
+            profile_set(p, "snark_tolerance", "high")
+            profile_set(p, "sarcasm_level", "high")
+            profile_set(p, "profanity_ok", "true")
+            return "[profile] override applied: feral"
+
+        if sub in ("override", "preset", "turbo"):
+            name = "feral" if sub == "turbo" else (parts[2].lower() if len(parts) > 2 else "")
+            p = state.interaction_profile
+            if name == "direct":
+                profile_set(p, "correction_style", "direct")
+                profile_set(p, "verbosity", "compact")
+                profile_set(p, "snark_tolerance", "medium")
+                profile_set(p, "sarcasm_level", "low")
+                profile_set(p, "profanity_ok", "false")
+                return "[profile] override applied: direct"
+            if name == "casual":
+                profile_set(p, "correction_style", "direct")
+                profile_set(p, "verbosity", "compact")
+                profile_set(p, "snark_tolerance", "high")
+                profile_set(p, "sarcasm_level", "medium")
+                profile_set(p, "profanity_ok", "false")
+                return "[profile] override applied: casual"
+            if name == "feral":
+                profile_set(p, "correction_style", "direct")
+                profile_set(p, "verbosity", "compact")
+                profile_set(p, "snark_tolerance", "high")
+                profile_set(p, "sarcasm_level", "high")
+                profile_set(p, "profanity_ok", "true")
+                return "[profile] override applied: feral"
+            return "[profile] usage: >>profile override <direct|casual|feral> (alias: >>profile turbo)"
+        if sub == "show":
+            state.profile_effective_strength = compute_effective_strength(
+                state.interaction_profile,
+                enabled=state.profile_enabled,
+                output_compliance=state.profile_output_compliance,
+            )
+            return render_profile_show(
+                state.interaction_profile,
+                enabled=state.profile_enabled,
+                effective_strength=state.profile_effective_strength,
+            )
+        if sub == "reset":
+            _reset_profile_runtime_state(state)
+            return "[profile] reset to defaults"
+        if sub == "on":
+            state.profile_enabled = True
+            return "[profile] enabled"
+        if sub == "off":
+            state.profile_enabled = False
+            return "[profile] disabled"
+        if sub == "set":
+            if len(parts) < 3 or "=" not in " ".join(parts[2:]):
+                return "[profile] usage: >>profile set <field>=<value>"
+            rhs = " ".join(parts[2:]).strip()
+            field_name, value = rhs.split("=", 1)
+            ok, msg = profile_set(state.interaction_profile, field_name.strip(), value.strip())
+            if not ok and field_name.strip() in SETTABLE_FIELDS:
+                return msg
+            return msg
+        return (
+            "[profile] usage: >>profile show|set|reset|on|off | "
+            ">>profile <direct|neutral|softened> | "
+            ">>profile snark <low|medium|high> | "
+            ">>profile sarcasm <off|low|medium|high> | "
+            ">>profile profanity <on|off>"
+        )
+
     # scratchpad controls
     if parts and parts[0].lower() in ("scratchpad", "scratch"):
         if not get_session_scratchpad_path or not clear_scratchpad or not list_scratchpad_records:
@@ -406,7 +557,6 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         
         # Format and return recommendations
         return "[trust] " + format_recommendations(recommendations, query=query)
-
     # attach/detach/list
     if parts and parts[0].lower() in ("attach", "a"):
         if len(parts) < 2:
@@ -481,6 +631,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             scratchpad_count = 0
             prev_locked = _clear_locked_summ(state)
             _clear_pending_lock(state)
+            _reset_profile_runtime_state(state)
             if "scratchpad" in state.attached_kbs and list_scratchpad_records and clear_scratchpad:
                 recs = list_scratchpad_records(session_id, limit=1000000)
                 scratchpad_count = len(recs)
@@ -712,9 +863,22 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
 
     # >>flush (CTC cache)
     if low == "flush":
+        # User-requested behavior: flush also resets profile/session-style identity.
+        _reset_profile_runtime_state(state)
+        state.rag_last_query = ""
+        state.rag_last_hits = 0
+        state.vault_last_query = ""
+        state.vault_last_hits = 0
+        state.fun_sticky = False
+        state.fun_rewrite_sticky = False
+        state.raw_sticky = False
         if not flush_ctc_cache or not state.vodka:
-            return "[router] flush not available"
-        return flush_ctc_cache(state.vodka)
+            return (
+                "[flush] profile/session identity reset; CTC cache unavailable "
+                "(Vodka not initialized)."
+            )
+        ctc_msg = flush_ctc_cache(state.vodka)
+        return f"{ctc_msg}\n[flush] profile/session identity reset."
 
     # >>wiki <topic> (Wikipedia summary)
     if parts and parts[0].lower() == "wiki":

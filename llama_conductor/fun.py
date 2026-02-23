@@ -292,13 +292,25 @@ def _strip_leading_kicker_lines(text: str, *, mode_kicker: str, seed: str) -> st
     mk = (mode_kicker or "").strip()
     sd = (seed or "").strip()
 
+    def _norm_quote(s: str) -> str:
+        s = (s or "").strip()
+        s = s.replace("“", "\"").replace("”", "\"").replace("’", "'")
+        s = s.strip('"').strip()
+        return " ".join(s.split()).lower()
+
+    mk_n = _norm_quote(mk.replace("[FUN]", "").replace("[FUN REWRITE]", ""))
+    sd_n = _norm_quote(sd)
+
     def is_kicker_or_blank(line: str) -> bool:
         s = (line or "").strip()
         if not s:
             return True  # treat leading blanks as removable
         if mk and s == mk:
             return True
+        sn = _norm_quote(s.replace("[FUN]", "").replace("[FUN REWRITE]", ""))
         if sd and (s == sd or s == f'"{sd}"' or s.strip('"').strip() == sd):
+            return True
+        if sn and (sn == sd_n or sn == mk_n):
             return True
         return False
 
@@ -336,6 +348,20 @@ def _strip_leading_meta_lines(text: str) -> str:
     while i < len(lines) and not (lines[i] or "").strip():
         i += 1
     return "\n".join(lines[i:]).strip()
+
+
+def _strip_duplicate_fun_header(text: str) -> str:
+    """Drop repeated [FUN] header lines if model echoes one into body."""
+    if not text:
+        return ""
+    lines = text.splitlines()
+    if len(lines) < 2:
+        return text
+    first = (lines[0] or "").strip().lower()
+    second = (lines[1] or "").strip().lower()
+    if first.startswith("[fun]") and second.startswith("[fun]"):
+        return "\n".join([lines[0]] + lines[2:]).strip()
+    return text
 
 
 # -----------------------------
@@ -426,7 +452,7 @@ def run_fun(
         body_text = base_answer
 
     # Return with seed-only first line (router will wrap with [FUN] "...").
-    return f"{seed}\n\n{body_text}"
+    return _strip_duplicate_fun_header(f"{seed}\n\n{body_text}")
 
 
 # -----------------------------
