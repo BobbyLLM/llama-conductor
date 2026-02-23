@@ -29,7 +29,7 @@ Tips:
 - `>>weather <location>` current weather (via Open-Meteo API; use single word or "City Country")
 - `>>find <query>` search attached KB files
 - `>>peek <query>` preview KB retrieval chunks for the query
-- `>>flush` clear CTC history cache and reset session profile/style identity (does not detach KBs)
+- `>>flush` clear CTC history cache, reset session profile/style identity, and delete session-memory JSONL files (does not detach KBs)
 Tips:
 - Use these when you want a direct tool result rather than a free-form chat answer.
 - API-backed commands (`wiki`, `exchange`, `weather`) can fail if upstream services are unavailable.
