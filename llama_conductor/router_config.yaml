@@ -8,6 +8,11 @@ llama_swap_url: "http://127.0.0.1:8011/v1/chat/completions"
 # Router bind port (when running `python router_fastapi.py`)
 port: 9000
 
+# Router diagnostics (privacy-safe defaults).
+router:
+  debug: false
+  debug_log_user_text: false
+
 # Model role mapping (router passes `role=`; call_model resolves to these model IDs).
 roles:
   thinker: "Qwen-3-4B Hivemind"
@@ -39,16 +44,23 @@ vodka:
   base_ttl_days: 3
   touch_extension_days: 5
   max_touches: 2
-  debug: true
+  debug: false
   debug_dir: "."
-  n_last_messages: 10
-  keep_first: true
-  max_chars: 3000
+  n_last_messages: 12
+  keep_first: false
+  max_chars: 6000
+  enable_summary: true
+  summary_segments_per_message: 8
 
 # Vault chunking (for >>move to vault ingestion)
 vault:
   chunk_words: 250        # Smaller chunks = better semantic matching for queries
   chunk_overlap_words: 50  # Overlap prevents losing context at chunk boundaries
+
+# Mentats diagnostics (off by default; payload logging opt-in).
+mentats:
+  debug: false
+  debug_payload: false
 
 # Scratchpad sidecar (ephemeral session-grounding)
 scratchpad:

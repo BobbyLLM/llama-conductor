@@ -64,5 +64,9 @@ FS_MAX_CHARS = int(cfg_get("fs_rag.max_chars", 2400))
 VAULT_CHUNK_WORDS = int(cfg_get("vault.chunk_words", 600))
 VAULT_OVERLAP_WORDS = int(cfg_get("vault.chunk_overlap_words", 175))
 
-# General model-call debug flag
+# Debug/privacy flags
 MODEL_DEBUG = bool(cfg_get("debug.model_calls", False))
+MENTATS_DEBUG = bool(cfg_get("mentats.debug", False))
+MENTATS_DEBUG_PAYLOAD = bool(cfg_get("mentats.debug_payload", False))
+ROUTER_DEBUG = bool(cfg_get("router.debug", False))
+ROUTER_DEBUG_LOG_USER_TEXT = bool(cfg_get("router.debug_log_user_text", False))

@@ -22,7 +22,16 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 # Core modules (always required)
 from .__about__ import __version__
-from .config import cfg_get, ROLES, KB_PATHS, VAULT_KB_NAME, FS_TOP_K, FS_MAX_CHARS
+from .config import (
+    cfg_get,
+    ROLES,
+    KB_PATHS,
+    VAULT_KB_NAME,
+    FS_TOP_K,
+    FS_MAX_CHARS,
+    ROUTER_DEBUG,
+    ROUTER_DEBUG_LOG_USER_TEXT,
+)
 from .session_state import get_state, SessionState
 from .helpers import (
     has_mentats_in_recent_history,
@@ -44,6 +53,7 @@ from .interaction_profile import (
     has_non_default_style,
     update_profile_from_user_turn,
 )
+from .privacy_utils import safe_preview, short_hash
 
 # Required modules
 from .vodka_filter import Filter as VodkaFilter
@@ -103,6 +113,18 @@ except Exception:
 async def _run_sync(func, /, *args, **kwargs):
     """Run blocking/sync work off the event loop to keep router responsive."""
     return await run_in_threadpool(func, *args, **kwargs)
+
+
+def _dbg(msg: str) -> None:
+    if ROUTER_DEBUG:
+        print(msg, flush=True)
+
+
+def _debug_user_fragment(text: str) -> str:
+    raw = str(text or "")
+    if ROUTER_DEBUG_LOG_USER_TEXT:
+        return safe_preview(raw, max_len=240)
+    return f"<redacted len={len(raw)} sha={short_hash(raw)}>"
 
 
 def build_fs_facts(query: str, state: SessionState) -> str:
@@ -889,13 +911,18 @@ app = FastAPI()
 
 def _format_router_exception(exc: Exception) -> str:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    tb = traceback.format_exc()
-    log = f"[router][unhandled][{ts}] {exc.__class__.__name__}: {exc}\n{tb}"
+    if ROUTER_DEBUG:
+        tb = traceback.format_exc()
+        log = f"[router][unhandled][{ts}] {exc.__class__.__name__}: {exc}\n{tb}"
+    else:
+        log = f"[router][unhandled][{ts}] {exc.__class__.__name__}"
     try:
         print(log, flush=True)
     except Exception:
         pass
-    return f"[router error: unhandled {exc.__class__.__name__}: {exc}]"
+    if ROUTER_DEBUG:
+        return f"[router error: unhandled {exc.__class__.__name__}: {exc}]"
+    return f"[router error: unhandled {exc.__class__.__name__}]"
 
 
 @app.middleware("http")
@@ -1003,9 +1030,8 @@ async def v1_chat_completions(req: Request):
         return "Chat Summary"
 
     if _is_openwebui_title_task(user_text_raw):
-        ROUTER_DEBUG = cfg_get("router.debug", False)
         if ROUTER_DEBUG:
-            print("[DEBUG] openwebui title task bypass", flush=True)
+            _dbg("[DEBUG] openwebui title task bypass")
         title_json = json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
         return JSONResponse(_make_openai_response(title_json))
 
@@ -1254,7 +1280,7 @@ async def v1_chat_completions(req: Request):
             return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
         return JSONResponse(_make_openai_response(text))
     
-    print(f"[DEBUG] selector={selector!r}, user_text={user_text!r}", flush=True)
+    _dbg(f"[DEBUG] selector={selector!r}, user_text={_debug_user_fragment(user_text)}")
 
     # Build history for non-vision pipelines
     
@@ -1276,16 +1302,45 @@ async def v1_chat_completions(req: Request):
         vodka.valves.n_last_messages = int(vodka_cfg.get("n_last_messages", vodka.valves.n_last_messages))
         vodka.valves.keep_first = bool(vodka_cfg.get("keep_first", vodka.valves.keep_first))
         vodka.valves.max_chars = int(vodka_cfg.get("max_chars", vodka.valves.max_chars))
+        vodka.valves.enable_summary = bool(vodka_cfg.get("enable_summary", vodka.valves.enable_summary))
+        vodka.valves.summary_every_n_user_msgs = int(
+            vodka_cfg.get("summary_every_n_user_msgs", vodka.valves.summary_every_n_user_msgs)
+        )
+        vodka.valves.summary_max_words = int(vodka_cfg.get("summary_max_words", vodka.valves.summary_max_words))
+        vodka.valves.summary_inject_max_units = int(
+            vodka_cfg.get("summary_inject_max_units", vodka.valves.summary_inject_max_units)
+        )
+        vodka.valves.summary_inject_max_chars = int(
+            vodka_cfg.get("summary_inject_max_chars", vodka.valves.summary_inject_max_chars)
+        )
+        vodka.valves.summary_memory_max_units = int(
+            vodka_cfg.get("summary_memory_max_units", vodka.valves.summary_memory_max_units)
+        )
+        vodka.valves.summary_segments_per_message = int(
+            vodka_cfg.get("summary_segments_per_message", vodka.valves.summary_segments_per_message)
+        )
+        vodka.valves.summary_require_session_id = bool(
+            vodka_cfg.get("summary_require_session_id", vodka.valves.summary_require_session_id)
+        )
+        vodka.valves.summary_include_assistant = bool(
+            vodka_cfg.get("summary_include_assistant", vodka.valves.summary_include_assistant)
+        )
+        vodka.valves.summary_store_pii = bool(vodka_cfg.get("summary_store_pii", vodka.valves.summary_store_pii))
+        vodka.valves.summary_pii_redaction_token = str(
+            vodka_cfg.get("summary_pii_redaction_token", vodka.valves.summary_pii_redaction_token)
+            or vodka.valves.summary_pii_redaction_token
+        )
     except Exception:
         pass
     
     # NOW apply Vodka filtering (CTC, FR, !!, ??)
-    vodka_body = {"messages": raw_messages}
+    vodka_body = {"messages": raw_messages, "session_id": session_id}
     try:
         vodka_body = vodka.inlet(vodka_body)
         vodka_body = vodka.outlet(vodka_body)
         raw_messages = vodka_body.get("messages", raw_messages)
-    except Exception:
+    except Exception as e:
+        _dbg(f"[DEBUG] Vodka fail-open: {e.__class__.__name__}: {e}")
         pass  # Fail-open
     
     # Check if Vodka already answered hard commands (?? list, !! nuke)
@@ -1293,14 +1348,26 @@ async def v1_chat_completions(req: Request):
         last_msg_content = raw_messages[-1].get("content", "")
         if isinstance(last_msg_content, str) and (
             "[vodka]" in last_msg_content.lower() or 
-            "[vodka memory store]" in last_msg_content.lower()
+            "[vodka memory store]" in last_msg_content.lower() or
+            "[recall_det]" in last_msg_content.lower()
         ):
             # This is a Vodka hard command answer - return it directly
+            out_text = last_msg_content
+            if "[recall_det]" in out_text.lower():
+                out_text = re.sub(r"^\s*\[recall_det\]\s*", "", out_text, count=1, flags=re.IGNORECASE).strip()
             if stream:
-                return StreamingResponse(_stream_sse(last_msg_content), media_type="text/event-stream")
-            return JSONResponse(_make_openai_response(last_msg_content))
+                return StreamingResponse(_stream_sse(out_text), media_type="text/event-stream")
+            return JSONResponse(_make_openai_response(out_text))
     
     history_text_only = normalize_history(raw_messages)
+    
+    # Vodka has already been applied above. Use no-op wrappers for downstream
+    # pipelines to avoid double CTC/memory mutation in a single request.
+    class _NoOpVodka:
+        def inlet(self, body: dict, user: Optional[dict] = None) -> dict:
+            return body
+        def outlet(self, body: dict, user: Optional[dict] = None) -> dict:
+            return body
 
     if state.profile_enabled:
         try:
@@ -1337,7 +1404,7 @@ async def v1_chat_completions(req: Request):
 
     # Mentats selector
     if selector == "mentats":
-        print(f"[DEBUG] Mentats selector triggered, user_text={user_text!r}", flush=True)
+        _dbg(f"[DEBUG] Mentats selector triggered, user_text={_debug_user_fragment(user_text)}")
         
         # Mentats MUST be isolated: drop fun modes
         state.fun_sticky = False
@@ -1380,7 +1447,7 @@ async def v1_chat_completions(req: Request):
             def outlet(self, body: dict, user: Optional[dict] = None) -> dict:
                 return body
 
-        print(f"[DEBUG] About to call run_mentats with vault_facts length={len(vault_facts)}", flush=True)
+        _dbg(f"[DEBUG] About to call run_mentats with vault_facts length={len(vault_facts)}")
         try:
             text = (await _run_sync(
                 run_mentats,
@@ -1395,10 +1462,10 @@ async def v1_chat_completions(req: Request):
                 thinker_role="thinker",
                 critic_role="critic",
             )).strip()
-            print(f"[DEBUG] run_mentats returned {len(text)} chars", flush=True)
+            _dbg(f"[DEBUG] run_mentats returned {len(text)} chars")
         except Exception as e:
-            print(f"[DEBUG] run_mentats CRASHED: {e}", flush=True)
-            text = f"[DEBUG] Mentats crashed: {e}"
+            _dbg(f"[DEBUG] run_mentats crashed: {e.__class__.__name__}")
+            text = "[router] Mentats crashed"
 
         if "[ZARDOZ HATH SPOKEN]" not in text:
             text = text.rstrip() + "\n\n[ZARDOZ HATH SPOKEN]"
@@ -1508,7 +1575,7 @@ async def v1_chat_completions(req: Request):
                 session_id=session_id,
                 user_text=user_text,
                 history=history_text_only,
-                vodka=vodka,
+                vodka=_NoOpVodka(),
                 call_model=call_model_prompt,
                 facts_block=facts_block,
                 constraints_block=constraints_block,
@@ -1525,7 +1592,7 @@ async def v1_chat_completions(req: Request):
                 session_id=session_id,
                 user_text=user_text,
                 history=history_text_only,
-                vodka=vodka,
+                vodka=_NoOpVodka(),
                 call_model=call_model_prompt,
                 facts_block=facts_block,
                 constraints_block=constraints_block,
@@ -1541,7 +1608,7 @@ async def v1_chat_completions(req: Request):
                 history=history_text_only,
                 facts_block=facts_block,
                 quote_pool=pool,
-                vodka=vodka,
+                vodka=_NoOpVodka(),
                 call_model=call_model_prompt,
                 thinker_role="thinker",
             )).strip()
@@ -1577,7 +1644,7 @@ async def v1_chat_completions(req: Request):
             session_id=session_id,
             user_text=user_text,
             history=history_text_only,
-            vodka=vodka,
+            vodka=_NoOpVodka(),
             facts_block=facts_block,
             state=state,
         )).strip()
@@ -1602,7 +1669,7 @@ async def v1_chat_completions(req: Request):
             session_id=session_id,
             user_text=user_text,
             history=history_text_only,
-            vodka=vodka,
+            vodka=_NoOpVodka(),
             call_model=call_model_prompt,
             facts_block=facts_block,
             constraints_block=constraints_block,
@@ -1637,7 +1704,7 @@ async def v1_chat_completions(req: Request):
         session_id=session_id,
         user_text=user_text,
         history=history_text_only,
-        vodka=vodka,
+        vodka=_NoOpVodka(),
         call_model=call_model_prompt,
         facts_block=facts_block,
         constraints_block=constraints_block,

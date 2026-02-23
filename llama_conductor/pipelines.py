@@ -37,12 +37,14 @@ Just talk naturally like a human would."""
 
 
 def _extract_chat_summary(messages: List[Dict[str, Any]]) -> str:
-    """Grab the most recent Vodka summary message if present."""
+    """Grab the most recent Vodka memory summary message if present."""
     for m in reversed(messages or []):
         if m.get("role") == "system":
             c = m.get("content", "")
-            if isinstance(c, str) and c.strip().startswith("[CHAT_SUMMARY]"):
-                return c.strip()
+            if isinstance(c, str):
+                cs = c.strip()
+                if cs.startswith("[CHAT_SUMMARY]") or cs.startswith("[SESSION_MEMORY]"):
+                    return cs
     return ""
 
 
