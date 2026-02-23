@@ -114,6 +114,7 @@ llama-conductor serve --host 0.0.0.0 --port 9000
     - [Vault stores full provenance:](#vault-stores-full-provenance)
   - [TIPS](#tips)
   - [What's new (latest)?](#whats-new-latest)
+  - [What does `Profile | Sarc | Snark` mean?](#what-does-profile--sarc--snark-mean)
   - [Questions and Help](#questions-and-help)
 ---
 
@@ -994,6 +995,24 @@ Answer -> Vault chunk -> SUMM file -> Original doc -> SHA verification
 - FIX: Profile behavior now resets cleanly on >>detach all and >>flush.
 - IMPROVED: Fun/Fun Rewrite tone alignment is more consistent with profile settings.
 - IMPROVED: Response stability under mixed workflows is better than older builds.
+
+### What does `Profile | Sarc | Snark` mean?
+
+You may see a footer like:
+
+`Profile: neutral | Sarc: medium | Snark: high`
+
+How to read it:
+
+- `Profile` = correction/response style (`softened`, `neutral`, `direct`)
+- `Sarc` = sarcasm level (`off`, `low`, `medium`, `high`)
+- `Snark` = sharpness tolerance (`low`, `medium`, `high`)
+
+Notes:
+
+- These are session-state behavior signals, not factual confidence.
+- Mentats source/provenance rules are unchanged.
+- Manual `>>profile set ...` values are sticky until changed or reset.
 
 
 ### Questions and Help
