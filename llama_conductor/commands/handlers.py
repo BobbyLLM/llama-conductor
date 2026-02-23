@@ -85,6 +85,11 @@ except Exception:
     delete_scratchpad_by_query = None  # type: ignore
     build_scratchpad_dump_text = None  # type: ignore
 
+try:
+    from ..vodka_filter import purge_session_memory_jsonl  # type: ignore
+except Exception:
+    purge_session_memory_jsonl = None  # type: ignore
+
 
 def load_help_text() -> str:
     """Load command cheat sheet."""
@@ -872,13 +877,26 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         state.fun_sticky = False
         state.fun_rewrite_sticky = False
         state.raw_sticky = False
+        purged = 0
+        if purge_session_memory_jsonl:
+            try:
+                base = ""
+                if state.vodka is not None and hasattr(state.vodka, "valves"):
+                    base = str(getattr(state.vodka.valves, "storage_dir", "") or "").strip()
+                purged = int(purge_session_memory_jsonl(base))
+            except Exception:
+                purged = 0
         if not flush_ctc_cache or not state.vodka:
             return (
                 "[flush] profile/session identity reset; CTC cache unavailable "
-                "(Vodka not initialized)."
+                f"(Vodka not initialized). session-memory deleted={purged}."
             )
         ctc_msg = flush_ctc_cache(state.vodka)
-        return f"{ctc_msg}\n[flush] profile/session identity reset."
+        return (
+            f"{ctc_msg}\n"
+            f"[flush] profile/session identity reset.\n"
+            f"[flush] session-memory deleted={purged}."
+        )
 
     # >>wiki <topic> (Wikipedia summary)
     if parts and parts[0].lower() == "wiki":
