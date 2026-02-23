@@ -1002,17 +1002,75 @@ You may see a footer like:
 
 `Profile: neutral | Sarc: medium | Snark: high`
 
-How to read it:
+This is style metadata for the current session. It is not a truth score.
 
-- `Profile` = correction/response style (`softened`, `neutral`, `direct`)
-- `Sarc` = sarcasm level (`off`, `low`, `medium`, `high`)
-- `Snark` = sharpness tolerance (`low`, `medium`, `high`)
+#### `Profile` (how direct the assistant sounds)
 
-Notes:
+- `softened`: gentler tone, more cushioning language, less blunt correction
+- `neutral`: plain professional tone, balanced wording
+- `direct`: concise, blunt, minimal padding, faster correction/reframe
 
-- These are session-state behavior signals, not factual confidence.
-- Mentats source/provenance rules are unchanged.
-- Manual `>>profile set ...` values are sticky until changed or reset.
+#### `Sarc` (how ironic/wry the wording is)
+
+- `off`: no sarcasm
+- `low`: light dry humor
+- `medium`: noticeable irony
+- `high`: strong sarcastic framing (still bounded by safety/context rules)
+
+#### `Snark` (how sharp/combative the edge is)
+
+- `low`: polite and restrained
+- `medium`: firmer, more pointed
+- `high`: sharp, spicy phrasing allowed (especially when user style supports it)
+
+### How state changes over time
+
+- The profile updates from your turn-by-turn style signals.
+- Strong explicit signals move it faster than weak implicit ones.
+- Repeated signals increase confidence.
+- Lack of reinforcement causes decay toward baseline.
+- `>>detach all` and `>>flush` reset profile/style runtime state.
+
+### Output impact
+
+Higher `direct` / `sarc` / `snark` usually means:
+
+- shorter acknowledgements
+- faster correction + reframe
+- less hedging
+- more edge in wording
+
+Lower settings usually means:
+
+- softer transitions
+- less irony
+- more neutral/professional phrasing
+
+Mode leverage:
+
+- `serious`: lowest style impact; factual/grounding constraints dominate
+- `raw`: medium style impact; less formatting constraint than serious
+- `fun`: higher style impact (quote + tone shaping)
+- `fr` (fun rewrite): highest style impact (tone rewrite path)
+
+Grounding/provenance rules are unchanged by these style states.
+
+### Manual control and shortcuts
+
+You can override inference at any time:
+
+- `>>profile show`
+- `>>profile set correction_style=direct`
+- `>>profile set sarcasm_level=medium`
+- `>>profile set snark_tolerance=high`
+- `>>profile reset`
+- `>>profile on` / `>>profile off`
+
+Shortcut mappings:
+
+- `>>profile casual` = `correction_style=direct`, `verbosity=compact`, `snark_tolerance=high`, `sarcasm_level=medium`, `profanity_ok=false`
+- `>>profile feral` = `correction_style=direct`, `verbosity=compact`, `snark_tolerance=high`, `sarcasm_level=high`, `profanity_ok=true`
+- `>>profile turbo` = same as `>>profile feral`
 
 
 ### Questions and Help

@@ -299,7 +299,7 @@ def run_serious(
     facts_block: Optional[str] = "",
     constraints_block: Optional[str] = "",
     thinker_role: str = "thinker",
-    max_tokens: int = 256,
+    max_tokens: int = 384,
     temperature: float = 0.2,
     top_p: float = 0.9,
     # New (safe defaults; router doesn't need to pass these)
