@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llama-conductor"
-version = "1.3.0"
+version = "1.3.1"
 description = "LLM harness for trust, consistency, and proof"
 readme = "README.md"
 requires-python = ">=3.9"

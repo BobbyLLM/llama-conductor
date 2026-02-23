@@ -991,10 +991,12 @@ Answer -> Vault chunk -> SUMM file -> Original doc -> SHA verification
 
 ### What's new (latest)?
 
-- FIX: Session-state profile controls (>>profile) now support practical direct/sarcasm/snark tuning.
-- FIX: Profile behavior now resets cleanly on >>detach all and >>flush.
-- IMPROVED: Fun/Fun Rewrite tone alignment is more consistent with profile settings.
-- IMPROVED: Response stability under mixed workflows is better than older builds.
+- BIG CHANGE: Vodka recall was refactored to be deterministic-first and less drift-prone.
+- FIX: Recall-mode answers now follow strict deterministic contracts (list / mention / mixed) instead of drifting into generic prose.
+- FIX: Follow-up recall turns like `Nothing else?` now resolve cleanly and deterministically.
+- IMPROVED: Mixed recall (`what did I promise + what software did I mention`) is cleaner and less noisy.
+- IMPROVED: Recall extraction reduced false positives from unrelated terms.
+- IMPROVED: Added a mixed-domain recall contract smoke gate to catch regressions early.
 
 ### What does `Profile | Sarc | Snark` mean?
 
