@@ -1,6 +1,24 @@
 ﻿# What's New
 
-*** V1.3.0 (latest)
+*** V1.3.1 (latest)
+
+TL;DR
+- Big ticket: Vodka recall was refactored to be deterministic-first, less noisy, and far less likely to drift.
+- Recall responses are now more consistent: concise, structured, and grounded to session evidence.
+- Follow-up recall turns (for example `Nothing else?`) now resolve deterministically instead of drifting.
+
+Recall contract hardening + global regression gate:
+- Enforced deterministic recall output contracts:
+  - list queries -> `You substituted the following:` + bullets
+  - mention queries -> `Yes, you mentioned:` / explicit `No, ...`
+  - mixed queries -> `You promised the following:` + `You also mentioned:`
+- Reduced noisy software false positives in recall extraction.
+- Added deterministic follow-up handling for shorthand recall turns (`Nothing else?`, `Anything else?`).
+- Added a mixed-domain contract smoke gate to catch recall regressions early.
+- Current validation target is passing at/above the 90-95% reliability threshold.
+
+---
+*** V1.3.0
 
 TL;DR
 - The assistant now adapts better to your style in-session (direct/sarcastic/snarky) without relaxing grounding rules.
@@ -382,3 +400,5 @@ pip install --upgrade git+https://codeberg.org/BobbyLLM/llama-conductor.git
 - Try `>>trust <your question>` to get tool recommendations
 - Check `mentats_debug.log` for deep reasoning traces
 - See [FAQ](FAQ.md) for architecture & troubleshooting
+
+

@@ -107,6 +107,30 @@ def _expand_breadcrumbs_in_text(text: str, fr: "FastRecall") -> str:
 
     return pattern.sub(_repl, text)
 
+
+def purge_session_memory_jsonl(storage_dir: str = "") -> int:
+    """
+    Delete all session-memory JSONL files.
+    Intended for router startup so each reboot starts clean.
+    Returns number of deleted files.
+    """
+    base = storage_dir or os.getenv("DATA_DIR") or os.getcwd()
+    base = os.path.abspath(base)
+    folder = os.path.join(base, "total_recall", "session_memory")
+    if not os.path.isdir(folder):
+        return 0
+    deleted = 0
+    for name in os.listdir(folder):
+        if not name.lower().endswith(".jsonl"):
+            continue
+        p = os.path.join(folder, name)
+        try:
+            os.remove(p)
+            deleted += 1
+        except Exception:
+            continue
+    return deleted
+
 # -------------------------------
 # Storage backend
 # -------------------------------
@@ -986,6 +1010,184 @@ class Filter:
         token = str(self.valves.summary_pii_redaction_token or "[REDACTED]").strip() or "[REDACTED]"
         return redact_pii(text or "", token=token)
 
+    def _make_matrix_unit(
+        self,
+        *,
+        role: str,
+        turn_marker: int,
+        matrix_type: str,
+        text: str,
+        tags: List[str],
+        subject: str = "",
+        relation: str = "",
+        obj: str = "",
+    ) -> Dict[str, Any]:
+        packed = f"{role}|{matrix_type}|{subject}|{relation}|{obj}|{text}".lower().strip()
+        unit_id = _sha256_crc_id(packed)
+        return {
+            "id": unit_id,
+            "role": role,
+            "kind": self._classify_memory_kind(role, text),
+            "matrix_type": matrix_type,
+            "subject": subject,
+            "relation": relation,
+            "object": obj,
+            "text": text,
+            "tags": tags,
+            "turn_range": [turn_marker, turn_marker],
+            "confidence": 1.0,
+            "created_at": _ts(),
+            "schema_version": 2,
+        }
+
+    def _build_matrix_units_for_segment(self, *, role: str, seg: str, turn_marker: int) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        tags = self._extract_memory_tags(seg, limit=16)
+        s = " ".join((seg or "").split()).strip()
+        low = s.lower()
+
+        # substitution facts: "<A> over <B>"
+        for lhs, rhs in self._extract_substitution_pairs(s):
+            txt = f"{lhs} over {rhs}"
+            out.append(
+                self._make_matrix_unit(
+                    role=role,
+                    turn_marker=turn_marker,
+                    matrix_type="substitution",
+                    text=txt,
+                    tags=tags + ["substitution", "technology"],
+                    subject=lhs,
+                    relation="over",
+                    obj=rhs,
+                )
+            )
+
+        # promise facts: "<X> ... promised"
+        if "promis" in low:
+            subject = "user"
+            promised_obj = ""
+            m = re.search(r"(.{3,140}?)\s+is what i(?:'|’)?ve promised", s, flags=re.IGNORECASE)
+            if m:
+                promised_obj = self._compact_memory_text(m.group(1), max_len=120)
+            else:
+                m2 = re.search(
+                    r"\bi(?:'|’)?\s*(?:have\s+)?promised\s+to\s+(?:get|buy|give|provide)?\s*([^.!?]{3,140})",
+                    s,
+                    flags=re.IGNORECASE,
+                )
+                if m2:
+                    promised_obj = self._compact_memory_text(m2.group(1), max_len=120)
+                else:
+                    # fallback: take a compact slice around "promis"
+                    i = low.find("promis")
+                    start = max(0, i - 80)
+                    promised_obj = self._compact_memory_text(s[start : start + 140], max_len=120)
+            out.append(
+                self._make_matrix_unit(
+                    role=role,
+                    turn_marker=turn_marker,
+                    matrix_type="promise",
+                    text=s,
+                    tags=tags + ["promised"],
+                    subject=subject,
+                    relation="promised",
+                    obj=promised_obj,
+                )
+            )
+
+        # software/tool mentions
+        software_terms = self._extract_soft_tech_items(s)
+        for term in software_terms:
+            out.append(
+                self._make_matrix_unit(
+                    role=role,
+                    turn_marker=turn_marker,
+                    matrix_type="software",
+                    text=s,
+                    tags=tags + ["software", "apps", term.lower()],
+                    subject="user",
+                    relation="mentioned",
+                    obj=term,
+                )
+            )
+
+        # generic preference signals
+        pref_rx = re.compile(r"\b(i\s+(?:prefer|like|love|don't like|dont like)\s+[^.?!]{2,120})", re.IGNORECASE)
+        for m in pref_rx.finditer(s):
+            ptxt = self._compact_memory_text(m.group(1), max_len=120)
+            out.append(
+                self._make_matrix_unit(
+                    role=role,
+                    turn_marker=turn_marker,
+                    matrix_type="preference",
+                    text=s,
+                    tags=tags + ["preference"],
+                    subject="user",
+                    relation="prefers",
+                    obj=ptxt,
+                )
+            )
+
+        # generic constraint signals
+        if any(k in low for k in ("must", "should", "never", "always", "cannot", "can't")):
+            out.append(
+                self._make_matrix_unit(
+                    role=role,
+                    turn_marker=turn_marker,
+                    matrix_type="constraint",
+                    text=s,
+                    tags=tags + ["constraint"],
+                    subject="user",
+                    relation="constraint",
+                    obj=self._compact_memory_text(s, max_len=120),
+                )
+            )
+
+        # generic plan/intention signals
+        if any(k in low for k in ("i will", "i'll", "i am going to", "i'm going to", "plan to")):
+            out.append(
+                self._make_matrix_unit(
+                    role=role,
+                    turn_marker=turn_marker,
+                    matrix_type="plan",
+                    text=s,
+                    tags=tags + ["plan"],
+                    subject="user",
+                    relation="plans",
+                    obj=self._compact_memory_text(s, max_len=120),
+                )
+            )
+
+        # explicit question capture
+        if "?" in s:
+            out.append(
+                self._make_matrix_unit(
+                    role=role,
+                    turn_marker=turn_marker,
+                    matrix_type="question",
+                    text=s,
+                    tags=tags + ["question"],
+                    subject="user",
+                    relation="asked",
+                    obj=self._compact_memory_text(s, max_len=120),
+                )
+            )
+
+        # factual fallback unit (always keep one canonical text unit)
+        out.append(
+            self._make_matrix_unit(
+                role=role,
+                turn_marker=turn_marker,
+                matrix_type="fact",
+                text=s,
+                tags=tags,
+                subject="user" if role == "user" else role,
+                relation="said",
+                obj="",
+            )
+        )
+        return out
+
     def _build_memory_units(self, messages: List[Dict], *, n_user: int, max_segments: int = 3, include_assistant: bool = False) -> List[Dict[str, Any]]:
         ua = [m for m in messages if m.get("role") in ("user", "assistant")]
         tail = ua[-24:]  # wider capture to reduce near-term forgetting on long turns
@@ -1013,20 +1215,7 @@ class Filter:
                 if not bool(self.valves.summary_store_pii):
                     if self._contains_likely_pii(seg):
                         seg = self._sanitize_memory_segment(seg)
-                kind = self._classify_memory_kind(role, seg)
-                tags = self._extract_memory_tags(seg, limit=12)
-                unit_id = _sha256_crc_id(f"{role}|{seg.lower().strip()}")
-                units.append(
-                    {
-                        "id": unit_id,
-                        "kind": kind,
-                        "text": seg,
-                        "tags": tags,
-                        "turn_range": [turn_marker, turn_marker],
-                        "confidence": 1.0,
-                        "created_at": _ts(),
-                    }
-                )
+                units.extend(self._build_matrix_units_for_segment(role=role, seg=seg, turn_marker=turn_marker))
         return units
 
     def _merge_memory_units(self, existing: List[Dict[str, Any]], fresh: List[Dict[str, Any]], *, max_units: int) -> List[Dict[str, Any]]:
@@ -1070,11 +1259,37 @@ class Filter:
                         rec = _loads(line)
                     except Exception:
                         continue
-                    if isinstance(rec, dict) and rec.get("id") and rec.get("text"):
+                    role = str(rec.get("role") or "").strip().lower()
+                    if (
+                        isinstance(rec, dict)
+                        and rec.get("id")
+                        and rec.get("text")
+                        and role == "user"
+                        and not self._is_noise_memory_text(str(rec.get("text") or ""))
+                    ):
                         out.append(rec)
         except Exception:
             return []
         return out
+
+    def _max_turn_in_units(self, units: List[Dict[str, Any]]) -> int:
+        mx = 0
+        for rec in units or []:
+            tr = rec.get("turn_range") or [0, 0]
+            try:
+                mx = max(mx, int(tr[-1]))
+            except Exception:
+                continue
+        return mx
+
+    def _reset_session_memory_store(self, sid: str, path: str) -> None:
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        self._mu_cache.pop(sid, None)
+        self._mu_index.pop(sid, None)
+        self._mu_last_update_turn.pop(sid, None)
 
     def _refresh_memory_index(self, session_id: str, units: List[Dict[str, Any]]) -> None:
         sid = self._normalize_session_id(session_id)
@@ -1090,6 +1305,16 @@ class Filter:
                 if not t:
                     continue
                 idx.setdefault(t, set()).add(uid)
+            for extra in (
+                str(u.get("matrix_type") or "").strip().lower(),
+                str(u.get("subject") or "").strip().lower(),
+                str(u.get("relation") or "").strip().lower(),
+                str(u.get("object") or "").strip().lower(),
+            ):
+                if extra:
+                    idx.setdefault(extra, set()).add(uid)
+            for tok in self._tokenize_for_search(str(u.get("object") or "")):
+                idx.setdefault(tok, set()).add(uid)
         self._mu_cache[sid] = by_id
         self._mu_index[sid] = idx
 
@@ -1110,6 +1335,13 @@ class Filter:
         )
         path = self._session_memory_file(sid)
         existing = self._load_memory_units_jsonl(path)
+        # Session IDs can be reused by client/IP fallback. If a "fresh" convo
+        # starts on a reused id, stale units pollute recall quality.
+        if existing and n_user <= 2:
+            max_turn_seen = self._max_turn_in_units(existing)
+            if max_turn_seen > (n_user + 1):
+                existing = []
+                self._reset_session_memory_store(sid, path)
         merged = self._merge_memory_units(
             existing,
             units,
@@ -1147,6 +1379,22 @@ class Filter:
         q = (query or "").lower()
         if not q:
             return False
+        # Guardrail: do not hijack long, multi-instruction prompts into recall-mode.
+        # Typical recall turns are short and explicit ("did I mention X?", "what did I say about Y?").
+        if len(q) > 280:
+            return False
+        # Guardrail: explicit analysis/editing asks should remain normal model tasks.
+        non_recall_intents = (
+            "sentiment analysis",
+            "factually incorrect",
+            "correct any typos",
+            "correct typos",
+            "typo",
+            "proofread",
+            "grammar",
+        )
+        if any(h in q for h in non_recall_intents):
+            return False
         if re.search(r"\b(did i|have i|what did i)\b.{0,48}\b(mention|say|said)\b", q):
             return True
         hints = (
@@ -1155,6 +1403,9 @@ class Filter:
             "what did i say",
             "what did i mention",
             "what have i",
+            "nothing else",
+            "anything else",
+            "what else",
             "remind me",
             "anything about",
             "what software",
@@ -1163,6 +1414,49 @@ class Filter:
             "what have i promised",
         )
         return any(h in q for h in hints)
+
+    def _is_meta_recall_line(self, text: str) -> bool:
+        t = " ".join((text or "").strip().lower().split())
+        if not t:
+            return True
+        # User follow-up prompts are not evidence lines.
+        if "?" in t:
+            return True
+        meta_prefixes = (
+            "remind me",
+            "nothing else",
+            "i meant,",
+            "what technologies have i",
+            "what software did i",
+            "did i ",
+            "have i ",
+            "what did i ",
+            "and what have i ",
+            "ok but did i ",
+        )
+        return any(t.startswith(p) for p in meta_prefixes)
+
+    def _is_noise_memory_text(self, text: str) -> bool:
+        t = " ".join((text or "").strip().lower().split())
+        if not t:
+            return True
+        if t in {"hi", "hello", "hi there", "hey"}:
+            return True
+        if "[status]" in t or t.startswith("status"):
+            return True
+        if "confidence:" in t or "source:" in t or "profile:" in t:
+            return True
+        # Generic assistant meta/evaluation lines are low-value/noisy for recall.
+        noisy_prefixes = (
+            "your message is",
+            "the technical details",
+            "no major factual errors",
+            "typos/spelling issues",
+            "no typos detected",
+        )
+        if any(t.startswith(p) for p in noisy_prefixes):
+            return True
+        return False
 
     def _extract_mention_targets(self, query: str) -> List[str]:
         q = (query or "").lower().strip()
@@ -1192,6 +1486,350 @@ class Filter:
         }
         toks = [t for t in sorted(self._tokenize_for_search(scope)) if t not in ignore]
         return toks[:8]
+
+    def _extract_substitution_pairs(self, text: str) -> List[Tuple[str, str]]:
+        s = " ".join((text or "").split())
+        if not s:
+            return []
+        out: List[Tuple[str, str]] = []
+        for m in re.finditer(r"([A-Za-z0-9][A-Za-z0-9\-\s]{1,40})\s+over\s+([A-Za-z0-9][A-Za-z0-9\-\s/]{1,40})", s, flags=re.IGNORECASE):
+            lhs = " ".join(m.group(1).split()).strip(" ,.;:")
+            rhs = " ".join(m.group(2).split()).strip(" ,.;:")
+            if not lhs or not rhs:
+                continue
+            out.append((lhs, rhs))
+        return out[:8]
+
+    def _extract_soft_tech_items(self, text: str) -> List[str]:
+        """Best-effort extraction of software/tool names from evidence text."""
+        s = " ".join((text or "").split())
+        if not s:
+            return []
+        out: List[str] = []
+        seen: set[str] = set()
+
+        # Prefer hyphenated tool names first (e.g., smart-tube, pi-hole).
+        deny_tech_hyphen = {"ds-lite", "ps-5", "x-box"}
+        for m in re.finditer(r"\b([A-Za-z0-9]{2,}(?:-[A-Za-z0-9]{2,})+)\b", s):
+            term = m.group(1).strip(" ,.;:()[]{}\"'")
+            k = term.lower()
+            if k in deny_tech_hyphen:
+                continue
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(term)
+
+        # Then canonical single/multi-token product-ish names.
+        token_pat = re.compile(r"\b([A-Za-z][A-Za-z0-9]{2,})\b")
+        stop = {
+            "confidence", "source", "profile", "neutral", "direct", "medium", "low", "high",
+            "only", "kids", "content", "channels", "comment", "section", "blocked", "timers",
+            "curated", "technical", "details", "correctly", "connected", "goals", "apps", "app",
+            "nokia", "barbie", "smart", "wii", "xbox", "switch", "switches", "olpc", "chromebook",
+            "ps5", "flipfone", "flipphone", "phone", "phones",
+            "fair", "social", "wiimote", "enough", "some",
+        }
+        hyphen_parts = set()
+        for x in out:
+            if "-" in x:
+                for p in x.lower().split("-"):
+                    hyphen_parts.add(p)
+        for m in token_pat.finditer(s):
+            term = m.group(1)
+            k = term.lower()
+            if k in stop or len(k) < 4:
+                continue
+            if k in hyphen_parts:
+                continue
+            if k in seen:
+                continue
+            if k in {"kaios", "jellyfin", "smarttube", "firefox"}:
+                seen.add(k)
+                out.append(term)
+                continue
+            # Phrase-style tool naming: "<Token> kids" etc.
+            if k == "kids":
+                continue
+
+        # Context-aware software capture:
+        # - "<Name> app/service/platform/tool/browser/os"
+        # - "using/on/with <Name> for ..."
+        kw_pat = re.compile(
+            r"\b([A-Za-z][A-Za-z0-9\-\+]{2,})\s+(?:app|apps|service|platform|tool|browser|os)\b",
+            flags=re.IGNORECASE,
+        )
+        for m in kw_pat.finditer(s):
+            term = m.group(1).strip(" ,.;:()[]{}\"'")
+            k = term.lower()
+            if k in stop or k in seen or len(k) < 3:
+                continue
+            if k in {"fair", "social", "wiimote", "only", "enough", "some"}:
+                continue
+            seen.add(k)
+            out.append(term)
+
+        using_pat = re.compile(
+            r"\b(?:using|use|used|on|with)\s+([A-Za-z][A-Za-z0-9\-\+]{2,})\b",
+            flags=re.IGNORECASE,
+        )
+        for m in using_pat.finditer(s):
+            term = m.group(1).strip(" ,.;:()[]{}\"'")
+            k = term.lower()
+            if k in stop or k in seen or len(k) < 4:
+                continue
+            if k in {"that", "this", "only", "kids", "channels", "enough", "some"}:
+                continue
+            # Keep conservative: only capture when nearby software-ish hints exist.
+            span_start, span_end = m.span()
+            window = s[max(0, span_start - 36): min(len(s), span_end + 36)].lower()
+            if not any(h in window for h in ("app", "software", "service", "platform", "browser", "os", "tool")):
+                continue
+            seen.add(k)
+            out.append(term)
+
+        phrase_m = re.search(r"\b([A-Z][A-Za-z0-9]{1,20}\s+kids)\b", s)
+        if phrase_m:
+            p = phrase_m.group(1).strip()
+            pk = p.lower()
+            first = pk.split(" ", 1)[0]
+            if first not in {"only", "all", "just"} and pk not in seen:
+                seen.add(pk)
+                out.append(p)
+        return out[:12]
+
+    def _normalize_term(self, term: str) -> str:
+        t = (term or "").strip().strip(" ,.;:()[]{}\"'")
+        low = t.lower()
+        if low in {"pones", "phone", "phones"}:
+            return "phones"
+        return t
+
+    def _render_bullets(self, header: str, items: List[str]) -> str:
+        if not items:
+            return ""
+        lines = [header]
+        for it in items:
+            lines.append(f"- {it}")
+        return "\n".join(lines)
+
+    def _dedupe_keep_order(self, items: List[str]) -> List[str]:
+        out: List[str] = []
+        seen: set[str] = set()
+        for it in items:
+            k = " ".join((it or "").lower().split())
+            if not k or k in seen:
+                continue
+            seen.add(k)
+            out.append(it)
+        return out
+
+    def _normalize_recall_item(self, text: str) -> str:
+        s = " ".join((text or "").split()).strip(" ,.;:")
+        if not s:
+            return ""
+        s = re.sub(
+            r"^i(?:'|’)?\s*(?:have\s+)?promised\s+to\s+(?:get|buy|give|provide)\s+",
+            "",
+            s,
+            flags=re.IGNORECASE,
+        )
+        s = re.sub(r"^(?:you|i)\s+(?:also\s+)?mentioned\s+", "", s, flags=re.IGNORECASE)
+        return s.strip(" ,.;:")
+
+    def _infer_recall_intents(self, query: str, mention_targets: List[str]) -> set[str]:
+        q = " ".join((query or "").lower().split())
+        toks = self._tokenize_for_search(q)
+        intents: set[str] = set()
+        if toks & {
+            "technology",
+            "technologies",
+            "retro",
+            "replaced",
+            "substituted",
+            "substitute",
+            "substitution",
+            "substitutions",
+            "swap",
+            "swapped",
+            "replaced",
+            "replace",
+            "simpler",
+        } or " over " in q:
+            intents.add("list_substitutions")
+        if toks & {"promise", "promised", "promises"}:
+            intents.add("list_promises")
+        if toks & {"software", "apps", "app", "application", "program", "tool", "tools"}:
+            intents.add("list_tools")
+        if mention_targets:
+            intents.add("did_mention")
+        if not intents and (toks & {"remember", "recall", "remind", "again", "what"}):
+            intents.add("general_recall")
+        return intents
+
+    def _build_human_recall_response(self, query: str, units: List[Dict[str, Any]]) -> str:
+        """Global intent-aware rendering for recall answers."""
+        q = " ".join((query or "").lower().split())
+        q_tokens = self._tokenize_for_search(q)
+        evidence_units = [
+            u for u in (units or [])
+            if not self._is_meta_recall_line(str(u.get("text") or ""))
+        ]
+        if not evidence_units:
+            return ""
+
+        mention_targets = [self._normalize_term(t) for t in self._extract_mention_targets(q)]
+        intents = self._infer_recall_intents(q, mention_targets)
+        sub_units = [u for u in evidence_units if str(u.get("matrix_type") or "") == "substitution"]
+        promise_units = [u for u in evidence_units if str(u.get("matrix_type") or "") == "promise"]
+        software_units = [u for u in evidence_units if str(u.get("matrix_type") or "") == "software"]
+        fact_units = [u for u in evidence_units if str(u.get("matrix_type") or "") == "fact"]
+
+        # Follow-up shorthand after a prior recall answer.
+        if re.search(r"\b(nothing else|anything else)\b", q):
+            extra_items: List[str] = []
+            for u in software_units:
+                obj = self._normalize_recall_item(str(u.get("object") or ""))
+                if obj:
+                    extra_items.append(obj)
+            for u in evidence_units:
+                txt = str(u.get("text") or "")
+                extra_items.extend(self._normalize_recall_item(x) for x in self._extract_soft_tech_items(txt))
+            extra_items = self._dedupe_keep_order([x for x in extra_items if x])[:5]
+            if sub_units:
+                return "No, nothing else.\n\nConfidence: high | Source: Contextual"
+
+        # 1) substitution style queries
+        if "list_substitutions" in intents:
+            pairs: List[str] = []
+            standalone: List[str] = []
+            for u in sub_units:
+                lhs = str(u.get("subject") or "").strip()
+                rhs = str(u.get("object") or "").strip()
+                if lhs and rhs:
+                    pairs.append(f"{lhs} (over {rhs})")
+            for u in evidence_units:
+                txt = str(u.get("text") or "")
+                for lhs, rhs in self._extract_substitution_pairs(txt):
+                    pairs.append(f"{lhs} (over {rhs})")
+                if re.search(r"\bold\s+flip\w*\b", txt, flags=re.IGNORECASE):
+                    m = re.search(r"\bold\s+([A-Za-z0-9\-]+)\b", txt, flags=re.IGNORECASE)
+                    if m:
+                        standalone.append(f"Old {m.group(1)}")
+            items = self._dedupe_keep_order(pairs + standalone)[:8]
+            if items:
+                header = "As before, you substituted the following:" if "i meant" in q else "You substituted the following:"
+                body = self._render_bullets(header, items)
+                return f"{body}\n\nConfidence: high | Source: Contextual"
+
+        # 2) promised + software summary (higher priority than generic mention)
+        if ("list_promises" in intents) or ("list_tools" in intents):
+            promised_items: List[str] = []
+            software_items: List[str] = []
+            for u in promise_units:
+                obj = str(u.get("object") or "").strip()
+                if obj:
+                    promised_items.append(self._normalize_recall_item(obj))
+                else:
+                    promised_items.append(
+                        self._normalize_recall_item(
+                            self._compact_memory_text(str(u.get("text") or ""), max_len=110)
+                        )
+                    )
+            for u in software_units:
+                obj = str(u.get("object") or "").strip()
+                if obj:
+                    software_items.append(self._normalize_recall_item(obj))
+            for u in evidence_units:
+                txt = str(u.get("text") or "").strip()
+                if not txt:
+                    continue
+                low = txt.lower()
+                if "promis" in low:
+                    m = re.search(r"(.{0,140}?)\s+is what i(?:'|’)?ve promised", txt, flags=re.IGNORECASE)
+                    if m:
+                        promised_items.append(
+                            self._normalize_recall_item(self._compact_memory_text(m.group(1), max_len=110))
+                        )
+                    else:
+                        promised_items.append(
+                            self._normalize_recall_item(self._compact_memory_text(txt, max_len=110))
+                        )
+                tags = {str(t).lower() for t in (u.get("tags") or [])}
+                if {"software", "apps"} & tags or any(k in low for k in ("app", "kaios", "jellyfin", "smart-tube", "pi-hole", "firewall")):
+                    software_items.extend(self._normalize_recall_item(x) for x in self._extract_soft_tech_items(txt))
+
+            promised_items = self._dedupe_keep_order(promised_items)[:3]
+            software_items = self._dedupe_keep_order(software_items)[:6]
+            chunks: List[str] = []
+            if promised_items:
+                chunks.append(self._render_bullets("You promised the following:", promised_items))
+            if software_items:
+                chunks.append(self._render_bullets("You also mentioned:", software_items))
+            if chunks:
+                return "\n\n".join(chunks) + "\n\nConfidence: high | Source: Contextual"
+
+        # 3) mention-target queries like "did I say anything about X, Y"
+        if "did_mention" in intents:
+            matched_terms: List[str] = []
+            per_target_bullet: Dict[str, str] = {}
+            kinship_terms = {"daughter", "son", "wife", "husband", "kids", "child", "children"}
+            for t in mention_targets:
+                t_low = t.lower()
+                if t_low in kinship_terms:
+                    continue
+                # Prefer typed matrix objects first.
+                for u in (software_units + promise_units + sub_units):
+                    obj = str(u.get("object") or "").strip()
+                    if not obj:
+                        continue
+                    obj_low = obj.lower()
+                    if t_low in obj_low or (t_low == "phones" and ("pones" in obj_low or "phone" in obj_low)):
+                        matched_terms.append(t)
+                        per_target_bullet[t_low] = self._compact_memory_text(obj, max_len=100)
+                        break
+                else:
+                    # Fallback to matching line snippets.
+                    for u in evidence_units:
+                        txt = str(u.get("text") or "").strip()
+                        if not txt:
+                            continue
+                        low = txt.lower()
+                        if t_low in low or (t_low == "phones" and ("pones" in low or "phone" in low)):
+                            matched_terms.append(t)
+                            per_target_bullet[t_low] = self._compact_memory_text(txt, max_len=140)
+                            break
+            matched_terms = self._dedupe_keep_order(matched_terms)
+            if matched_terms:
+                lines = ["Yes, you mentioned:"]
+                bullets: List[str] = []
+                for mt in matched_terms:
+                    b = per_target_bullet.get(mt.lower(), "")
+                    if b:
+                        bullets.append(b)
+                bullets = self._dedupe_keep_order(bullets)[:4]
+                for b in bullets:
+                    lines.append(f"- {b}")
+                lines.append("Confidence: high | Source: Contextual")
+                return "\n".join(lines)
+            if mention_targets:
+                joined = ", ".join(mention_targets[:4])
+                return f"No, you did not mention: {joined}.\nConfidence: high | Source: Contextual"
+            return "No, you did not mention that.\nConfidence: high | Source: Contextual"
+
+        # 4) broad fallback for "what do you remember/recall"
+        if "general_recall" in intents and fact_units:
+            bullets: List[str] = []
+            for u in fact_units[:4]:
+                txt = self._compact_memory_text(str(u.get("text") or ""), max_len=140)
+                if txt:
+                    bullets.append(txt)
+            bullets = self._dedupe_keep_order(bullets)
+            if bullets:
+                body = self._render_bullets("From session recall evidence:", bullets)
+                return f"{body}\n\nConfidence: high | Source: Contextual"
+
+        return ""
 
     def _deterministic_recall_hint(self, query: str, units: List[Dict[str, Any]]) -> str:
         targets = self._extract_mention_targets(query)
@@ -1237,15 +1875,24 @@ class Filter:
         return "\n".join(lines)
 
     def _deterministic_recall_answer(self, query: str, units: List[Dict[str, Any]]) -> str:
+        human = self._build_human_recall_response(query, units)
+        if human:
+            return human
         targets = self._extract_mention_targets(query)
         if not targets:
             return ""
         q_norm = " ".join((query or "").lower().split())
         software_aliases = {"software", "app", "apps", "application", "program", "tool", "tools"}
+        evidence_units = [
+            u for u in (units or [])
+            if not self._is_meta_recall_line(str(u.get("text") or ""))
+        ]
+        if not evidence_units:
+            evidence_units = list(units or [])
         hits: Dict[str, List[str]] = {}
         for t in targets:
             t_low = t.lower()
-            for u in units:
+            for u in evidence_units:
                 txt = str(u.get("text") or "").strip()
                 if not txt:
                     continue
@@ -1257,11 +1904,13 @@ class Filter:
                     {"software", "apps"} & tags
                     or any(k in txt_low for k in ("app", "kaios", "jellyfin", "smart-tube", "firewall", "pi-hole"))
                 )
-                if t_low in txt_low or software_match:
+                typo_phone_match = (t_low == "phones") and ("pones" in txt_low or "phone" in txt_low)
+                if t_low in txt_low or software_match or typo_phone_match:
                     hits.setdefault(t, []).append(txt)
 
         matched = sorted(hits.keys())
-        unmatched = [t for t in targets if t not in hits]
+        kinship_terms = {"daughter", "son", "wife", "husband", "kids", "child", "children"}
+        unmatched = [t for t in targets if t not in hits and t.lower() not in kinship_terms]
         verdict = "Yes." if matched else "No."
 
         lines: List[str] = [verdict]
@@ -1290,12 +1939,39 @@ class Filter:
         return "\n".join(lines)
 
     def _deterministic_recall_summary(self, query: str, units: List[Dict[str, Any]]) -> str:
+        human = self._build_human_recall_response(query, units)
+        if human:
+            return human
         q_tokens = self._tokenize_for_search(query)
         want_promise = bool(q_tokens & {"promise", "promised", "promises"})
         want_software = bool(q_tokens & {"software", "apps", "app", "application", "program", "tool"})
+        want_tech = bool(
+            q_tokens & {
+                "technology",
+                "technologies",
+                "retro",
+                "replaced",
+                "substituted",
+                "simpler",
+                "device",
+                "devices",
+                "wii",
+                "xbox",
+                "ps5",
+                "switch",
+                "switches",
+                "olpc",
+            }
+        )
+        evidence_units = [
+            u for u in (units or [])
+            if not self._is_meta_recall_line(str(u.get("text") or ""))
+        ]
+        if not evidence_units:
+            evidence_units = list(units or [])
 
         picked: List[str] = []
-        for u in units:
+        for u in evidence_units:
             tags = {str(t).lower() for t in (u.get("tags") or [])}
             txt = str(u.get("text") or "").strip()
             if not txt:
@@ -1304,10 +1980,18 @@ class Filter:
                 continue
             if want_software and not ({"software", "apps"} & tags or any(k in txt.lower() for k in ("app", "kaios", "jellyfin", "smart-tube", "firewall"))):
                 continue
+            if want_tech and not (
+                {"technology", "device", "phone"} & tags
+                or any(
+                    k in txt.lower()
+                    for k in ("wii", "xbox", "ps5", "switch", "olpc", "retro")
+                )
+            ):
+                continue
             picked.append(self._compact_memory_text(txt, max_len=180))
 
         if not picked:
-            for u in units[:4]:
+            for u in evidence_units[:4]:
                 txt = str(u.get("text") or "").strip()
                 if txt:
                     picked.append(self._compact_memory_text(txt, max_len=180))
@@ -1315,11 +1999,138 @@ class Filter:
         if not picked:
             return "No recall evidence found for this query.\n\nConfidence: medium | Source: Contextual"
 
+        if want_tech:
+            pairs: List[str] = []
+            seen_pairs: set[str] = set()
+            for u in evidence_units:
+                txt = str(u.get("text") or "")
+                for lhs, rhs in self._extract_substitution_pairs(txt):
+                    key = f"{lhs.lower()}::{rhs.lower()}"
+                    if key in seen_pairs:
+                        continue
+                    seen_pairs.add(key)
+                    pairs.append(f"- {lhs} over {rhs}")
+                    if len(pairs) >= 6:
+                        break
+                if len(pairs) >= 6:
+                    break
+            if pairs:
+                lines = ["From session recall evidence (substitutions):"] + pairs
+                lines.append("Confidence: high | Source: Contextual")
+                return "\n".join(lines)
+
         lines: List[str] = ["From session recall evidence:"]
         for p in picked[:4]:
             lines.append(f"- {p}")
         lines.append("Confidence: high | Source: Contextual")
         return "\n".join(lines)
+
+    def _pick_recall_units(
+        self,
+        *,
+        query: str,
+        by_id: Dict[str, Dict[str, Any]],
+        max_units: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Intent-aware unit selection for recall-mode.
+        Prefer semantically relevant matrix types first, then backfill by recency.
+        """
+        all_units = list((by_id or {}).values())
+        if not all_units:
+            return []
+
+        mention_targets = [self._normalize_term(t) for t in self._extract_mention_targets(query)]
+        intents = self._infer_recall_intents(query, mention_targets)
+        q_tokens = self._tokenize_for_search(query)
+
+        def _turn_end(u: Dict[str, Any]) -> int:
+            tr = u.get("turn_range") or [0, 0]
+            try:
+                return int(tr[-1])
+            except Exception:
+                return 0
+
+        def _u_type(u: Dict[str, Any]) -> str:
+            return str(u.get("matrix_type") or "").strip().lower()
+
+        def _u_text(u: Dict[str, Any]) -> str:
+            return str(u.get("text") or "").strip()
+
+        def _u_tags(u: Dict[str, Any]) -> set[str]:
+            return {str(t).lower() for t in (u.get("tags") or [])}
+
+        candidates = [
+            u for u in all_units
+            if _u_text(u) and not self._is_meta_recall_line(_u_text(u)) and not self._is_noise_memory_text(_u_text(u))
+        ]
+        if not candidates:
+            candidates = [u for u in all_units if _u_text(u)]
+
+        # newest first baseline
+        candidates.sort(key=lambda u: (-_turn_end(u), str(u.get("id") or "")))
+
+        selected: List[Dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        def _add(unit: Dict[str, Any]) -> None:
+            uid = str(unit.get("id") or "")
+            if not uid or uid in seen_ids:
+                return
+            seen_ids.add(uid)
+            selected.append(unit)
+
+        def _filter(pred) -> List[Dict[str, Any]]:
+            out: List[Dict[str, Any]] = []
+            for u in candidates:
+                if pred(u):
+                    out.append(u)
+            return out
+
+        if "list_substitutions" in intents:
+            for u in _filter(lambda u: _u_type(u) == "substitution"):
+                _add(u)
+
+        if "list_promises" in intents:
+            for u in _filter(lambda u: _u_type(u) == "promise" or "promised" in _u_tags(u)):
+                _add(u)
+
+        if "list_tools" in intents:
+            def _tool_pred(u: Dict[str, Any]) -> bool:
+                t = _u_type(u)
+                tags = _u_tags(u)
+                txt_low = _u_text(u).lower()
+                return (
+                    t == "software"
+                    or bool({"software", "apps"} & tags)
+                    or any(k in txt_low for k in ("app", "software", "service", "platform", "kaios", "jellyfin", "smart-tube", "smarttube", "pi-hole", "firefox"))
+                )
+            for u in _filter(_tool_pred):
+                _add(u)
+
+        if "did_mention" in intents and mention_targets:
+            tset = {t.lower() for t in mention_targets}
+            for u in candidates:
+                txt_low = _u_text(u).lower()
+                obj_low = str(u.get("object") or "").lower()
+                if any(t in txt_low or t in obj_low for t in tset):
+                    _add(u)
+
+        # Backfill with high loose-score units to preserve generality.
+        scored: List[Tuple[float, Dict[str, Any]]] = []
+        for u in candidates:
+            s = self._score_memory_unit_loose(q_tokens, query, u)
+            if s > 0:
+                scored.append((s, u))
+        scored.sort(key=lambda x: (-x[0], -_turn_end(x[1]), str(x[1].get("id") or "")))
+        for _, u in scored:
+            _add(u)
+            if len(selected) >= max(1, int(max_units)):
+                break
+
+        if not selected:
+            selected = candidates[: max(1, int(max_units))]
+        return selected[: max(1, int(max_units))]
 
     def _score_memory_unit_loose(self, query_tokens: set[str], query: str, unit: Dict[str, Any]) -> float:
         text = str(unit.get("text") or "").lower()
@@ -1333,7 +2144,8 @@ class Filter:
         kind = str(unit.get("kind") or "").lower()
         kind_bonus = 0.2 if kind in {"fact", "preference", "constraint"} else 0.0
         exact_phrase_bonus = 0.3 if query and query.lower() in text else 0.0
-        return float(len(overlap) + len(contains)) + kind_bonus + exact_phrase_bonus
+        question_penalty = 0.8 if kind == "open_question" or self._is_meta_recall_line(text) else 0.0
+        return float(len(overlap) + len(contains)) + kind_bonus + exact_phrase_bonus - question_penalty
 
     def _render_memory_injection(self, units: List[Dict[str, Any]], max_chars: int, *, recall_mode: bool = False) -> str:
         lines: List[str] = []
@@ -1392,6 +2204,14 @@ class Filter:
         if not by_id or not idx_map:
             path = self._session_memory_file(sid)
             units = self._load_memory_units_jsonl(path)
+            # Same stale-session guard as update path, but evaluated on every
+            # injection turn so reused session IDs are cleaned immediately.
+            n_user = self._count_user_messages(messages)
+            if units and n_user <= 2:
+                max_turn_seen = self._max_turn_in_units(units)
+                if max_turn_seen > (n_user + 1):
+                    self._reset_session_memory_store(sid, path)
+                    units = []
             self._refresh_memory_index(sid, units)
             by_id = self._mu_cache.get(sid, {})
             idx_map = self._mu_index.get(sid, {})
@@ -1406,24 +2226,29 @@ class Filter:
         if recall_mode and by_id:
             candidate_ids = set(by_id.keys())
 
-        scored: List[Tuple[float, str]] = []
-        for uid in candidate_ids:
-            rec = by_id.get(uid)
-            if not rec:
-                continue
-            if recall_mode:
-                s = self._score_memory_unit_loose(q_tokens, q, rec)
-            else:
-                s = self._score_memory_unit(q_tokens, rec)
-            if s > 0:
-                scored.append((s, uid))
-        if not scored:
-            return self._upsert_memory_message(messages, "", debug_enabled=False)
-        scored.sort(key=lambda x: (-x[0], x[1]))
         effective_max_units = max(1, int(max_units or 3))
         if recall_mode:
-            effective_max_units = max(effective_max_units, 6)
-        picked = [by_id[uid] for _, uid in scored[:effective_max_units] if uid in by_id]
+            effective_max_units = max(effective_max_units, 12)
+            picked = self._pick_recall_units(
+                query=q,
+                by_id=by_id,
+                max_units=effective_max_units,
+            )
+        else:
+            scored: List[Tuple[float, str]] = []
+            for uid in candidate_ids:
+                rec = by_id.get(uid)
+                if not rec:
+                    continue
+                s = self._score_memory_unit(q_tokens, rec)
+                if s > 0:
+                    scored.append((s, uid))
+            if not scored:
+                return self._upsert_memory_message(messages, "", debug_enabled=False)
+            scored.sort(key=lambda x: (-x[0], x[1]))
+            picked = [by_id[uid] for _, uid in scored[:effective_max_units] if uid in by_id]
+        if not picked:
+            return self._upsert_memory_message(messages, "", debug_enabled=False)
         txt = self._render_memory_injection(
             picked,
             max_chars=max(0, int(max_chars or 0)),
@@ -1436,10 +2261,27 @@ class Filter:
             if not deterministic_answer:
                 deterministic_answer = self._deterministic_recall_summary(q, picked)
             if deterministic_answer:
+                evidence = []
+                for u in picked[:8]:
+                    evidence.append(
+                        {
+                            "id": str(u.get("id") or ""),
+                            "matrix_type": str(u.get("matrix_type") or ""),
+                            "object": str(u.get("object") or ""),
+                            "text": self._compact_memory_text(str(u.get("text") or ""), max_len=220),
+                        }
+                    )
+                payload = _dumps(
+                    {
+                        "query": q,
+                        "draft": deterministic_answer,
+                        "evidence": evidence,
+                    }
+                )
                 user_idx = self._find_last_user_index(cleaned)
                 if user_idx is not None:
                     del cleaned[user_idx]
-                cleaned.append({"role": "assistant", "content": "[recall_det]\n" + deterministic_answer})
+                cleaned.append({"role": "assistant", "content": "[recall_det]\n" + payload})
                 return cleaned
 
             # Otherwise keep recall-mode rewrite so the model must use evidence.

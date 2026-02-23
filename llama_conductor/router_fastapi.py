@@ -54,9 +54,10 @@ from .interaction_profile import (
     update_profile_from_user_turn,
 )
 from .privacy_utils import safe_preview, short_hash
+from .upstream_watchdog import start_watchdog, stop_watchdog
 
 # Required modules
-from .vodka_filter import Filter as VodkaFilter
+from .vodka_filter import Filter as VodkaFilter, purge_session_memory_jsonl
 from .serious import run_serious
 
 # Optional modules (feature-detected)
@@ -353,10 +354,173 @@ _SERIOUS_TASK_FORWARD_FALLBACK = (
     "Understood. No more meta. Give me the exact task and desired output format, and I will answer directly."
 )
 
+_RECALL_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-']*")
+_RECALL_STOPWORDS = {
+    "the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "with", "at", "by",
+    "is", "are", "was", "were", "be", "been", "being", "it", "this", "that", "these", "those",
+    "what", "which", "who", "whom", "whose", "when", "where", "why", "how", "do", "does", "did",
+    "can", "could", "should", "would", "from", "about", "tell", "me", "more", "all", "any",
+    "you", "your", "i", "we", "they", "them", "he", "she", "his", "her", "their", "our",
+    "again", "point", "form", "fine", "yes", "no", "not", "mentioned", "mention",
+}
+
 
 def _quote_query_tokens(text: str) -> set[str]:
     toks = {m.group(0).lower() for m in _QUOTE_TOKEN_RE.finditer(text or "")}
     return {t for t in toks if len(t) > 2 and t not in _QUOTE_STOPWORDS}
+
+
+def _parse_recall_det_payload(text: str) -> tuple[str, str, List[Dict[str, str]], bool]:
+    """Parse recall payload. Returns (draft, query, evidence, parsed_payload)."""
+    stripped = re.sub(r"^\s*\[recall_det\]\s*", "", str(text or ""), count=1, flags=re.IGNORECASE).strip()
+    if not stripped:
+        return "", "", [], False
+    try:
+        obj = json.loads(stripped)
+    except Exception:
+        # Backward-compatible path: old payload was raw draft text.
+        return stripped, "", [], False
+    if not isinstance(obj, dict):
+        return stripped, "", [], False
+    draft = str(obj.get("draft") or "").strip()
+    query = str(obj.get("query") or "").strip()
+    raw_evidence = obj.get("evidence", [])
+    evidence: List[Dict[str, str]] = []
+    if isinstance(raw_evidence, list):
+        for entry in raw_evidence[:16]:
+            if not isinstance(entry, dict):
+                continue
+            ev_id = str(entry.get("id") or "").strip()
+            ev_type = str(entry.get("matrix_type") or "").strip()
+            ev_obj = str(entry.get("object") or "").strip()
+            ev_text = str(entry.get("text") or "").strip()
+            if not (ev_id or ev_text):
+                continue
+            evidence.append(
+                {
+                    "id": ev_id,
+                    "matrix_type": ev_type,
+                    "object": ev_obj,
+                    "text": ev_text,
+                }
+            )
+    return draft, query, evidence, True
+
+
+def _should_skip_semantic_recall(draft: str) -> bool:
+    d = str(draft or "").strip().lower()
+    if not d:
+        return True
+    keep_prefixes = (
+        "you substituted the following:",
+        "technologies replaced with simpler",
+        "you promised the following:",
+        "you also mentioned:",
+        "yes.\n-",
+        "no.\n",
+    )
+    return any(d.startswith(p) for p in keep_prefixes)
+
+
+def _recall_sig_tokens(text: str) -> set[str]:
+    toks = {m.group(0).lower() for m in _RECALL_TOKEN_RE.finditer(str(text or ""))}
+    out = set()
+    for tok in toks:
+        if len(tok) < 4:
+            continue
+        if tok.isdigit():
+            continue
+        if tok in _RECALL_STOPWORDS:
+            continue
+        out.add(tok)
+    return out
+
+
+def _recall_answer_is_grounded(answer: str, query: str, evidence: List[Dict[str, str]]) -> bool:
+    """
+    Conservative heuristic: reject semantic answers that introduce too many
+    out-of-evidence significant terms. This keeps fail-safe behavior generic.
+    """
+    ans = str(answer or "").strip()
+    if not ans:
+        return False
+    evidence_blob = " ".join(
+        f"{e.get('id','')} {e.get('matrix_type','')} {e.get('object','')} {e.get('text','')}"
+        for e in (evidence or [])
+    )
+    allowed = _recall_sig_tokens(evidence_blob) | _recall_sig_tokens(query)
+    answer_terms = _recall_sig_tokens(ans)
+    if not answer_terms:
+        return True
+    unknown = sorted(t for t in answer_terms if t not in allowed)
+    max_ratio = float(cfg_get("recall.semantic_unknown_ratio_max", 0.28))
+    unknown_ratio = len(unknown) / max(1, len(answer_terms))
+    if len(answer_terms) <= 4 and len(unknown) >= 1:
+        return False
+    if len(unknown) >= 4 and unknown_ratio > max_ratio:
+        return False
+    return True
+
+
+def _synthesize_recall_answer(*, draft: str, query: str, evidence: List[Dict[str, str]]) -> str:
+    """
+    LLM formatting layer for recall answers, grounded to deterministic evidence.
+    Falls back to deterministic draft on any uncertainty.
+    """
+    d = str(draft or "").strip()
+    if not d:
+        return ""
+    if _should_skip_semantic_recall(d):
+        return d
+    if not evidence:
+        return d
+
+    max_tokens = int(cfg_get("recall.semantic_max_tokens", 260))
+    temperature = float(cfg_get("recall.semantic_temperature", 0.1))
+    top_p = float(cfg_get("recall.semantic_top_p", 0.9))
+    role = str(cfg_get("recall.semantic_role", "thinker") or "thinker")
+
+    ev_lines: List[str] = []
+    for e in evidence[:10]:
+        eid = str(e.get("id") or "").strip() or "E?"
+        mt = str(e.get("matrix_type") or "").strip()
+        obj = str(e.get("object") or "").strip()
+        txt = str(e.get("text") or "").strip()
+        meta = " | ".join(x for x in [mt, obj] if x)
+        prefix = f"- [{eid}]"
+        if meta:
+            prefix += f" ({meta})"
+        ev_lines.append(f"{prefix} {txt}".rstrip())
+    evidence_block = "\n".join(ev_lines)
+
+    prompt = (
+        "You are a strict recall formatter.\n"
+        "Rewrite the deterministic draft into a concise, human-readable answer.\n"
+        "Grounding rules:\n"
+        "- Use only the facts from EVIDENCE and DRAFT.\n"
+        "- Do not add new entities, products, promises, or tools.\n"
+        "- Preserve yes/no verdicts.\n"
+        "- Keep answer compact and direct.\n"
+        "- If uncertain, keep the draft wording.\n"
+        "- Output only final answer text.\n\n"
+        f"QUESTION:\n{query}\n\n"
+        f"DRAFT:\n{d}\n\n"
+        f"EVIDENCE:\n{evidence_block}\n"
+    )
+    out = call_model_prompt(
+        role=role,
+        prompt=prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+    ).strip()
+    if not out:
+        return d
+    if out.startswith("[router error:") or out.startswith("[model '"):
+        return d
+    if not _recall_answer_is_grounded(out, query, evidence):
+        return d
+    return out
 
 
 def _scratchpad_quote_lines(
@@ -675,6 +839,68 @@ def _strip_profile_footer_lines(text: str) -> str:
     return "\n".join(collapsed).strip()
 
 
+def _strip_irrelevant_proofread_tail(text: str, user_text: str) -> str:
+    """
+    Remove boilerplate proofreading tails that sometimes leak into normal serious replies.
+    Keep this narrow to avoid altering intentional proofreading outputs.
+    """
+    t = str(text or "").strip()
+    u = " ".join(str(user_text or "").lower().split())
+    if not t:
+        return t
+    asks_proofread = any(
+        k in u for k in (
+            "typo", "typos", "grammar", "proofread", "spelling", "factually incorrect", "sentiment analysis"
+        )
+    )
+    if asks_proofread:
+        return t
+    lines: List[str] = []
+    for ln in t.splitlines():
+        low = " ".join((ln or "").lower().split())
+        if not low:
+            lines.append("")
+            continue
+        if "no typos were identified" in low:
+            continue
+        if "sentence structure is clear and grammatically sound" in low:
+            continue
+        lines.append(ln)
+    out = "\n".join(lines).strip()
+    # Clean accidental duplicated punctuation after removals.
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return out or t
+
+
+def _serious_max_tokens_for_query(user_text: str) -> int:
+    base = int(cfg_get("serious.max_tokens", 384))
+    u = " ".join(str(user_text or "").lower().split())
+    long_proofread = (
+        len(u) >= 700
+        and any(k in u for k in ("sentiment analysis", "factually incorrect", "correct any typos", "proofread", "grammar"))
+    )
+    if long_proofread:
+        return max(base, 640)
+    return base
+
+
+def _normalize_agreement_ack_tense(text: str, user_text: str) -> str:
+    """
+    Keep short acknowledgement turns in present tense where user is affirming
+    a current perspective ("fair point", "I can see your perspective").
+    """
+    t = str(text or "")
+    u = " ".join(str(user_text or "").lower().split())
+    if "?" in u:
+        return t
+    if not any(k in u for k in ("fair point", "i can see your perspective")):
+        return t
+    t = re.sub(r"\bYour statement was factually correct\b", "Your statement is factually correct", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bwas valid and well-phrased\b", "is valid and well-phrased", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bwas a core design principle\b", "is a core design principle", t, flags=re.IGNORECASE)
+    return t
+
+
 def _append_profile_footer(*, text: str, state: SessionState, user_text: str) -> str:
     """Append compact profile footer line, preserving deterministic confidence/source footer."""
     if not bool(cfg_get("footer.profile.enabled", True)):
@@ -756,6 +982,10 @@ def _finalize_chat_response(
             text = _enforce_fun_antiparrot(text, user_text)
         except Exception:
             pass
+
+    if mode == "serious":
+        text = _strip_irrelevant_proofread_tail(text, user_text)
+        text = _normalize_agreement_ack_tense(text, user_text)
 
     if mode == "serious":
         try:
@@ -937,6 +1167,28 @@ async def _chat_exception_guard(request: Request, call_next):
         return JSONResponse({"ok": False, "error": text}, status_code=500)
 
 
+@app.on_event("startup")
+async def _startup_watchdog() -> None:
+    try:
+        base = str(cfg_get("vodka.storage_dir", "") or "").strip()
+        purged = purge_session_memory_jsonl(base)
+        _dbg(f"[DEBUG] startup session-memory purge deleted={purged}")
+    except Exception:
+        pass
+    try:
+        start_watchdog()
+    except Exception:
+        pass
+
+
+@app.on_event("shutdown")
+async def _shutdown_watchdog() -> None:
+    try:
+        stop_watchdog()
+    except Exception:
+        pass
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "version": __version__}
@@ -1030,7 +1282,8 @@ async def v1_chat_completions(req: Request):
         return "Chat Summary"
 
     if _is_openwebui_title_task(user_text_raw):
-        if ROUTER_DEBUG:
+        title_debug = bool(cfg_get("router.debug", False))
+        if title_debug:
             _dbg("[DEBUG] openwebui title task bypass")
         title_json = json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
         return JSONResponse(_make_openai_response(title_json))
@@ -1354,7 +1607,18 @@ async def v1_chat_completions(req: Request):
             # This is a Vodka hard command answer - return it directly
             out_text = last_msg_content
             if "[recall_det]" in out_text.lower():
-                out_text = re.sub(r"^\s*\[recall_det\]\s*", "", out_text, count=1, flags=re.IGNORECASE).strip()
+                draft, recall_query, evidence, is_payload = _parse_recall_det_payload(out_text)
+                semantic_enabled = bool(cfg_get("recall.semantic_layer_enabled", True))
+                if is_payload and semantic_enabled:
+                    out_text = _synthesize_recall_answer(
+                        draft=draft,
+                        query=recall_query,
+                        evidence=evidence,
+                    )
+                else:
+                    out_text = draft
+                if not out_text:
+                    out_text = re.sub(r"^\s*\[recall_det\]\s*", "", last_msg_content, count=1, flags=re.IGNORECASE).strip()
             if stream:
                 return StreamingResponse(_stream_sse(out_text), media_type="text/event-stream")
             return JSONResponse(_make_openai_response(out_text))
@@ -1580,6 +1844,7 @@ async def v1_chat_completions(req: Request):
                 facts_block=facts_block,
                 constraints_block=constraints_block,
                 thinker_role="thinker",
+                max_tokens=_serious_max_tokens_for_query(user_text),
             )).strip()
             tone = await _run_sync(_infer_tone, user_text, base)
             quote = _pick_quote_for_tone(tone)
@@ -1597,6 +1862,7 @@ async def v1_chat_completions(req: Request):
                 facts_block=facts_block,
                 constraints_block=constraints_block,
                 thinker_role="thinker",
+                max_tokens=_serious_max_tokens_for_query(user_text),
             )).strip()
             tone = await _run_sync(_infer_tone, user_text, base_preview)
             pool = _build_fun_quote_pool(state=state, user_text=user_text, tone=tone)
@@ -1699,6 +1965,7 @@ async def v1_chat_completions(req: Request):
         )
         constraints_block = f"{constraints_block}\n\n{anti_loop}".strip() if constraints_block else anti_loop
 
+    serious_max_tokens = _serious_max_tokens_for_query(user_text)
     text = (await _run_sync(
         run_serious,
         session_id=session_id,
@@ -1709,6 +1976,7 @@ async def v1_chat_completions(req: Request):
         facts_block=facts_block,
         constraints_block=constraints_block,
         thinker_role="thinker",
+        max_tokens=serious_max_tokens,
     )).strip()
 
     return _finalize_chat_response(
