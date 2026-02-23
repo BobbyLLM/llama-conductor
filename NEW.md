@@ -2,11 +2,10 @@
 
 *** V1.3.0 (latest)
 
-TL;DR (for non-coders):
+TL;DR
 - The assistant now adapts better to your style in-session (direct/sarcastic/snarky) without relaxing grounding rules.
 - `>>profile` gives you explicit control over tone behavior.
 - Responses are more stable and consistent under heavier usage.
-- Public release excludes private/testing-only clinical and QC tooling.
 
 Session-state style adaptation and stability hardening:
 
@@ -24,10 +23,7 @@ Session-state style adaptation and stability hardening:
 - Added warm/supportive quote bucket and expanded quote corpus for better fun/fr alignment.
 - Router responsiveness hardening:
   - blocking pathways run via threadpool boundary to reduce event-loop starvation.
-- Public-safe refactor retains strict exclusions:
-  - no private clinical command routing in public command path.
-  - no private clinical references in public command/config surfaces.
-  - no watchdog/QC telemetry tooling in public runtime.
+
 
 ---
 
