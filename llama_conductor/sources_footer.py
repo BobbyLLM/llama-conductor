@@ -9,7 +9,6 @@ Goals:
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 
 _CONF_RE = re.compile(
@@ -17,11 +16,20 @@ _CONF_RE = re.compile(
     re.IGNORECASE,
 )
 _CONF_PREFIX_RE = re.compile(r"^\s*Confidence:\s*", re.IGNORECASE)
+_INLINE_CONF_RE = re.compile(
+    r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed)\s*",
+    re.IGNORECASE,
+)
 
 
 def _strip_confidence_lines(text: str) -> str:
     lines = (text or "").splitlines()
-    kept = [ln for ln in lines if not _CONF_RE.match(ln or "") and not _CONF_PREFIX_RE.match(ln or "")]
+    kept = []
+    for ln in lines:
+        if _CONF_RE.match(ln or "") or _CONF_PREFIX_RE.match(ln or ""):
+            continue
+        ln2 = _INLINE_CONF_RE.sub("", ln).rstrip()
+        kept.append(ln2)
     return "\n".join(kept).strip()
 
 

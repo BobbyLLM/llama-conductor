@@ -1,6 +1,37 @@
-# What's New
+﻿# What's New
 
-*** V1.2.4 (latest)
+*** V1.3.0 (latest)
+
+TL;DR (for non-coders):
+- The assistant now adapts better to your style in-session (direct/sarcastic/snarky) without relaxing grounding rules.
+- `>>profile` gives you explicit control over tone behavior.
+- Responses are more stable and consistent under heavier usage.
+- Public release excludes private/testing-only clinical and QC tooling.
+
+Session-state style adaptation and stability hardening:
+
+- Added deterministic in-memory interaction profile (`>>profile`), session-scoped only.
+- New profile commands:
+  - `>>profile show|set|reset|on|off`
+  - quick aliases/presets for faster control (see command cheat sheet).
+- `>>status` now shows profile runtime fields (`profile_*` + relevant streak counters).
+- Added deterministic profile footer on non-Mentats responses:
+  - `Profile: <style> | Sarc: <level> | Snark: <level>`
+- `>>flush` now resets profile/style runtime identity in addition to CTC cache.
+- `>>detach all` resets profile state (fresh interaction baseline for next session flow).
+- Manual `>>profile set` values are sticky and take precedence over inferred updates until changed/reset.
+- Fun and Fun Rewrite now use shared deterministic profile-aware quote prefiltering.
+- Added warm/supportive quote bucket and expanded quote corpus for better fun/fr alignment.
+- Router responsiveness hardening:
+  - blocking pathways run via threadpool boundary to reduce event-loop starvation.
+- Public-safe refactor retains strict exclusions:
+  - no private clinical command routing in public command path.
+  - no private clinical references in public command/config surfaces.
+  - no watchdog/QC telemetry tooling in public runtime.
+
+---
+
+*** V1.2.4
 
 Deterministic confidence/source footer normalization (non-Mentats paths):
 
@@ -144,12 +175,12 @@ No auto-execution was added. All changes remain recommendation-only and fully ex
 
 ## (v1.1.5)
 
-### 🎯 New Feature: >>trust Mode (Tool Recommendation)
+### ðŸŽ¯ New Feature: >>trust Mode (Tool Recommendation)
 
-**Tool recommendation pipeline** — `>>trust <query>` analyzes your query and suggests the best tools to use
+**Tool recommendation pipeline** â€” `>>trust <query>` analyzes your query and suggests the best tools to use
 - Recommends ranked options (A, B, C) with confidence levels
 - You choose explicitly by typing A, B, or C
-- No auto-execution — preserves user control
+- No auto-execution â€” preserves user control
 - Helps eliminate tool-selection guesswork
 
 **Examples:**
@@ -157,24 +188,24 @@ No auto-execution was added. All changes remain recommendation-only and fully ex
 Math query:
 ```
 >>trust What's 15% of 80?
-→ A) >>calc (HIGH) - deterministic calculation
-→ B) serious mode (LOW) - model estimation
+â†’ A) >>calc (HIGH) - deterministic calculation
+â†’ B) serious mode (LOW) - model estimation
 ```
 
 Factual query:
 ```
 >>trust What software was pivotal for Amiga?
-→ A) ##mentats (HIGH) - verified reasoning using Vault
-→ B) >>attach all + query (MEDIUM) - search filesystem KBs
-→ C) serious mode (LOW) - model knowledge only
+â†’ A) ##mentats (HIGH) - verified reasoning using Vault
+â†’ B) >>attach all + query (MEDIUM) - search filesystem KBs
+â†’ C) serious mode (LOW) - model knowledge only
 ```
 
 Complex reasoning:
 ```
 >>trust Compare microservices vs monolithic architecture
-→ A) ##mentats (HIGH) - 3-pass verification
-→ B) serious mode with KBs (MEDIUM) - grounded reasoning
-→ C) serious mode (LOW) - model knowledge
+â†’ A) ##mentats (HIGH) - 3-pass verification
+â†’ B) serious mode with KBs (MEDIUM) - grounded reasoning
+â†’ C) serious mode (LOW) - model knowledge
 ```
 
 **How it works:**
@@ -187,27 +218,27 @@ Complex reasoning:
 - Pattern detection (math, weather, factual, complex reasoning, etc.)
 - Resource checking (what KBs are attached)
 - Confidence ranking (HIGH/MEDIUM/LOW)
-- Zero auto-execution — you're always in control
+- Zero auto-execution â€” you're always in control
 
 **Design principles:**
-- ✅ Explicit control (you choose A/B/C)
-- ✅ Router stays dumb (just routes to trust_pipeline)
-- ✅ No auto-escalation (suggestions only)
-- ✅ Transparent and predictable
+- âœ… Explicit control (you choose A/B/C)
+- âœ… Router stays dumb (just routes to trust_pipeline)
+- âœ… No auto-escalation (suggestions only)
+- âœ… Transparent and predictable
 
-### 📚 Documentation
+### ðŸ“š Documentation
 
-**Updated command cheat sheet** — Added >>trust documentation under Help & tool selection
-**Technical specification** — Full architecture and design docs included in release
+**Updated command cheat sheet** â€” Added >>trust documentation under Help & tool selection
+**Technical specification** â€” Full architecture and design docs included in release
 
 ---
 
 ## v1.1.4 (CRITICAL FIX)
 
-### 🚨 Critical Bugfix
+### ðŸš¨ Critical Bugfix
 
-**Vault attachment prevention** — Fixed critical bug where `>>attach vault` was allowed but caused silent failures
-- Previously: `>>attach vault` succeeded but Serious mode filtered it out → empty FACTS_BLOCK → hallucinations
+**Vault attachment prevention** â€” Fixed critical bug where `>>attach vault` was allowed but caused silent failures
+- Previously: `>>attach vault` succeeded but Serious mode filtered it out â†’ empty FACTS_BLOCK â†’ hallucinations
 - Now: `>>attach vault` properly rejected with helpful error message
 - Vault (Qdrant) can only be accessed via `##mentats` (as designed)
 - Filesystem KBs (amiga, c64, dogs, etc.) still attach normally via `>>attach <kb>`
@@ -218,60 +249,60 @@ Complex reasoning:
 
 ## v1.1.3
 
-**Code cleanup** — Removed legacy fun.py code and reduced duplicate calls
+**Code cleanup** â€” Removed legacy fun.py code and reduced duplicate calls
 
 ---
 
 ## v1.1.2
 
-**Streaming keepalive** — Added keepalive pings to prevent streaming timeouts in long-running responses
+**Streaming keepalive** â€” Added keepalive pings to prevent streaming timeouts in long-running responses
 
 ---
 
 ## v1.1.1
 
-### 🔍 New Sidecars (Deterministic API Tools)
+### ðŸ” New Sidecars (Deterministic API Tools)
 
-**Wikipedia summaries** — `>>wiki <topic>` fetches article openings via free Wikipedia JSON API
+**Wikipedia summaries** â€” `>>wiki <topic>` fetches article openings via free Wikipedia JSON API
 - Full paragraph summaries (~500 chars)
 - No hallucination, requires valid article name
-- Example: `>>wiki Albert Einstein` → full paragraph on relativity, Nobel Prize, etc.
+- Example: `>>wiki Albert Einstein` â†’ full paragraph on relativity, Nobel Prize, etc.
 
-**Currency conversion** — `>>exchange <query>` fetches real-time rates via Frankfurter API
+**Currency conversion** â€” `>>exchange <query>` fetches real-time rates via Frankfurter API
 - Supports natural language: `>>exchange 1 USD to EUR`, `>>exchange GBP to JPY`
 - Common currency aliases (USD, EUR, GBP, JPY, AUD, CAD, etc.)
-- Example: `>>exchange 1 AUD to USD` → `0.70 USD`
+- Example: `>>exchange 1 AUD to USD` â†’ `0.70 USD`
 
-**Weather** — `>>weather <location>` fetches current conditions via Open-Meteo API
+**Weather** â€” `>>weather <location>` fetches current conditions via Open-Meteo API
 - Uses geocoding to find location, then fetches current weather
 - Returns: temperature, condition (Clear/Cloudy/Rainy), humidity, wind speed
 - No rate limiting (Open-Meteo free tier is generous)
 - Works best with city names or "City Country" format
-- Example: `>>weather Perth` → `Perth, Australia: 22°C, Clear sky, 64% humidity`
+- Example: `>>weather Perth` â†’ `Perth, Australia: 22Â°C, Clear sky, 64% humidity`
 
 ---
 
 ## v1.0.11
 
-### 🎯 Core Improvements
+### ðŸŽ¯ Core Improvements
 
-**RAW mode context fix** — `>>raw` mode now includes CONTEXT block (conversation history) so queries like "what have we discussed?" work correctly instead of hallucinating. Previously `>>raw` was outputting non-Serious answers but without conversation context, causing it to fabricate topics from training data.
+**RAW mode context fix** â€” `>>raw` mode now includes CONTEXT block (conversation history) so queries like "what have we discussed?" work correctly instead of hallucinating. Previously `>>raw` was outputting non-Serious answers but without conversation context, causing it to fabricate topics from training data.
 
 ---
 
 ## v1.0.10
 
-**Fun mode quote pool** — Fixed fun_pool to include ALL quotes from all tags instead of just one tone. Fun mode now retrieves actual quotes from quotes.md instead of hallucinating.
+**Fun mode quote pool** â€” Fixed fun_pool to include ALL quotes from all tags instead of just one tone. Fun mode now retrieves actual quotes from quotes.md instead of hallucinating.
 
-**Mentats critic temperature** — Added wrapper forcing temperature=0.1 for critic role (Step 2 fact-checking). Eliminates hallucinations where critic accepts made-up facts.
+**Mentats critic temperature** â€” Added wrapper forcing temperature=0.1 for critic role (Step 2 fact-checking). Eliminates hallucinations where critic accepts made-up facts.
 
-**Vodka warm-up** — Eager-load facts.json on Filter initialization instead of lazy-loading. Fixed quirk where `?? list` showed only KBs on first call, then showed full memory store after any write operation.
+**Vodka warm-up** â€” Eager-load facts.json on Filter initialization instead of lazy-loading. Fixed quirk where `?? list` showed only KBs on first call, then showed full memory store after any write operation.
 
-**Vision mode persistence** — Fixed auto-vision detection checking entire history instead of just current message. After `##ocr` or image processing, router now correctly reverts to serious mode on next message.
+**Vision mode persistence** â€” Fixed auto-vision detection checking entire history instead of just current message. After `##ocr` or image processing, router now correctly reverts to serious mode on next message.
 
-**Vision/Fun sticky reversion** — Fixed sticky modes (`>>fun`, `>>fr`, `>>raw`) now correctly revert when switching modes or completing pipelines.
+**Vision/Fun sticky reversion** â€” Fixed sticky modes (`>>fun`, `>>fr`, `>>raw`) now correctly revert when switching modes or completing pipelines.
 
-**Vault chunking optimization** — Added configurable chunk size for Qdrant ingestion:
+**Vault chunking optimization** â€” Added configurable chunk size for Qdrant ingestion:
 ```yaml
 vault:
   chunk_words: 250        # Down from 600 (better semantic matching)
@@ -311,7 +342,7 @@ vault:
 
 ### Weather Locations
 - Open-Meteo geocoding works best with city names or "City Country" format
-- Long/complex location strings may not resolve (e.g. "Perth Western Australia" → use "Perth")
+- Long/complex location strings may not resolve (e.g. "Perth Western Australia" â†’ use "Perth")
 
 ---
 
@@ -339,7 +370,7 @@ pip install --upgrade git+https://codeberg.org/BobbyLLM/llama-conductor.git
 **New in v1.1.5:** 
 - Tool recommendation pipeline: `>>trust <query>` helps you choose the best tool
 - Choose recommendations by typing A, B, or C
-- No configuration changes needed — works out of the box
+- No configuration changes needed â€” works out of the box
 
 **New in v1.1.4:**
 - Critical fix: `>>attach vault` now properly rejected (prevents hallucinations)

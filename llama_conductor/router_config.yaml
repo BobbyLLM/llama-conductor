@@ -15,7 +15,6 @@ roles:
   vision: "qwen-3-4B_VISUAL"
   coder: "Qwen-3-4B Hivemind"
   second_op: "Nanbeige 3B"
-  clinical: "Qwen2.5-1.5B"  # Used for >>cliniko review
 
 # Vault is Qdrant-only; Mentats uses this kb label when searching Qdrant.
 vault_kb_name: "vault"
@@ -50,44 +49,6 @@ vodka:
 vault:
   chunk_words: 250        # Smaller chunks = better semantic matching for queries
   chunk_overlap_words: 50  # Overlap prevents losing context at chunk boundaries
-
-# Cliniko sidecar (staged clinical note pipeline)
-# >>cliniko compact: Compress 20KB+ RAW notes to ~6KB
-# >>cliniko generate: LLM generates management plan draft
-# >>cliniko sanitize: Deterministic cleanup (future)
-# >>cliniko review: LLM polish with validation (v2.3)
-cliniko:
-  debug: true  # Enable debug logging for prompt/response diagnostics
-  
-  # Step 1: Compaction settings
-  compact:
-    min_chars_trigger: 1800    # Only compact if input > this
-    max_out_chars: 7000         # Target output size (tested at 6287 chars from 21KB input)
-    max_out_lines: 400          # Hard cap on output lines
-    include_stats_header: true  # Prepend COMPACTED_STATS to user message
-  
-  # Step 2: LLM generation settings (UNCHANGED FROM ORIGINAL)
-  generate:
-    # Role key from `roles:` mapping above (NOT a model name)
-    model_role: "clinical"
-    max_tokens: 2000            # V2.5 SLIM optimized for 8K context window
-    temperature: 0.2            # Low temp for clinical consistency
-    top_p: 0.9
-    # Use forward slashes to avoid YAML escape issues on Windows
-    prompt_path: "C:/moa-router1.1.6 LOCAL/llama_conductor/CLINIKO-prompt.md"
-  
-  # Step 3: Sanitization settings (future)
-  sanitize:
-    enforce_must_not_miss: true
-    strip_structural_claims: true
-    strip_invented_metrics: true
-  
-  # Step 4: LLM review with validation (NEW in v2.3)
-  review:
-    model_role: "clinical"  # Use dedicated clinical role for review
-    max_tokens: 1400
-    temperature: 0.3
-    top_p: 0.9
 
 # Scratchpad sidecar (ephemeral session-grounding)
 scratchpad:

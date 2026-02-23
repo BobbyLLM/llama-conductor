@@ -2,7 +2,9 @@
 """Session state management for MoA Router."""
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
+
+from .interaction_profile import InteractionProfile, new_profile
 
 
 @dataclass
@@ -23,9 +25,10 @@ class SessionState:
     locked_summ_rel_path: str = ""
     locked_last_fact_lines: int = 0
     pending_lock_candidate: str = ""
+    pending_sensitive_confirm_query: str = ""
 
     # One Vodka per session (reduces noise + preserves stateful debug counters)
-    vodka: Optional[any] = None  # VodkaFilter
+    vodka: Optional[Any] = None  # VodkaFilter
 
     # Trust mode: pending recommendations for A/B/C response
     pending_trust_query: str = ""
@@ -42,6 +45,19 @@ class SessionState:
     cliniko_last_scaffold: str = ""
     cliniko_last_raw: str = ""
     cliniko_last_region: str = ""
+
+    # Session interaction profile (ephemeral, in-memory only)
+    profile_enabled: bool = True
+    interaction_profile: InteractionProfile = field(default_factory=new_profile)
+    profile_turn_counter: int = 0
+    profile_effective_strength: float = 0.0
+    profile_output_compliance: float = 0.0
+    profile_blocked_nicknames: Set[str] = field(default_factory=set)
+
+    # Serious-mode anti-loop tracking.
+    serious_ack_reframe_streak: int = 0
+    serious_last_body_signature: str = ""
+    serious_repeat_streak: int = 0
 
 
 # Global session storage
