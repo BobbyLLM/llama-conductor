@@ -139,7 +139,7 @@ def split_selector(user_text: str) -> Tuple[str, str]:
 
     if sel in ("m", "mentats"):
         return "mentats", rest
-    if sel in ("fun", "f"):
+    if sel in ("fun",):
         return "fun", rest
     if sel in ("vision",):
         return "vision", rest

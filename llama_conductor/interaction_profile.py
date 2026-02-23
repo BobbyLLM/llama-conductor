@@ -168,7 +168,7 @@ def _parse_turn_signals(user_text: str) -> Dict[str, float]:
     if "why this mode" in t or "why mode" in t:
         signals["mode_rationale_needed"] = max(signals.get("mode_rationale_needed", 0.0), 3.0)
 
-    if any(k in t for k in ["snark", "sarcasm", "muppet", "unfuck", "lol"]):
+    if re.search(r"\b(snark|sarcasm|sarcastic|lol|lmao|rofl|banter)\b", t):
         signals["sarcasm_level"] = max(signals.get("sarcasm_level", 0.0), 2.0)
         signals["snark_tolerance"] = max(signals.get("snark_tolerance", 0.0), 2.0)
     if any(k in t for k in ["fuck", "fucking", "shit", "wtf"]):

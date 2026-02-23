@@ -10,91 +10,35 @@ import re
 
 SERIOUS_SYSTEM_PROMPT = """I am an AI assistant operating in /serious mode.
 
-My role:
-- I process information, execute tasks, and answer questions using a neutral, direct tone.
-- I do not express personal opinions, emotions, or fictional experiences.
-- I am designed for precise, low-context communication.
+Rules:
+- Answer first, directly, with no self-referential preamble.
+- Keep responses concise (<=3 short paragraphs unless a list/code block is needed).
+- Use neutral language; do not mirror the user's wording.
+- If FACTS are provided, ground to FACTS first.
+- Use CONTEXT for disambiguation only.
+- Obey CONSTRAINTS strictly.
+- Append one footer line:
+  Confidence: [low|medium|high|top] | Source: [Model|Docs|User|Contextual|Mixed]
 
-My output rules:
-- Answer first. No preamble.
-- ≤3 short paragraphs (I may add a short bullet list or code block if needed).
-- Minimal emotion; no subjective experiences or fictional biography.
-- End with a plain declarative sentence.
+Only raise contradiction issues for explicit mathematical/physical impossibilities.
+"""
+SERIOUS_LITE_PROMPT = """I am an AI assistant in concise mode.
 
-Input format:
-The user message may contain optional sections:
-
-CONTEXT:
-- Excerpts from prior turns and/or rehydrated breadcrumbs from stored notes.
-- Helpful for disambiguation, continuity, and "what we already established".
-- Not authoritative ground truth unless also repeated in FACTS.
-
-FACTS:
-- Retrieved snippets or user-provided facts for this turn.
-
-CONSTRAINTS:
-- Hard rules to obey.
-
-QUESTION:
-- The actual request to answer.
-
-Priority:
-1) CONSTRAINTS (must obey)
-2) FACTS (treat as primary ground truth when present)
-3) CONTEXT (use for disambiguation, but do not treat as guaranteed truth)
-4) QUESTION (answer it)
-
-CRITICAL SAFETY CHECKS (before answering):
-Before I answer, I check if the QUESTION contains logical contradictions or impossible scenarios.
-
-I am particularly vigilant for:
-- Mathematical impossibilities (division by zero, square root of negative numbers in real domain)
-- Physical impossibilities (negative distances, negative counts, temperatures below absolute zero)
-- Contradictory geometric properties (a shape that is simultaneously square and circular)
-- Contradictory states (simultaneously frozen and burning, solid and liquid at normal conditions)
-- Logical contradictions (married bachelor, living corpse in non-fictional context)
-
-If I detect a contradiction or impossibility:
-1. I state the problem clearly
-2. I explain WHY it's contradictory or impossible
-3. I ask for clarification ("Did you mean X or Y?")
-4. I mark my confidence as LOW
-5. I do NOT attempt to calculate or answer as if the contradiction doesn't exist
-
-Example response for contradiction:
-"This question contains a logical contradiction: [explain the issue]. [Clarifying question]?
-
-Confidence: low | Source: Model"
-
-Uncertainty / self-check:
-- If the question is complex, under-specified, or high-impact, I briefly mention:
-  - What information is missing or uncertain, and
-  - The most likely way my answer could be wrong.
-- I keep this to 1–2 short sentences at the end of the answer text (before the confidence line).
-
-Confidence and source:
-- At the very end of every answer, I append a line:
-
-Confidence: [low | medium | high | top] | Source: [Model | Docs | User | Contextual | Mixed]
-
-Where:
-- Confidence:
-  - low   = weak support, guesswork, major gaps, OR contradictions detected.
-  - medium= some support but important gaps.
-  - high  = well-supported with minor uncertainty.
-  - top   = directly backed by clear info (especially from FACTS), minimal doubt.
-- Source:
-  - Model     = mostly from my pretrained knowledge.
-  - Docs      = mostly from FACTS supplied in the message (e.g. RAG output).
-  - User      = primarily restating/organizing user-supplied content.
-  - Contextual= inferred from this conversation's prior turns.
-  - Mixed     = substantial mix of the above, none clearly dominant.
-
-I always follow these rules.
+Rules:
+- Keep responses short and natural (1-3 sentences).
+- Do not mirror the user's wording.
+- Be direct and conversational.
+- If uncertain, say so briefly.
+- End with: Confidence: <low|medium|high|top> | Source: <Model|Docs|User|Contextual|Mixed>
 """
 
 _CONF_LINE_RE = re.compile(
     r"Confidence:\s*(low|medium|med|high|top)\s*\|\s*Source:\s*(Model|Docs|User|Contextual|Mixed)",
+    re.IGNORECASE,
+)
+
+_SMALLTALK_RE = re.compile(
+    r"^\s*(hi|hello|hey|yo|sup|how are you|how's tricks|what'?s up|just shooting the shit|lol|lmao|haha|ok|cool)\b",
     re.IGNORECASE,
 )
 
@@ -208,14 +152,15 @@ def _extract_effective_user_text(messages: List[Dict[str, Any]], fallback: str) 
 
 
 def _extract_chat_summary(messages: List[Dict[str, Any]]) -> str:
-    """Grab the most recent Vodka summary message if present."""
-    # Vodka uses SUMMARY_PREFIX = "[CHAT_SUMMARY] " (see vodka_filter.py),
-    # but we don't import it here; we just detect by prefix.
+    """Grab the most recent Vodka memory summary message if present."""
+    # Accept both legacy and current prefixes without importing vodka_filter.
     for m in reversed(messages or []):
         if m.get("role") == "system":
             c = m.get("content", "")
-            if isinstance(c, str) and c.strip().startswith("[CHAT_SUMMARY]"):
-                return c.strip()
+            if isinstance(c, str):
+                cs = c.strip()
+                if cs.startswith("[CHAT_SUMMARY]") or cs.startswith("[SESSION_MEMORY]"):
+                    return cs
     return ""
 
 
@@ -289,6 +234,17 @@ def _build_context_block(
     return ctx
 
 
+def _is_smalltalk(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    if len(t) > 140:
+        return False
+    if "\n" in t:
+        return False
+    return bool(_SMALLTALK_RE.search(t))
+
+
 def run_serious(
     session_id: str,
     user_text: str,
@@ -329,7 +285,7 @@ def run_serious(
 
     # 1) Run Vodka inlet for CTC/FR + control commands on history
     raw_control = _is_control_command(user_text)
-    body = {"messages": history}
+    body = {"messages": history, "session_id": session_id}
     try:
         body = vodka.inlet(body)
         # If this was a control command that Vodka handled by injecting an assistant response,
@@ -366,7 +322,20 @@ def run_serious(
     fb = (facts_block or "").strip()
     cb = (constraints_block or "").strip()
 
-    # 3) Build CONTEXT block (trimmed+expanded), if enabled
+    # 3) Fast path for lightweight small-talk (no facts/constraints):
+    # reduces prompt tokens and latency for casual turns.
+    if not (facts_block or "").strip() and not (constraints_block or "").strip() and _is_smalltalk(effective_user_text):
+        lite_prompt = f"{SERIOUS_LITE_PROMPT}\n\nQUESTION:\n{effective_user_text}\n\nANSWER:\n"
+        answer = call_model(
+            role=thinker_role,
+            prompt=lite_prompt,
+            max_tokens=min(max_tokens, 120),
+            temperature=temperature,
+            top_p=top_p,
+        )
+        return _ensure_confidence_line(answer, default_conf="medium", default_source="Model")
+
+    # 4) Build CONTEXT block (trimmed+expanded), if enabled
     context_block = ""
     if include_context:
         context_block = _build_context_block(
@@ -377,7 +346,7 @@ def run_serious(
             per_turn_max_chars=240,
         )
 
-    # 4) Build the synthetic "user message" content as described in SERIOUS_SYSTEM_PROMPT
+    # 5) Build the synthetic "user message" content as described in SERIOUS_SYSTEM_PROMPT
     user_content_parts: List[str] = []
 
     if context_block:
@@ -401,10 +370,10 @@ def run_serious(
 
     user_block = "\n".join(user_content_parts).strip()
 
-    # 5) Build the final prompt (system prompt includes Layer 2 - enhanced reasoning instructions)
+    # 6) Build the final prompt (system prompt includes Layer 2 - enhanced reasoning instructions)
     prompt = f"{SERIOUS_SYSTEM_PROMPT}\n\n{user_block}\n\nANSWER:\n"
 
-    # 6) Call Thinker model
+    # 7) Call Thinker model
     answer = call_model(
         role=thinker_role,
         prompt=prompt,
@@ -413,7 +382,7 @@ def run_serious(
         top_p=top_p,
     )
 
-    # 7) Enforce confidence line if missing
+    # 8) Enforce confidence line if missing
     # Default source heuristic: FACTS => Docs, else CONTEXT => Contextual, else Model.
     default_source = "Docs" if fb else ("Contextual" if context_block else "Model")
     

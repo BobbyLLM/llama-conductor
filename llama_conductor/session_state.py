@@ -38,14 +38,6 @@ class SessionState:
     auto_query_after_attach: str = ""
     auto_detach_after_response: bool = False
     
-    # Cliniko sidecar: staged clinical note pipeline
-    cliniko_compacted: Optional[str] = None
-    cliniko_compaction_stats: Dict[str, int] = field(default_factory=dict)
-    cliniko_last_draft: Optional[str] = None
-    cliniko_last_scaffold: str = ""
-    cliniko_last_raw: str = ""
-    cliniko_last_region: str = ""
-
     # Session interaction profile (ephemeral, in-memory only)
     profile_enabled: bool = True
     interaction_profile: InteractionProfile = field(default_factory=new_profile)
