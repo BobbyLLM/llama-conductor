@@ -84,7 +84,6 @@ Session-state interaction profile (deterministic, in-memory MVP):
 - Added serious-mode anti-loop guard:
   - allows at most one consecutive meta ack/reframe response
   - repeated ack loop is coerced to deterministic task-forward fallback.
-- Extended smoke runner again with `PF-019..PF-023` and `VR-003`.
 - Added deterministic profile footer on non-Mentats answers:
   - `Profile: <correction_style> | Sarc: <level> | Snark: <level>`
 - Updated `>>flush` behavior:
@@ -138,6 +137,8 @@ Deterministic confidence/source footer normalization (non-Mentats paths):
 
 *** V1.2.3 (latest)
 
+TLDR: you can now >>lock a SUMM<name>.md file and reason ONLY over that file, similar to >>scratch pipeline...but without having to copy paste. Should the information NOT be within the locked file, the model will attempt to answer based on pre-trained data and will LOUDLY state "not in locked file; here's my best guess". I hope that this (along with the stdlib summary extraction method) further improves you confidence in provided answers. As always - glassbox, fail states LOUD, trust-but-verify. 
+
 Locked SUMM grounding + lock-safe provenance behavior:
 
 - Added `>>lock SUMM_<name>.md` and `>>unlock` for deterministic single-file SUMM grounding in normal query paths.
@@ -161,13 +162,14 @@ Locked SUMM grounding + lock-safe provenance behavior:
 - No SUMM pipeline changes:
   - `>>summ` mechanics and provenance remain unchanged
   - `>>move to vault` mechanics remain unchanged
-  - TLDR: you can now >>lock a SUMM<name>.md file and reason ONLY over that file, similar to >>scratch pipeline...but without having to copy paste. Should the information NOT be within the locked file, the model will attempt to answer based on pre-trained data and will LOUDLY state "not in locked file; here's my best guess". I hope that this (along with the stdlib summary extraction method) further improves you confidence in provided answers. As always - glassbox, fail states LOUD, trust-but-verify. 
 
 ---
 
 *** V1.2.2
 
-Deterministic `>>summ` pipeline swap (surgical refactor):
+TLDR: >>SUMM is now entirely deterministic and *not* LLM summary. Faster and even more reflective of raw file (albeit somewhat larger).
+
+Deterministic `>>summ` pipeline swap
 
 - Replaced LLM-based summary generation in `>>summ` with deterministic stdlib extractive generation.
 - Preserved existing command and pipeline mechanics:
@@ -181,7 +183,7 @@ Deterministic `>>summ` pipeline swap (surgical refactor):
   - `pipeline: SUMM`
 - No new dependencies added to `pyproject.toml`.
 - Removed legacy `SUMM.md` sentinel dependency from `>>summ` / `>>move` command paths (no behavior change in pipeline mechanics).
--  TLDR: >>SUMM is now entirely deterministic and *not* LLM summary. Faster and even more reflective of raw file (albeit somewhat larger).
+
 
 ---
 
@@ -254,12 +256,12 @@ No auto-execution was added. All changes remain recommendation-only and fully ex
 
 ## (v1.1.5)
 
-### ðŸŽ¯ New Feature: >>trust Mode (Tool Recommendation)
+###  New Feature: >>trust Mode (Tool Recommendation)
 
-**Tool recommendation pipeline** â€” `>>trust <query>` analyzes your query and suggests the best tools to use
+**Tool recommendation pipeline** `>>trust <query>` analyzes your query and suggests the best tools to use
 - Recommends ranked options (A, B, C) with confidence levels
 - You choose explicitly by typing A, B, or C
-- No auto-execution â€” preserves user control
+- No auto-execution preserves user control
 - Helps eliminate tool-selection guesswork
 
 **Examples:**
@@ -267,24 +269,24 @@ No auto-execution was added. All changes remain recommendation-only and fully ex
 Math query:
 ```
 >>trust What's 15% of 80?
-â†’ A) >>calc (HIGH) - deterministic calculation
-â†’ B) serious mode (LOW) - model estimation
+’ A) >>calc (HIGH) - deterministic calculation
+’ B) serious mode (LOW) - model estimation
 ```
 
 Factual query:
 ```
 >>trust What software was pivotal for Amiga?
-â†’ A) ##mentats (HIGH) - verified reasoning using Vault
-â†’ B) >>attach all + query (MEDIUM) - search filesystem KBs
-â†’ C) serious mode (LOW) - model knowledge only
+’ A) ##mentats (HIGH) - verified reasoning using Vault
+’ B) >>attach all + query (MEDIUM) - search filesystem KBs
+’ C) serious mode (LOW) - model knowledge only
 ```
 
 Complex reasoning:
 ```
 >>trust Compare microservices vs monolithic architecture
-â†’ A) ##mentats (HIGH) - 3-pass verification
-â†’ B) serious mode with KBs (MEDIUM) - grounded reasoning
-â†’ C) serious mode (LOW) - model knowledge
+’ A) ##mentats (HIGH) - 3-pass verification
+’ B) serious mode with KBs (MEDIUM) - grounded reasoning
+’ C) serious mode (LOW) - model knowledge
 ```
 
 **How it works:**
@@ -297,27 +299,27 @@ Complex reasoning:
 - Pattern detection (math, weather, factual, complex reasoning, etc.)
 - Resource checking (what KBs are attached)
 - Confidence ranking (HIGH/MEDIUM/LOW)
-- Zero auto-execution â€” you're always in control
+- Zero auto-execution you're always in control
 
 **Design principles:**
-- âœ… Explicit control (you choose A/B/C)
-- âœ… Router stays dumb (just routes to trust_pipeline)
-- âœ… No auto-escalation (suggestions only)
-- âœ… Transparent and predictable
+-  Explicit control (you choose A/B/C)
+-  Router stays dumb (just routes to trust_pipeline)
+-  No auto-escalation (suggestions only)
+-  Transparent and predictable
 
-### ðŸ“š Documentation
+### Documentation
 
-**Updated command cheat sheet** â€” Added >>trust documentation under Help & tool selection
-**Technical specification** â€” Full architecture and design docs included in release
+**Updated command cheat sheet** Added >>trust documentation under Help & tool selection
+**Technical specification** Full architecture and design docs included in release
 
 ---
 
 ## v1.1.4 (CRITICAL FIX)
 
-### ðŸš¨ Critical Bugfix
+### Critical Bugfix
 
-**Vault attachment prevention** â€” Fixed critical bug where `>>attach vault` was allowed but caused silent failures
-- Previously: `>>attach vault` succeeded but Serious mode filtered it out â†’ empty FACTS_BLOCK â†’ hallucinations
+**Vault attachment prevention** Fixed critical bug where `>>attach vault` was allowed but caused silent failures
+- Previously: `>>attach vault` succeeded but Serious mode filtered it out ’ empty FACTS_BLOCK ’ hallucinations
 - Now: `>>attach vault` properly rejected with helpful error message
 - Vault (Qdrant) can only be accessed via `##mentats` (as designed)
 - Filesystem KBs (amiga, c64, dogs, etc.) still attach normally via `>>attach <kb>`
@@ -328,60 +330,60 @@ Complex reasoning:
 
 ## v1.1.3
 
-**Code cleanup** â€” Removed legacy fun.py code and reduced duplicate calls
+**Code cleanup** Removed legacy fun.py code and reduced duplicate calls
 
 ---
 
 ## v1.1.2
 
-**Streaming keepalive** â€” Added keepalive pings to prevent streaming timeouts in long-running responses
+**Streaming keepalive** Added keepalive pings to prevent streaming timeouts in long-running responses
 
 ---
 
 ## v1.1.1
 
-### ðŸ” New Sidecars (Deterministic API Tools)
+### New Sidecars (Deterministic API Tools)
 
-**Wikipedia summaries** â€” `>>wiki <topic>` fetches article openings via free Wikipedia JSON API
+**Wikipedia summaries** `>>wiki <topic>` fetches article openings via free Wikipedia JSON API
 - Full paragraph summaries (~500 chars)
 - No hallucination, requires valid article name
-- Example: `>>wiki Albert Einstein` â†’ full paragraph on relativity, Nobel Prize, etc.
+- Example: `>>wiki Albert Einstein` ’ full paragraph on relativity, Nobel Prize, etc.
 
-**Currency conversion** â€” `>>exchange <query>` fetches real-time rates via Frankfurter API
+**Currency conversion** `>>exchange <query>` fetches real-time rates via Frankfurter API
 - Supports natural language: `>>exchange 1 USD to EUR`, `>>exchange GBP to JPY`
 - Common currency aliases (USD, EUR, GBP, JPY, AUD, CAD, etc.)
-- Example: `>>exchange 1 AUD to USD` â†’ `0.70 USD`
+- Example: `>>exchange 1 AUD to USD` ’ `0.70 USD`
 
-**Weather** â€” `>>weather <location>` fetches current conditions via Open-Meteo API
+**Weather** `>>weather <location>` fetches current conditions via Open-Meteo API
 - Uses geocoding to find location, then fetches current weather
 - Returns: temperature, condition (Clear/Cloudy/Rainy), humidity, wind speed
 - No rate limiting (Open-Meteo free tier is generous)
 - Works best with city names or "City Country" format
-- Example: `>>weather Perth` â†’ `Perth, Australia: 22Â°C, Clear sky, 64% humidity`
+- Example: `>>weather Perth` ’ `Perth, Australia: 22Â°C, Clear sky, 64% humidity`
 
 ---
 
 ## v1.0.11
 
-### ðŸŽ¯ Core Improvements
+###  Core Improvements
 
-**RAW mode context fix** â€” `>>raw` mode now includes CONTEXT block (conversation history) so queries like "what have we discussed?" work correctly instead of hallucinating. Previously `>>raw` was outputting non-Serious answers but without conversation context, causing it to fabricate topics from training data.
+**RAW mode context fix** `>>raw` mode now includes CONTEXT block (conversation history) so queries like "what have we discussed?" work correctly instead of hallucinating. Previously `>>raw` was outputting non-Serious answers but without conversation context, causing it to fabricate topics from training data.
 
 ---
 
 ## v1.0.10
 
-**Fun mode quote pool** â€” Fixed fun_pool to include ALL quotes from all tags instead of just one tone. Fun mode now retrieves actual quotes from quotes.md instead of hallucinating.
+**Fun mode quote pool** Fixed fun_pool to include ALL quotes from all tags instead of just one tone. Fun mode now retrieves actual quotes from quotes.md instead of hallucinating.
 
-**Mentats critic temperature** â€” Added wrapper forcing temperature=0.1 for critic role (Step 2 fact-checking). Eliminates hallucinations where critic accepts made-up facts.
+**Mentats critic temperature** Added wrapper forcing temperature=0.1 for critic role (Step 2 fact-checking). Eliminates hallucinations where critic accepts made-up facts.
 
-**Vodka warm-up** â€” Eager-load facts.json on Filter initialization instead of lazy-loading. Fixed quirk where `?? list` showed only KBs on first call, then showed full memory store after any write operation.
+**Vodka warm-up** Eager-load facts.json on Filter initialization instead of lazy-loading. Fixed quirk where `?? list` showed only KBs on first call, then showed full memory store after any write operation.
 
-**Vision mode persistence** â€” Fixed auto-vision detection checking entire history instead of just current message. After `##ocr` or image processing, router now correctly reverts to serious mode on next message.
+**Vision mode persistence** Fixed auto-vision detection checking entire history instead of just current message. After `##ocr` or image processing, router now correctly reverts to serious mode on next message.
 
-**Vision/Fun sticky reversion** â€” Fixed sticky modes (`>>fun`, `>>fr`, `>>raw`) now correctly revert when switching modes or completing pipelines.
+**Vision/Fun sticky reversion** Fixed sticky modes (`>>fun`, `>>fr`, `>>raw`) now correctly revert when switching modes or completing pipelines.
 
-**Vault chunking optimization** â€” Added configurable chunk size for Qdrant ingestion:
+**Vault chunking optimization** Added configurable chunk size for Qdrant ingestion:
 ```yaml
 vault:
   chunk_words: 250        # Down from 600 (better semantic matching)
@@ -421,35 +423,16 @@ vault:
 
 ### Weather Locations
 - Open-Meteo geocoding works best with city names or "City Country" format
-- Long/complex location strings may not resolve (e.g. "Perth Western Australia" â†’ use "Perth")
+- Long/complex location strings may not resolve (e.g. "Perth Western Australia" ’ use "Perth")
 
 ---
 
-## Roadmap (Ideas)
 
-- [ ] Better embedding model (nomic-embed-text or bge-large-en-v1.5)
-- [ ] User-provided reference documents without summarization
-- [ ] Session-level fact deduplication
-- [ ] Multi-language support (Vodka memory)
-- [ ] Web UI integration (hooks for `>>` and `??` commands)
-- [ ] More sidecars (>>define, >>convert units, etc.)
-
----
-
-## Installation / Upgrading
-
-```bash
-# Fresh install
-pip install git+https://codeberg.org/BobbyLLM/llama-conductor.git
-
-# Upgrade existing
-pip install --upgrade git+https://codeberg.org/BobbyLLM/llama-conductor.git
-```
 
 **New in v1.1.5:** 
 - Tool recommendation pipeline: `>>trust <query>` helps you choose the best tool
 - Choose recommendations by typing A, B, or C
-- No configuration changes needed â€” works out of the box
+- No configuration changes needed works out of the box
 
 **New in v1.1.4:**
 - Critical fix: `>>attach vault` now properly rejected (prevents hallucinations)
@@ -473,7 +456,7 @@ pip install --upgrade git+https://codeberg.org/BobbyLLM/llama-conductor.git
 
 ## Questions?
 
-- Run `>>help` in-chat for full command reference
+- Run `>>help` in-chat for command reference
 - Try `>>trust <your question>` to get tool recommendations
 - Check `mentats_debug.log` for deep reasoning traces
 - See [FAQ](FAQ.md) for architecture & troubleshooting
