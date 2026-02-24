@@ -1,4 +1,4 @@
-# llama-conductor
+﻿# llama-conductor
 ![llama-conductor banner](logo/zardoz.jpg)
 
 LLM harness for people who want trust, consistency, and proof.
@@ -11,13 +11,12 @@ TL;DR: "In God we trust. All others bring data." - Deming
 
 ## Quick Links
 
-- [What's New](NEW.md) - Latest fixes & what I borked along the way
+- [What's New](NEW.md) - Latest fixes and what I borked along the way
 - [FAQ](FAQ.md) - Deep dives on how this actually works
-- [Command Cheat Sheet](llama_conductor/command_cheat_sheet.md) -  All the incantations
-- [Quickstart](#quickstart) — Get it running in 5 minutes
+- [Command Cheat Sheet](llama_conductor/command_cheat_sheet.md) - All the incantations
+- [Quickstart](#quickstart) - Get it running in 5 minutes
 - [Y U DO DIS?](DESIGN.md) - Design fool-osophy and Q&A
-- [BULLSHIT. PROVE IT] (PAPER.md) - Ok, I will (placeholder for peer-reviewed article on this project). 
-
+- [BULLSHIT. PROVE IT](prepub/PAPER.md) - Ok, I will (Prepub draft + evidence bundle)
 
 ---
 
@@ -313,3 +312,6 @@ Result:
 ## License
 
 AGPL-3.0-or-later. See `LICENSE`.
+
+
+
