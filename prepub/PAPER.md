@@ -153,4 +153,4 @@ Under bounded grounding constraints, via python router, this local 4B setup demo
 - stronger refusal behavior on insufficient-evidence prompts
 - explicit tradeoffs in adversarial calibration dimensions
 
-This is enough to justify peer-review submission as an architecture-and-evaluation study, provided claims remain bounded to the published evidence.
+
