@@ -41,6 +41,10 @@ __pycache__/
 *CLINIKO*
 docs/PUSH-GUARD-FAQ.md
 
+# Allow pre-publication evidence bundle files even if names match global patterns
+!prepub/
+!prepub/**
+
 # Never track docs truth maps (any location)
 DOCS-TRUTH-MAP.md
 **/DOCS-TRUTH-MAP.md
