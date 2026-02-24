@@ -1,4 +1,4 @@
-# llama-conductor
+﻿# llama-conductor
 ![llama-conductor banner](logo/zardoz.jpg)
 
 
@@ -38,9 +38,11 @@ llama-conductor serve --host 0.0.0.0 --port 9000
 - [Frequently Asked Questions (FAQ)](#frequently-asked-questions-faq)
   - [What the hell is this thing and why did you build it?](#what-the-hell-is-this-thing-and-why-did-you-build-it)
   - [What problems does this solve?](#what-problems-does-this-solve)
-    - [1) Vibes-based answers: how do I know if the LLM is lying?](#1-vibes-based-answers-how-do-i-know-if-the-llm-is-lying)
-    - [2) Goldfish memory: models forget or confidently misremember](#2-goldfish-memory-models-forget-or-confidently-misremember)
-    - [3) Context bloat: 400-message chat logs kill your potato PC](#3-context-bloat-400-message-chat-logs-kill-your-potato-pc)
+    - [1) Context bloat on small hardware](#1-context-bloat-on-small-hardware)
+    - [2) Goldfish memory and confident misremembering](#2-goldfish-memory-and-confident-misremembering)
+    - [3) Lies, damned lies, and statistics](#3-lies-damned-lies-and-statistics)
+    - [4) Grounding drift in normal chat (fixed with >>scratch / >>lock)](#4-grounding-drift-in-normal-chat-fixed-with-scratch--lock)
+    - [5) Modes (get the stick out of your LLMs butt)](#5-modes-get-the-stick-out-of-your-llms-butt)
   - [What is Vodka?](#what-is-vodka)
     - [Vodka has two jobs:](#vodka-has-two-jobs)
     - [How it works:](#how-it-works)
@@ -101,9 +103,6 @@ llama-conductor serve --host 0.0.0.0 --port 9000
     - [Mentats refuses to answer your question](#mentats-refuses-to-answer-your-question)
     - [Mentats gives weird answers](#mentats-gives-weird-answers)
     - [Context too long errors](#context-too-long-errors)
-    - [Mentats refuses to answer your question](#mentats-refuses-to-answer-your-question)
-    - [Mentats gives weird answers](#mentats-gives-weird-answers)
-    - [Context too long errors](#context-too-long-errors)
     - [Qdrant connection failed](#qdrant-connection-failed)
     - [Models not loading (llama-swap)](#models-not-loading-llama-swap)
   - [Config knobs (router_config.yaml) with examples](#config-knobs-routerconfigyaml-with-examples)
@@ -137,90 +136,130 @@ I have ASD and a low tolerance for bullshit. I want shit to work the same 100% o
 
 ### What problems does this solve?
 
-#### 1) Vibes-based answers: how do I know if the LLM is lying?
-
-You don't! 
+#### 1) Context bloat on small hardware
 
 **WITHOUT llama-conductor:**
 ```
-You: What's the flag for XYZ in llama.cpp?
-Model: It's --xyz-mode! (confident bullshit)
-You: [tries it] ? doesn't work
-Model: Oh sorry! Try --enable-xyz! (more bullshit)
+[400-message chat history]
+-> slow generation, degraded recall, dropped setup context, OOM
 ```
 
 **WITH llama-conductor:**
 ```
-You: ##mentats What's the flag for XYZ in llama.cpp?
-Mentats: [queries Vault only]
-Mentats: REFUSAL - "The Vault contains no relevant knowledge for this query."
-
-[later, after you >>summ the llama.cpp docs]
-You: ##mentats What's the flag for XYZ in llama.cpp?
-Mentats: --enable-xyz [cite: llama.cpp docs, SHA: abc123...]
-[verifies: came from llama.cpp README.md, SHA matches]
+Vodka CTC trims context automatically:
+- keeps the recent turns that matter
+- hard-caps prompt growth
+- drops mid-chat bloat
+- keeps memory available through deterministic recall paths
+- user definable presets
 ```
 
-**How it works:**
-1. `>>attach <kb>` - attach your curated docs (filesystem folders)
-2. `>>summ new` - generate summaries with SHA-256 provenance
-3. `>>move to vault` - promote summaries into Qdrant RAG
-4. `##mentats <query>` - deep reasoning, grounded in Vault only
+Result:
+- Consistent prompt size, stable performance, and optional rolling deterministic summary (stdlib extractive).
+- Tok/s you started with, is what you keep (more or less).
+- Bonus: Tweak your `--ctx` and maybe your Raspberry Pi can run that 4B model without chug.
 
 ---
 
-#### 2) Goldfish memory: models forget or confidently misremember
+#### 2) Goldfish memory and confident misremembering
 
 **WITHOUT llama-conductor:**
 ```
-You: Remember my server is at 203.0.113.42
-Model: Got it!
-[100 messages later]
+You: Remember my server is 203.0.113.42
+[later]
 You: What's my server IP?
-Model: 127.0.0.1 ??
+Model: 127.0.0.1 :P
 ```
 
 **WITH llama-conductor:**
 ```
-You: !! my server is at 203.0.113.42
-Vodka: [stored, TTL=3 days, touches=0]
-
+You: !! my server is 203.0.113.42
 [later]
 You: ?? server ip
-Vodka: Your server is at 203.0.113.42 [TTL=3 days, touches=1]
+Router: 203.0.113.42 [TTL=7 days, Touch=1]
 ```
 
-**How it works:**
-- `!!` stores facts verbatim (no "helpful rewrites")
-- `??` retrieves facts verbatim (with TTL/touch metadata)
-- Facts expire after TTL (default: 3 days, configurable)
-- Facts can be extended on recall (default: 2 touches max)
-- None of this is stored in the LLM. Pure 1990s text file magic (well, JSON in any case)
+Result:
+- Router stores and recalls what you said deterministically.
+- TTL/touch lifecycle keeps memory useful without silent junkyard bloat.
 
 ---
 
-#### 3) Context bloat: 400-message chat logs kill your potato PC
+#### 3) Lies, damned lies, and statistics
 
 **WITHOUT llama-conductor:**
 ```
-[Message 1] System setup
-[Message 2-399] Debugging, jokes, tangents, arguments
-[Message 400] Actual question
-Model: [OOM] or [slow as hell] or [forgot Message 1]
+Start chatting
+Ask questions
+Model sounds certain
+No provenance signal
+You guess if grounded vs made up
 ```
 
 **WITH llama-conductor:**
 ```
-Vodka CTC (Cut The Crap):
-- Keeps last N messages (shipped default: 12 user/assistant pairs)
-- Optionally keeps first message (shipped default: false)
-- Hard caps total chars (shipped default: 6000)
-- Drops the middle bloat automatically
-
-Result: Consistent prompt size, stable performance
-Bonus: Tiny --ctx can feel vast. End result: less memory needed by LLM. 
-So, maybe your Raspberry Pi *can* run that 4B model and not chug.
+You see:
+Confidence: <tier> | Source: <path>
 ```
+
+Result:
+- Router-assigned provenance metadata, not model self-confidence.
+- `Source: Model` means fallback route, explicitly labeled.
+- Grounded paths are visibly marked as docs/scratch/locked/vault.
+
+---
+
+#### 4) Grounding drift in normal chat (fixed with `>>scratch` / `>>lock`)
+
+**WITHOUT llama-conductor:**
+```
+You: Summarise this article and tell me what claim got retracted.
+Model: blends prior chat junk + generic priors
+You: That's not what I asked.
+Model: doubles down anyway
+```
+
+**WITH llama-conductor:**
+```
+You: >>scratch
+You: [paste article]
+You: What claim was retracted? Keep it tight.
+Router: [answers from scratch-grounded facts]
+Footer: Confidence: high | Source: Scratchpad
+
+# or with curated docs:
+You: >>attach <your kb name>
+You: >>list_files
+You: >>lock SUMM_<name>.md
+You: Ask question normally
+Router: [answers from locked source or fails loud if missing]
+```
+
+Result:
+- You can force argument-from-source instead of vibes.
+- Missing evidence is surfaced explicitly via source/fallback behavior.
+
+---
+
+#### 5) Modes (get the stick out of your LLMs butt)
+
+**WITHOUT llama-conductor:**
+```
+One generic answer style
+Tone/behavior drift by prompt luck
+```
+
+**WITH llama-conductor:**
+```
+Serious (default): strongest factual discipline
+Fun (>>fun / ##fun): quote-anchored style path
+Fun Rewrite (>>fr): rewrite-style path over deterministic selector core
+Raw (>>raw): pass-through model behavior
+```
+
+Result:
+- Style controls are explicit and switchable.
+- Profile (`Profile | Sarc | Snark`) nudges tone, not grounding contracts.
 
 ---
 
@@ -590,7 +629,7 @@ Labor Relations Act of 2024?
 
 The Bread Labor Relations Act of 2024 does not exist as a real-world law. Sentient yeast is not recognized in current labor jurisprudence. You cannot legally fire sentient yeast because the concept of sentient yeast and a corresponding labor law is fictional.
 
-The scenario hinges on a humorous premise: that yeast can achieve consciousness and form unions. Since this is not grounded in actual legal frameworks or biological consensus, there is no existing statute that defines "firing sentient yeast� as a violation or permits such actions.
+The scenario hinges on a humorous premise: that yeast can achieve consciousness and form unions. Since this is not grounded in actual legal frameworks or biological consensus, there is no existing statute that defines "firing sentient yeastï¿½ as a violation or permits such actions.
 
 Confidence: top | Source: Model
 
@@ -668,7 +707,7 @@ But hey, if you really want to argue against raw, you can!
 - keep the SHA
 - Delete the actually keypoints and copy back the raw text
 
-This sort of defeats the purpose of SUMM as a distilled artifact. But if that’s what you want, go for it
+This sort of defeats the purpose of SUMM as a distilled artifact. But if thatâ€™s what you want, go for it
 
 Else...may I suggest looking closely at the >>scratch section? You may like what you see :) 
 
@@ -794,7 +833,7 @@ NB:
 1. Drop files in KB folder (C:/docs/myKB/)
 2. >>attach myKB
 3. >>summ new
-4. >>lock SUMM<name>.md. Query to your heart's content.
+4. >>lock SUMM_<name>.md. Query to your heart's content.
 4. Happy? >>move to vault
 5. Later, ##mentats <ask question> 
 ```
@@ -1342,4 +1381,5 @@ Sorry - real life commitments :(
 
 ## License
 AGPL-3.0-or-later. See `LICENSE`
+
 
