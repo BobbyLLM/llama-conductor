@@ -1,4 +1,4 @@
-﻿# commands/handlers.py
+# commands/handlers.py
 """Main command handling logic."""
 
 import os
@@ -10,6 +10,7 @@ from ..config import (
     CHEAT_SHEET_PATH,
     FS_TOP_K,
     FS_MAX_CHARS,
+    cfg_get,
 )
 from ..session_state import SessionState
 from ..interaction_profile import (
@@ -21,6 +22,7 @@ from ..interaction_profile import (
 )
 from ..helpers import is_command, strip_cmd_prefix, parse_args
 from ..vault_ops import summ_new_in_kb, move_summ_to_vault
+from .cliniko import handle_cliniko_command
 
 # Optional imports (feature-detected)
 try:
@@ -86,13 +88,55 @@ except Exception:
     build_scratchpad_dump_text = None  # type: ignore
 
 try:
-    from ..vodka_filter import purge_session_memory_jsonl  # type: ignore
+    from ..vodka_filter import purge_session_memory_jsonl, VodkaFilter  # type: ignore
 except Exception:
     purge_session_memory_jsonl = None  # type: ignore
+    VodkaFilter = None  # type: ignore
 
 
-def load_help_text() -> str:
-    """Load command cheat sheet."""
+def _core_help_text() -> str:
+    return (
+        "# Router Help (Core)\n\n"
+        "Use `>>help advanced` for the full command sheet.\n\n"
+        "## Essentials\n"
+        "Attach docs, lock a source, and inspect session state.\n"
+        "- `>>status`\n"
+        "- `>>attach <kb>` | `>>detach <kb>` | `>>detach all`\n"
+        "- `>>list_kb` | `>>list_files` | `>>lock <SUMM_*.md>` | `>>unlock`\n"
+        "- `>>scratch` | `>>attach scratchpad` | `>>scratchpad status|list|show|clear|add|delete`\n"
+        "\n"
+        "## Modes\n"
+        "Changes response style; does not change grounding contracts.\n"
+        "- `>>fun` / `>>fun off`\n"
+        "- `>>fr` / `>>fr off`\n"
+        "- `>>raw` / `>>raw off`\n\n"
+        "## Profile + Presets\n"
+        "Tune tone and memory behavior for this session.\n"
+        "- `>>profile show|set|reset|on|off`\n"
+        "- `>>profile <casual|feral|turbo>`\n"
+        "- `>>memory status`\n"
+        "- `>>preset <fast|balanced|max-recall>`\n"
+        "- `>>preset show|set <fast|balanced|max-recall>|reset`\n\n"
+        "## Utilities\n"
+        "Quick tools, memory commands, and one-turn forced selectors.\n"
+        "- `>>flush`\n"
+        "- `>>trust <query>`\n"
+        "- `!! <text>` | `!! forget <query>` | `!! nuke`\n"
+        "- `?? <query>` | `?? list`\n"
+        "- `##mentats <q>` | `##fun <q>` | `##vision <q>` | `##ocr <q>`\n\n"
+        "## Common first steps\n"
+        "1. `>>status`\n"
+        "2. Ask your question normally\n"
+        "3. If using docs: `>>attach <your kb name>`\n"
+        "4. Optional strict grounding: `>>list_files` then `>>lock SUMM_<name>.md`\n"
+        "5. Need deep retrieval? Use `##mentats <query>`\n"
+    )
+
+
+def load_help_text(*, advanced: bool = False) -> str:
+    """Load command help text."""
+    if not advanced:
+        return _core_help_text()
     try:
         with open(CHEAT_SHEET_PATH, "r", encoding="utf-8") as f:
             return f.read()
@@ -170,6 +214,8 @@ def _source_filesystem_kbs(state: SessionState) -> set:
 
 
 def _render_status(session_id: str, state: SessionState) -> str:
+    cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip()
+    effective_preset = (state.vodka_preset_override or cfg_preset or "balanced").strip()
     return (
         "[status]\n"
         f"session_id={session_id}\n"
@@ -192,13 +238,13 @@ def _render_status(session_id: str, state: SessionState) -> str:
         f"last_hits={state.rag_last_hits}\n"
         f"vault_last_query={state.vault_last_query!r}\n"
         f"vault_last_hits={state.vault_last_hits}\n"
+        f"vodka_preset={effective_preset!r}\n"
     )
 
 
 def _dispatch_exact_early(low: str, *, state: SessionState, session_id: str) -> Optional[str]:
     handlers: Dict[str, Callable[[], str]] = {
         "status": lambda: _render_status(session_id, state),
-        "help": load_help_text,
     }
     fn = handlers.get(low)
     return fn() if fn else None
@@ -329,6 +375,101 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
     out = _dispatch_exact_early(low, state=state, session_id=session_id)
     if out is not None:
         return out
+
+    # help surface tiering
+    if parts and parts[0].lower() == "help":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub in ("advanced", "full"):
+            return load_help_text(advanced=True)
+        return load_help_text(advanced=False)
+
+    # runtime preset controls (session-scoped override)
+    if parts and parts[0].lower() == "preset":
+        sub = parts[1].lower() if len(parts) > 1 else "show"
+        allowed = {"fast", "balanced", "max-recall", "max_recall"}
+        cfg_default = str(cfg_get("vodka.preset", "balanced") or "balanced").strip() or "balanced"
+        if sub == "max" and len(parts) > 2 and parts[2].lower() == "recall":
+            sub = "max-recall"
+        if sub == "show":
+            current = (state.vodka_preset_override or cfg_default).strip()
+            return (
+                "[preset]\n"
+                f"default={cfg_default}\n"
+                f"current={current}\n"
+                "available=fast, balanced, max-recall\n"
+                "usage: >>preset set <name> | >>preset <name> | >>preset reset"
+            )
+        if sub in ("set", "use"):
+            if len(parts) < 3:
+                return "[preset] usage: >>preset set <fast|balanced|max-recall>"
+            name = " ".join(parts[2:]).strip().lower().replace("_", "-")
+            if name == "max recall":
+                name = "max-recall"
+            if name not in allowed:
+                return "[preset] invalid preset. allowed: fast, balanced, max-recall"
+            if name == "max_recall":
+                name = "max-recall"
+            state.vodka_preset_override = name
+            return f"[preset] runtime preset set: {name}"
+        if sub in ("reset", "clear"):
+            state.vodka_preset_override = ""
+            return f"[preset] runtime preset reset (using default: {cfg_default})"
+        if sub in allowed:
+            name = "max-recall" if sub == "max_recall" else sub
+            state.vodka_preset_override = name
+            return f"[preset] runtime preset set: {name}"
+        return "[preset] usage: >>preset show|set <fast|balanced|max-recall>|reset"
+
+    # memory observability
+    if parts and parts[0].lower() == "memory":
+        sub = parts[1].lower() if len(parts) > 1 else "status"
+        if sub in ("status", "show"):
+            if state.vodka is None and VodkaFilter is not None:
+                try:
+                    state.vodka = VodkaFilter()
+                    vodka_cfg = dict(cfg_get("vodka", {}))
+                    state.vodka.valves.storage_dir = str(vodka_cfg.get("storage_dir", state.vodka.valves.storage_dir) or state.vodka.valves.storage_dir)
+                    state.vodka.valves.enable_summary = bool(vodka_cfg.get("enable_summary", state.vodka.valves.enable_summary))
+                    state.vodka.valves.summary_require_session_id = bool(
+                        vodka_cfg.get("summary_require_session_id", state.vodka.valves.summary_require_session_id)
+                    )
+                    state.vodka.valves.summary_every_n_user_msgs = int(
+                        vodka_cfg.get("summary_every_n_user_msgs", state.vodka.valves.summary_every_n_user_msgs)
+                    )
+                    state.vodka.valves.summary_inject_max_units = int(
+                        vodka_cfg.get("summary_inject_max_units", state.vodka.valves.summary_inject_max_units)
+                    )
+                    state.vodka.valves.summary_inject_max_chars = int(
+                        vodka_cfg.get("summary_inject_max_chars", state.vodka.valves.summary_inject_max_chars)
+                    )
+                except Exception:
+                    pass
+            if not state.vodka or not hasattr(state.vodka, "get_session_memory_status"):
+                return "[memory] unavailable (Vodka not initialized)"
+            try:
+                payload = state.vodka.get_session_memory_status(
+                    session_id=session_id,
+                    user_turn_hint=int(getattr(state, "profile_turn_counter", 0) or 0),
+                )
+            except Exception as e:
+                return f"[memory] status unavailable: {e.__class__.__name__}"
+            cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip() or "balanced"
+            active_preset = (state.vodka_preset_override or cfg_preset).strip()
+            return (
+                "[memory]\n"
+                f"preset={active_preset}\n"
+                f"enabled_summary={payload.get('enabled_summary')}\n"
+                f"require_session_id={payload.get('require_session_id')}\n"
+                f"summary_every_n_user_msgs={payload.get('summary_every_n_user_msgs')}\n"
+                f"memory_file_exists={payload.get('memory_file_exists')}\n"
+                f"unit_count={payload.get('unit_count')}\n"
+                f"last_update_turn={payload.get('last_update_turn')}\n"
+                f"last_inject_turn={payload.get('last_inject_turn')}\n"
+                f"last_inject_units={payload.get('last_inject_units')}\n"
+                f"last_candidate_count={payload.get('last_candidate_count')}\n"
+                f"last_query={payload.get('last_query')!r}\n"
+            )
+        return "[memory] usage: >>memory status"
 
     # profile controls
     if parts and parts[0].lower() == "profile":
@@ -562,6 +703,71 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         
         # Format and return recommendations
         return "[trust] " + format_recommendations(recommendations, query=query)
+
+    # cliniko (DETERMINISTIC clinical note pipeline)
+    if parts and parts[0].lower() == "cliniko":
+        subcommand = parts[1].lower() if len(parts) > 1 else ""
+
+        # Default: treat '>>cliniko' as 'auto' when full note payload is present
+        _known_subcommands = {
+            "auto", "parse", "compact", "review",
+            "help", "status",
+            "sidecar", "generate", "sanitize",
+        }
+        if (not subcommand) or (subcommand not in _known_subcommands):
+            _lead = (cmd_text or "").lstrip()
+            _tail = ""
+            for _prefix in (">>cliniko", "»cliniko", "Â»cliniko"):
+                if _lead.lower().startswith(_prefix):
+                    _tail = _lead[len(_prefix):].lstrip()
+                    break
+            if _tail and ("\n" in _tail or len(_tail) >= 200):
+                return handle_cliniko_command("auto", _tail, state, session_id)
+        
+        # Explicit subcommands
+        if subcommand == "auto":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for auto_prefix in (">>cliniko auto", "»cliniko auto", "Â»cliniko auto"):
+                if auto_prefix in _low:
+                    idx = _low.find(auto_prefix) + len(auto_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        if subcommand == "parse":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for parse_prefix in (">>cliniko parse", "»cliniko parse", "Â»cliniko parse"):
+                if parse_prefix in _low:
+                    idx = _low.find(parse_prefix) + len(parse_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        # Legacy compact (redirect but support for transition)
+        if subcommand == "compact":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for compact_prefix in (">>cliniko compact", "»cliniko compact"):
+                if compact_prefix in _low:
+                    idx = _low.find(compact_prefix) + len(compact_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        # Other subcommands (help, status, legacy generate/sanitize)
+        return handle_cliniko_command(subcommand, "", state, session_id)
+
     # attach/detach/list
     if parts and parts[0].lower() in ("attach", "a"):
         if len(parts) < 2:
@@ -935,4 +1141,3 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return "[router] raw mode OFF"
 
     return f"[router] unknown command: {cmd}"
-
