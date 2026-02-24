@@ -1,6 +1,6 @@
-# Preprint Draft: Reliability Evaluation for a Local 4B System via Deterministic router grounding 
+# Preprint Draft: Reliability Evaluation of a Local 4B LLM using deterministic router grounding 
 
-Status: pre-publication draft for peer-review preparation.
+Status: pre-publication draft for peer-review preparation. WIP
 
 ## Abstract
 
