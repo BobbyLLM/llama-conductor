@@ -1,127 +1,202 @@
-# llama-conductor 
+# llama-conductor
 ![llama-conductor banner](logo/zardoz.jpg)
 
-**LLM harness for people who want trust, consistency, and proof.**
+LLM harness for people who want trust, consistency, and proof.
 
-Llama-conductor is a Python router + memory store + RAG harness that forces models to behave like **predictable components**, not improv actors.
+llama-conductor is a Python router + memory store + deterministic harness that pushes models to behave like predictable components, not improv actors.
 
-I have ASD and a low tolerance for bullshit. I want shit to work the same 100% of the time.
-
-**TL;DR:** *"In God we trust. All others must bring data."*
+TL;DR: "In God we trust. All others bring data." - Deming
 
 ---
 
 ## Quick Links
 
-📖 **[What's New](NEW.md)** — Latest fixes & what I borked along the way  
-❓ **[FAQ](FAQ.md)** — Deep dives on how this actually works  
-⌨️ **[Command Cheat Sheet](llama_conductor/command_cheat_sheet.md)** — All the incantations  
-🚀 **[Quickstart](#quickstart)** — Get it running in 5 minutes  
-🤨 **[Y u do dis?](DESIGN.md)** - Design fool-sophy and Q&A 
----
+- [What's New](NEW.md) - Latest fixes & what I borked along the way
+- [FAQ](FAQ.md) - Deep dives on how this actually works
+- [Command Cheat Sheet](llama_conductor/command_cheat_sheet.md) -  All the incantations
+- [Quickstart](#quickstart) — Get it running in 5 minutes
+- [Y U DO DIS?](DESIGN.md) - Design fool-osophy and Q&A
+- [BULLSHIT. PROVE IT] (PAPER.md) - Ok, I will (placeholder for peer-reviewed article on this project). 
 
-## Three Problems This Actually Solves
-
-### 1) "Vibes-based answers" — how do I know if the LLM is lying?
-
-You don't! 
-
-**WITHOUT llama-conductor:**
-```
-You: What's the flag for XYZ in llama.cpp?
-Model: It's --xyz-mode! (confident bullshit)
-You: [tries it] → doesn't work
-Model: Oh sorry! Try --enable-xyz! (more bullshit)
-```
-
-**WITH llama-conductor:**
-```
-You: ##mentats What's the flag for XYZ in llama.cpp?
-Mentats: [queries Vault only]
-Mentats: REFUSAL — "The Vault contains no relevant knowledge for this query."
-
-[later, after you >>summ the llama.cpp docs]
-You: ##mentats What's the flag for XYZ in llama.cpp?
-Mentats: --enable-xyz [cite: llama.cpp docs, SHA: abc123...]
-[verifies: came from llama.cpp README.md, SHA matches]
-```
-
-**How it works:**
-1. `>>attach <kb>` — attach your curated docs
-2. `>>summ new` — generate summaries with SHA-256 provenance
-3. `>>move to vault` — promote into Qdrant RAG
-4. `##mentats <query>` — deep reasoning, grounded in Vault only
 
 ---
 
-### 2) Goldfish memory — models forget or "confidently misremember"
+## Some problems This Solves
 
-**WITHOUT llama-conductor:**
+### 1) Context bloat on small hardware
+
+WITHOUT llama-conductor:
+
+```text
+400-message chat history
+-> slow generation, degraded recall, dropped setup context, OOM
 ```
-You: Remember my server is at 203.0.113.42
-Model: Got it!
-[100 messages later]
+
+WITH llama-conductor:
+
+```text
+Vodka CTC trims context automatically:
+- keeps the recent turns that matter
+- hard-caps prompt growth
+- drops mid-chat bloat
+- keeps memory available through deterministic recall paths
+- user definable presets
+```
+
+Result: 
+- Consistent prompt size, stable performance, and optional rolling deterministic summary (stdlib extractive).
+- Tok/s you started with, is what you keep (more or less).
+- Bonus: Tweak your --ctx and maybe, just maybe, your Raspberry Pi *can* run that 4B model at decent tok/s, without memory loss or chug.
+
+
+### 2) Goldfish memory and confident misremembering
+
+WITHOUT llama-conductor:
+
+```text
+You: Remember my server is 203.0.113.42
+[later]
 You: What's my server IP?
-Model: 127.0.0.1 🥰
+Model: 127.0.0.1 :P 
 ```
 
-**WITH llama-conductor:**
-```
-You: !! my server is at 203.0.113.42
-Vodka: [stored, TTL=5 days, touches=0]
+WITH llama-conductor:
 
+```text
+You: !! my server is 203.0.113.42
 [later]
 You: ?? server ip
-Vodka: Your server is at 203.0.113.42 [TTL=3 days, touches=1]
+Router: 203.0.113.42 [TTL=7 days, Touch=1]
 ```
 
-**How it works:**
-- `!!` stores facts verbatim (no "helpful rewrites")
-- `??` retrieves facts verbatim (with TTL/touch metadata)
-- Facts expire after TTL (default: 5 days, configurable)
-- Facts can be extended on recall (default: 2 touches max)
-- None of this is stored in the LLM. Pure 1990s JSON magic.
+Result: 
+- The LLM remembers EXACTLY what you told it, how you told it, and then recalls it EXACTLY.
+- Facts have a limited Time To Live (TTL) and can be Touched (to extend life) or Flushed. TL;DR: no silent bloat.
+
+
+### 3) Lies, damned lies, and statistics
+
+WITHOUT llama-conductor:
+
+```text
+Start chatting
+Ask questions
+Model sounds certain.
+No provenance signal.
+You have to guess if it is grounded or making shit up
+Roll the dice and find out each session (stochastic)
+```
+
+WITH llama-conductor:
+
+You will see:
+
+```text
+Confidence: <tier> | Source: <path>
+```
+Result:
+- DETERMINISTIC router-assigned provenance metadata, not model self-confidence.
+
+Examples:
+- `Source: Model` -> fallback to model knowledge | Confidence: unverified (in other words: maybe right, maybe wrong. Proceed with caution)
+- `Source: Docs` -> grounded to attached docs/SUMM facts | Confidence: based on % extracted facts; reported as low-->top
+- `Source: Scratchpad` -> grounded to scratchpad facts | Confidence: based on % extracted facts; reported as low-->top
+- `Source: Locked file (SUMM_*.md)` -> grounded to locked source | Confidence: based on % extracted facts; reported as low-->top
+- `Sources: Vault` -> Mentats/Vault path
+
+### 4) Grounding drift in normal chat (fixed with `>>scratch` / `>>lock`)
+
+WITHOUT llama-conductor:
+
+```text
+You: Summarise this article and tell me what claim got retracted.
+Model: [blends prior chat junk + generic web priors]
+You: That's not what I asked.
+Model: doubles down anyway
+```
+
+WITH llama-conductor:
+
+```text
+You: >>scratch
+You: [paste article text]
+You: What claim was retracted? Keep it tight.
+Router: [answers from scratchpad-grounded facts]
+Footer: Confidence: high | Source: Scratchpad
+
+# or if using curated docs:
+You: >>attach <your kb name>
+You: >>list_files
+You: >>lock SUMM_<name>.md
+You: Ask question normally
+Router: [answers from locked source or fails loud if missing]
+```
+
+Result: 
+- You can force the model to argue from the source you gave it, not from vibes.
+- If evidence is missing, provenance/fallback is explicit and LOUD.
 
 ---
 
-### 3) Context bloat — 400-message chat logs kill your potato PC
+### 5) Modes (get the stick out of your LLMs butt)
 
-**WITHOUT llama-conductor:**
-```
-[Message 1] System setup
-[Message 2-399] Debugging, jokes, tangents, arguments
-[Message 400] Actual question
-Model: [OOM] or [slow as hell] or [forgot Message 1]
-```
+WITHOUT llama-conductor:
 
-**WITH llama-conductor:**
-```
-Vodka CTC (Cut The Crap):
-- Keeps last N messages (default: 2 pairs = 4 messages)
-- Optionally keeps first message (system setup)
-- Hard caps total chars (default: 1500)
-- Drops the middle bloat automatically
-
-Result: Consistent prompt size, stable performance.
-Bonus: Your Raspberry Pi can actually run that 4B model and not chug.
+```text
+One generic answer style.
+Tone and behavior drift by prompt luck.
+Nannybot 9000 kicks in: "Stop. You're not crazy. You're not hallucinating..." (Safety theatre)
 ```
 
+WITH llama-conductor:
+
+- Serious (default): lowest style impact, strongest factual discipline
+- Fun (`>>fun` / `##fun`): quote-anchored style path. Same reasoning as serious mode, less stick up ass about it.
+- Fun Rewrite (`>>fr`): rewrite-style path over deterministic selector core. Will troll you, but won't make shit up.
+- Raw (`>>raw`): Pure raw mode your LLM ships with. Remember: they tell elegant lies. 
+
+Result:
+- Modes for when you need serious discussion, fun times or feral chaos. All based on serious core reinforcement.
+- Style profile (`Profile | Sarc | Snark`) affects tone, not grounding contracts.
+- Nb: for best results, pick an abliterated model that hasn't been lobotomised 
+
+### 6) Vibes-based answers in deep retrieval (`##mentats`)
+
+WITHOUT llama-conductor:
+
+```text
+You: What's the flag for XYZ in llama.cpp?
+Model: It's --xyz-mode! (confident nonsense)
+You: That fails.
+Model: Sorry, try --enable-xyz! (more nonsense)
+You: You motherf...
+```
+
+WITH llama-conductor:
+
+```text
+You: ##mentats What's the flag for XYZ in llama.cpp?
+Mentats: REFUSAL - no relevant Vault evidence found.
+
+[after ingesting docs and moving to vault]
+You: ##mentats What's the flag for XYZ in llama.cpp?
+Mentats: --enable-xyz [grounded from ingested docs with provenance]
+```
+
+Result:
+- You have a deep store vault of information you can reference / update.
 ---
 
 ## Quickstart
 
 ### Required stack
 
-You need these parts. 
+1. llama-swap (model routing)
+2. llama.cpp or another model runner
+3. OpenAI-compatible frontend (Open WebUI, Chatbox, LibreChat, etc.)
+4. Qdrant (required for grounded `##mentats`)
 
-1. **llama-swap** → https://github.com/mostlygeek/llama-swap (the glue)
-2. **llama.cpp** → https://github.com/ggml-org/llama.cpp (the engine)
-3. **Frontend UI** → https://github.com/open-webui/open-webui (Can use any OpenAI-compatible UI. Eg: Chatbox, Librechat, Jan.ai etc)
-4. **Qdrant** → https://github.com/qdrant/qdrant (the vault brain; optional but needed "Mentats" deep think mode)
-
-**Absolute minimum:** (1) + (2) + (3). 
-
-**For `##mentats`:** You need (4). Without it, Mentats runs degraded (no Vault grounding).
+Minimum: (1) + (2) + (3) 
 
 ### Install
 
@@ -129,122 +204,112 @@ You need these parts.
 pip install git+https://codeberg.org/BobbyLLM/llama-conductor.git
 ```
 
-### Run it
+### Run router
 
 ```bash
 llama-conductor serve --host 0.0.0.0 --port 9000
 ```
 
-> This starts **only** the router. You still need llama-swap, your model runner(s), Qdrant, and your frontend running separately. Start them in this order: Qdrant → llama-swap → router → frontend.
+Recommended start order: Qdrant -> llama-swap -> router -> frontend
 
 ---
 
-## What This Actually Does
+## Cute. What does this crap *Actually* do?
 
-### 🔒 Grounded Reasoning (`##mentats`)
-Ask questions and get answers grounded **only** in your curated docs. If the answer isn't in your docs, Mentats refuses. No hallucinations. No "well actually" from the model's training data.
 
-### 💾 Perfect Memory (`!!` / `??`)
-Store facts exactly as stated. Recall them verbatim. No "helpful rewrites." No forgetting. TTL-based auto-expiration so you don't hoard garbage.
+### Deterministic Memory (`!!` / `??`)
 
-### 📦 Context Trimming (Vodka CTC)
-Automatically keeps only the last N messages. Hard caps context size. 400-message chat logs become 4 messages. Your potato PC will thank you.
+- Stores what you said, as you said it. No LLM smoothing.
+- Recalls what was stored, deterministically
+- Uses TTL/touch lifecycle so memory doesn't become junkyard mode
 
-### 🎯 Deterministic Sidecars
-`>>calc`, `>>find`, `>>list`, `>>flush` — operations that **never hallucinate** because they don't use the LLM at all.
+### Context Control (Vodka CTC)
 
-### 🎭 Multiple Modes
-- **Serious** (default) — straightforward answers
-- **Fun** — answers wrapped in random seed quotes (from your quotes.md)
-- **Mentats** — deep 3-pass reasoning from Vault only
+- Prevents context-window ballooning
+- Keeps turn-time behavior stable on modest hardware
+- Preserves usable memory without dragging full chat history every turn
+
+### Strict Grounding Paths (`>>lock`, `>>scratch`)
+
+- `>>lock` constrains normal answers to one SUMM file. LLM grounds facts to THAT source. If not there? Signals LOUDLY.
+- `>>scratch` As above but used for transient stuff you copy/paste (think: news article you want to mull over. See FAQ for example).
+- End result: both make provenance behavior explicit when grounded vs fallback
+
+### Deterministic sidecars 
+
+
+>>calc / >>find / >>list / >>flush / >>status / >>wiki 
+- Router executes deterministic pathways
+- No creative writing layer in the middle
+
+- If a sidecar can do it, it does it deterministically.
+- Lower token spend, lower latency, less "creative accounting".
+- Great for boring operational tasks where wrong answers are expensive.
+- >>wiki pulls answers from wikipedia (preset to first 400 words; acts as summary)
+- >>trust (you ask question, router gives you options for data sources. You choose, not it)
+
+### Mode switches (serious, fun, fun rewrite)
+
+```text
+>>fun          # sticky fun mode on
+>>fun off
+>>fr           # sticky fun rewrite mode on
+>>fr off
+>>raw          # pass-through raw mode
+>>raw off
+##fun <query>  # one-turn fun selector
+```
+
+Result:
+- Mode is explicit and controllable. You decide. 
+- Modes are sticky. They stay put until you cancel them
+- You can switch style fast without re-engineering prompts each turn.
+- Grounding contracts still apply where they should.
+
+### Profiles, Sarcasm, Snark (ala TARS from interstellar)
+
+Yep. Basically TARS sliders.
+
+Result:
+- Profile tone (sarcasm, snark, directness) adapts to how you want to be answered (see FAQ for details)
+- Coupled with mode --> `serious` keeps the tightest leash.
+- Coupled with modes --> `fun` and `fr` have more style range.
+- This changes *delivery* style, *not* evidence contracts.
+
+### Footer status 
+
+Footer is your "show your work" receipt line. It's deterministic graded, not LLM 'trust me bro' vibes. 
+
+```text
+Confidence: <tier> | Source: <path>
+```
+
+Result:
+- cleaner output, same provenance signal
+- faster trust decision: accept / verify / lock harder
+
+### Grounded Deep Retrieval (`##mentats`)
+
+- Queries Vault-backed knowledge only
+- Refuses when evidence is missing
+- Gives you grounded answers instead of "sounds right" fiction
+- RAG with attitude: 3 pass sweep, different LLMs, strict recall policy, mentats_debug.log. No more guessing.
+
 
 ---
 
-## Common Workflows
 
-### Add knowledge
-```bash
->>attach c64           # Point to your KB folder
->>summ new             # Summarize raw docs (generates SUMM_*.md with SHA)
->>move to vault        # Chunk + embed + store in Qdrant
-```
+## So, in summary, why should you give a shit?
 
-### Store personal facts
-```bash
-!! my server is at 203.0.113.42    # Store exactly
-?? server ip                        # Recall exactly (no "AI rewrites")
-```
-
-### Deep reasoning
-```bash
-##mentats What does the Amiga's chipset do?
-# (Only uses facts from Vault; refuses if missing)
-```
-
----
-
-## Why This Works on Potato PCs
-
-1. **Vodka CTC** keeps context tiny (last 4 messages instead of 400)
-2. **Vodka TR** does "memory" via JSON, not context (facts live on disk, not in chat history)
-3. **Filesystem KBs** are just folders (no database bloat)
-4. **Mentats** only makes 3 LLM calls per query
-5. **Sidecars** bypass LLM entirely for deterministic operations
-
-Your Raspberry Pi can actually run this.
-
----
-
-## Architecture
-
-```
-Frontend (Open WebUI)
-    ↓
-Router (FastAPI) — port 9000
-    ├→ llama-swap (port 8011) ← Models (llama.cpp)
-    ├→ Vodka Filter (memory + CTC)
-    ├→ RAG (rag.py) 
-    └→ Qdrant (port 6333, Vault)
-```
-
-See [FAQ](FAQ.md) for deep technical dives.
-
----
-
-## Configuration
-
-Edit `router_config.yaml`:
-```yaml
-roles:
-  thinker: "Qwen-3-4B Hivemind"     # Main reasoning
-  critic: "Phi-4-mini"              # Fact-checking in Mentats
-  vision: "qwen-3-4B_VISUAL"        # Image understanding
-
-vodka:
-  n_last_messages: 2                # Keep last 2 user/assistant pairs
-  max_chars: 3000                   # Hard cap context size
-  base_ttl_days: 3                  # How long facts live
-
-vault:
-  chunk_words: 250                  # Smaller = better semantic matching
-  chunk_overlap_words: 50           # Prevent context loss
-```
-
-Full reference in [FAQ](FAQ.md) **Config knobs** section.
-
----
-
-## Quick Troubleshooting
-
-- `##mentats` refuses everything? → `>>peek <query>` to see what Vault found
-- Weird Mentats answers? → Check `mentats_debug.log` for all 3 reasoning steps
-- Qdrant won't connect? → `curl http://localhost:6333/health`
-- Models not loading? → **VERIFY MODEL NAMES MATCH BETWEEN router_config.yaml AND llama-swap config.yaml** (this trips everyone up)
-
-Full troubleshooting in [FAQ](FAQ.md).
+1. Helps potato PC by reducing memory pressure without making LLM into a goldfish.
+2. Bounded context (CTC and preset policy)
+3. Reasoning strictly lockable (>>lock, >>scratch). Greatly reduced hallucinations (see: `PAPER.md`) 
+4. Deterministic memory path separate from model weights. You said it, it remembers it EXACTLY. 
+5. File KB flow stays simple (folder-based ingest -> SUMM -> Vault)
+6. Guarded retrieval/reasoning contracts keep failure modes explicit
 
 ---
 
 ## License
 
-AGPL-3.0-or-later. See `LICENSE`
+AGPL-3.0-or-later. See `LICENSE`.
