@@ -1,6 +1,36 @@
 ﻿# What's New
 
-*** V1.3.1 (latest)
+*** V1.3.2 (latest)
+
+TL;DR
+- Vodka recall is now cleaner, stricter, and more predictable under pressure.
+- You get simpler controls (`>>preset ...`, `>>memory status`) without losing advanced options.
+- Help/footers are less noisy, while fail-loud behavior stays intact.
+
+Highlights
+- Added recall presets:
+  - `>>preset fast|balanced|max-recall`
+  - `>>preset show|set|reset`
+- Added memory observability:
+  - `>>memory status`
+  - active preset shown in `>>status` as `vodka_preset='<name>'`
+- Improved help UX:
+  - `>>help` = compact operator view
+  - `>>help advanced` = full command sheet
+- Reduced footer bloat:
+  - profile footer line defaults to non-default styles only (`footer.profile.mode: non_default`)
+- Unified Fun/Fun Rewrite selection:
+  - one deterministic quote-selector core; different renderers preserved
+- Canonicalized Vodka memory path:
+  - single inlet flow (`capture -> retrieve -> render/inject`)
+- Hardened fail-loud recall behavior:
+  - uncertainty now returns explicit non-guess outputs
+  - fuzzy near-match cases include a clear partial-token-trap signal
+- Continued decomposition:
+  - recall semantic layer isolated in `llama_conductor/recall_semantic.py`
+
+---
+*** V1.3.1 
 
 TL;DR
 - Big ticket: Vodka recall was refactored to be deterministic-first, less noisy, and far less likely to drift.
@@ -18,30 +48,65 @@ Recall contract hardening + global regression gate:
 - Current validation target is passing at/above the 90-95% reliability threshold.
 
 ---
-*** V1.3.0
+*** V1.2.5
 
-TL;DR
-- The assistant now adapts better to your style in-session (direct/sarcastic/snarky) without relaxing grounding rules.
-- `>>profile` gives you explicit control over tone behavior.
-- Responses are more stable and consistent under heavier usage.
+Session-state interaction profile (deterministic, in-memory MVP):
 
-Session-state style adaptation and stability hardening:
-
-- Added deterministic in-memory interaction profile (`>>profile`), session-scoped only.
-- New profile commands:
-  - `>>profile show|set|reset|on|off`
-  - quick aliases/presets for faster control (see command cheat sheet).
-- `>>status` now shows profile runtime fields (`profile_*` + relevant streak counters).
-- Added deterministic profile footer on non-Mentats responses:
-  - `Profile: <style> | Sarc: <level> | Snark: <level>`
-- `>>flush` now resets profile/style runtime identity in addition to CTC cache.
-- `>>detach all` resets profile state (fresh interaction baseline for next session flow).
-- Manual `>>profile set` values are sticky and take precedence over inferred updates until changed/reset.
-- Fun and Fun Rewrite now use shared deterministic profile-aware quote prefiltering.
-- Added warm/supportive quote bucket and expanded quote corpus for better fun/fr alignment.
-- Router responsiveness hardening:
-  - blocking pathways run via threadpool boundary to reduce event-loop starvation.
-
+- Added deterministic per-session interaction profile module: `llama_conductor/interaction_profile.py`.
+- Added commands:
+  - `>>profile show`
+  - `>>profile set <field>=<value>`
+  - `>>profile reset`
+  - `>>profile on` / `>>profile off`
+  - soft aliases: `profile show|set|reset|on|off`
+- Added status fields in `>>status`:
+  - `profile_enabled`
+  - `profile_confidence`
+  - `profile_last_updated_turn`
+- Added profile reset on `>>detach all`.
+- Added style constraints injection for normal + Fun + FR + Raw paths.
+  - Style adapter is framing-only and does not alter lock/scratchpad/mentats grounding contracts.
+- Added sensitive-context and profanity coercion rules:
+  - `ack_reframe_style=feral` is coerced to `sharp` when `profanity_ok=false`.
+- Hardened session fallback IDs in `router_fastapi.py`:
+  - precedence now `x-chat-id` -> `x-session-id` -> `body.user` -> `sess-<ip>-<proc_counter>`.
+- Extended smoke runner with executable PF matrix cases (`PF-001`..`PF-018`):
+  - show/set/reset/on/off behavior
+  - fail-loud validation checks
+  - lock/scratchpad/mentats no-regression checks
+  - detach-all reset behavior
+- Added sensitive professional-context runtime confirmation gate:
+  - prompt: `[router] This request is sensitive in a professional context. Continue anyway? [Y/N]`
+  - non-`Y/N` next turn defaults to cancel (`[router] Sensitive request cancelled (default N)`).
+- Added per-session nickname disallow memory:
+  - detects explicit user disallow phrasing (`don't call me...`, `stop calling me...`, `I am not...`)
+  - strips blocked nicknames from response framing.
+- Added serious-mode anti-loop guard:
+  - allows at most one consecutive meta ack/reframe response
+  - repeated ack loop is coerced to deterministic task-forward fallback.
+- Extended smoke runner again with `PF-019..PF-023` and `VR-003`.
+- Added deterministic profile footer on non-Mentats answers:
+  - `Profile: <correction_style> | Sarc: <level> | Snark: <level>`
+- Updated `>>flush` behavior:
+  - still clears CTC cache
+  - now also resets session profile/style identity runtime state
+  - clears sticky style modes (`fun`, `fr`, `raw`) without detaching KBs.
+- Added warm/supportive quote bucket in `llama_conductor/quotes.md`:
+  - new tag line: `## warm supportive compassionate hopeful resilient`
+  - 20 quotes normalized for punctuation/casing consistency.
+- Increased `/serious` default generation cap from `256` to `384` tokens to reduce mid-answer truncation on longer analysis/edit requests.
+- Reworked Vodka `enable_summary` path in TESTING:
+  - replaced rolling concatenated summary reinjection with deterministic session-memory units
+  - writes session-scoped memory units to `total_recall/session_memory/<session_id>.jsonl`
+  - updates every `n` user turns (modulo gate), injects only when lexical relevance passes
+  - capped injection budget (`summary_inject_max_units`, `summary_inject_max_chars`) to protect latency
+- Fun and Fun Rewrite now share the same deterministic profile-aware quote prefilter:
+  - both paths use profile state (`correction_style`, `sarcasm_level`, `snark_tolerance`) to constrain quote pool before random pick.
+  - no additional model calls added.
+- Validation summary:
+  - profile/format matrix and FR checks passed.
+  - recall quality and output-shape reliability improved versus prior baseline.
+  - response stability improved under mixed workload runs.
 
 ---
 
@@ -66,8 +131,8 @@ Deterministic confidence/source footer normalization (non-Mentats paths):
 - Metadata/docs remediation (no command behavior change):
   - Router runtime version reporting now uses single-source `llama_conductor/__about__.py`.
   - `/healthz` version now resolves from `__version__` (no hardcoded drift).
-  - Cleaned stale documentation references after SUMM cleanup.
-  - Added maintainer-side release consistency checks (version/license/docs).
+  - `docs/index/DOCS-TRUTH-MAP.md` active list cleaned to remove stale `llama_conductor/SUMM.md`.
+  - Added pre-release checker: `tests/pre_release_consistency_check.py` (version/license/docs consistency, fail-loud).
 
 ---
 
@@ -392,6 +457,18 @@ pip install --upgrade git+https://codeberg.org/BobbyLLM/llama-conductor.git
 **New in v1.1.1:** 
 - Three new API sidecars: `>>wiki`, `>>exchange`, `>>weather`
 
+**New in v1.2.5 (stability patch):**
+- Added fail-soft exception guard for `/v1/chat/completions`:
+  - unhandled router exceptions now return a structured router error content instead of transport-level hard failure.
+  - traceback is emitted to router console for debugging.
+- Replayed `serious7` and `fun7` sequences end-to-end after patch:
+  - result: `serious7 16/16`, `fun7 19/19`.
+
+**Profile override fix (manual set precedence):**
+- Fixed bug where inferred profile updates could overwrite explicit `>>profile set` values on the next turn.
+- Explicitly set fields are now sticky manual overrides until changed again or reset.
+- Preset shortcuts (`>>profile override ...` / `>>profile turbo`) now register the same sticky manual overrides.
+
 ---
 
 ## Questions?
@@ -400,5 +477,6 @@ pip install --upgrade git+https://codeberg.org/BobbyLLM/llama-conductor.git
 - Try `>>trust <your question>` to get tool recommendations
 - Check `mentats_debug.log` for deep reasoning traces
 - See [FAQ](FAQ.md) for architecture & troubleshooting
+
 
 

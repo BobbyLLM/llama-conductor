@@ -54,7 +54,6 @@ from .interaction_profile import (
     update_profile_from_user_turn,
 )
 from .privacy_utils import safe_preview, short_hash
-from .upstream_watchdog import start_watchdog, stop_watchdog
 
 # Required modules
 from .vodka_filter import Filter as VodkaFilter, purge_session_memory_jsonl
@@ -1168,25 +1167,18 @@ async def _chat_exception_guard(request: Request, call_next):
 
 
 @app.on_event("startup")
-async def _startup_watchdog() -> None:
+async def _startup_init() -> None:
     try:
         base = str(cfg_get("vodka.storage_dir", "") or "").strip()
         purged = purge_session_memory_jsonl(base)
         _dbg(f"[DEBUG] startup session-memory purge deleted={purged}")
     except Exception:
         pass
-    try:
-        start_watchdog()
-    except Exception:
-        pass
 
 
 @app.on_event("shutdown")
-async def _shutdown_watchdog() -> None:
-    try:
-        stop_watchdog()
-    except Exception:
-        pass
+async def _shutdown_cleanup() -> None:
+    pass
 
 
 @app.get("/healthz")
