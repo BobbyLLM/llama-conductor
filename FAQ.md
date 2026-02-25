@@ -10,10 +10,10 @@ llama-conductor is the **router/harness**. It does **not** ship a model, and it 
 
 You need these parts working together:
 
-1) **llama-swap** ? https://github.com/mostlygeek/llama-swap
-2) **llama.cpp (or other runner)** ? https://github.com/ggml-org/llama.cpp
-3) **Frontend UI (example: Open WebUI / OWUI)** ? https://github.com/open-webui/open-webui
-4) **Qdrant (Vault / RAG)** ? https://github.com/qdrant/qdrant
+1) **llama-swap**  https://github.com/mostlygeek/llama-swap
+2) **llama.cpp (or other runner)**  https://github.com/ggml-org/llama.cpp
+3) **Frontend UI (example: Open WebUI / OWUI)**  https://github.com/open-webui/open-webui
+4) **Qdrant (Vault / RAG)**  https://github.com/qdrant/qdrant
 
 **Minimum:** (1) + (2) + (3).
 
@@ -335,7 +335,7 @@ Think of it like **cake mix vs a whole cake**:
 
 3. **Vodka expands on read** (outlet phase):
    ```
-   [ctx:abc123xyz] ? "my server is at 203.0.113.42 [TTL=3, touches=1]"
+   [ctx:abc123xyz]  "my server is at 203.0.113.42 [TTL=3, touches=1]"
    ```
 
 #### Why this is powerful:
@@ -427,7 +427,7 @@ Research direction for this design pattern (verifier/critic pass improving relia
        return "The Vault contains no relevant knowledge..."
    ```
 
-3. **3-pass workflow** (Thinker ? Critic ? Thinker):
+3. **3-pass workflow** (Thinker  Critic  Thinker):
    - **Step 1 (Thinker):** Draft answer using only FACTS_BLOCK
    - **Step 2 (Critic):** Check for overstatement, constraint violations
    - **Step 3 (Thinker):** Fix issues, output structured answer
@@ -471,7 +471,7 @@ Research direction for this design pattern (verifier/critic pass improving relia
    ```
    >>move to vault
    ```
-   Chunks + embeds summaries ? Qdrant as `kb="vault"`
+   Chunks + embeds summaries  Qdrant as `kb="vault"`
 
 3. **Query with Mentats**:
    ```
@@ -481,7 +481,7 @@ Research direction for this design pattern (verifier/critic pass improving relia
 
    ```
    ```
-   Shows: Vault chunk ? SUMM file ? original doc ? SHA verification
+   Shows: Vault chunk > SUMM file > original doc > SHA verification
 
 #### Why Vault vs filesystem KBs?
 
@@ -491,7 +491,7 @@ Research direction for this design pattern (verifier/critic pass improving relia
 | Speed | File reads | Qdrant vector search |
 | Mentats | Ignored | Required |
 
-**Workflow:** Filesystem KBs ? SUMM ? Vault ? Mentats
+**Workflow:** Filesystem KBs > SUMM > Vault > Mentats
 
 ---
 
@@ -509,9 +509,9 @@ certutil -hashfile C:\docs\c64\original\c64_facts.pdf SHA256
 sha256sum /docs/c64/original/c64_facts.pdf
 ```
 
-**If SHA matches:** Source is authentic and untampered ?
+**If SHA matches:** Source is authentic and untampered 
 
-**If SHA doesn't match:** Document was modified after SUMM (tampered or legit edit) ??
+**If SHA doesn't match:** Document was modified after SUMM (tampered or legit edit) 
 
 ---
 
@@ -533,7 +533,7 @@ sha256sum /docs/c64/original/c64_facts.pdf
 #### 3) Filesystem KBs are just folders:
 - No embedding every doc on every query
 - SUMM files are pre-processed once
-- RAG hits are bounded (by default: top_k=6 ? rerank to 4)
+- RAG hits are bounded (by default: top_k=6  rerank to 4)
 
 #### 4) Mentats is efficient:
 - Only runs when explicitly invoked (##mentats)
@@ -562,7 +562,7 @@ Dealer's choice, really.
 
 #### Those model reccs are GARBAGE, dude
 - So choose your own. What am I, your Rabbi?
-- Huggingface is over there ? https://huggingface.co/DavidAU ; https://huggingface.co/unsloth ; https://huggingface.co/TheBloke
+- Huggingface is over there  https://huggingface.co/DavidAU ; https://huggingface.co/unsloth ; https://huggingface.co/TheBloke
 - My personal choices: 
     * Thinker: Qwen3-4B-Hivemind-Inst-Q4_K_M-imat.gguf
 	* Critic: Phi-4-mini-instruct-Q4_K_M.gguf
@@ -598,7 +598,7 @@ roles:
 - Ignores `>>lock` scope (lock affects normal filesystem-grounded queries only)
 - No Vodka, no chat history (isolated)
 - Refuses if no Vault facts
-- 3-pass reasoning (Thinker ? Critic ? Thinker)
+- 3-pass reasoning (Thinker > Critic > Thinker)
 
 #### Locked SUMM grounding (`>>lock`):
 - `>>lock SUMM_<name>.md` scopes normal grounding to one SUMM file from attached filesystem KBs.
@@ -612,7 +612,7 @@ roles:
 - Full operator detail lives in `llama_conductor/command_cheat_sheet.md`.
 
 #### Fun (##fun or >>fun):
-- Runs default (serious) ? gets correct answer
+- Runs default (serious) > gets correct answer
 - Adds an appropriate quote from quotes.md (100 quotes included. Edit, delete, add your own. Keep the formatting shown)
 - Does NOT change facts or confidence
 - **Never** runs on Mentats output
@@ -636,7 +636,7 @@ Confidence: top | Source: Model
 ```
 
 #### Fun Rewrite (>>fr):
-- Runs default (serious) ? gets correct answer
+- Runs default (serious) > gets correct answer
 - Performs sentiment analysis on user input and model output
 - Picks matching quote from quotes.md as SEED (sarcasm, tiredness, incredulity...)
 - **REWRITES** answer in that SEED's voice/style
