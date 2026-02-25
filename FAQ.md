@@ -688,7 +688,7 @@ That means:
 - lower hallucination risk than generative summary
 - more literal carry-over from source docs
 - still lossy (it is a distillation step), so critical claims should be verified from source when stakes are high
-- As proof of concept: compare https://tinyurl.com/GuardianMuskArticle  vs   `SUMM_musk-article.md`
+- As proof of concept: compare [Guardian source](https://tinyurl.com/GuardianMuskArticle) vs [SUMM_musk-article.md](SUMM_musk-article.md)
 
 
 ### But why even use `>>summ`? Why not reason against raw text?
