@@ -15,18 +15,18 @@ Claims are explicitly bounded to this benchmark design, runtime settings, and sc
 
 ## 1. Evidence Pack Included in This Repo (`/prepub`)
 
-- `prepub/VALIDATION_BATTERY_REPORT.md`
-- `prepub/VALIDATION_BATTERY_REPORT2.md`
-- `prepub/validation_battery_raw2.jsonl`
-- `prepub/validation_battery_scored2.jsonl`
-- `prepub/_STRESS-CLINIKO-REVIEW-v1.md`
-- `prepub/GPT-AUTO-TEST-v3.md`
+- [VALIDATION_BATTERY_REPORT.md](VALIDATION_BATTERY_REPORT.md)
+- [VALIDATION_BATTERY_REPORT2.md](VALIDATION_BATTERY_REPORT2.md)
+- [validation_battery_raw2.jsonl](validation_battery_raw2.jsonl)
+- [validation_battery_scored2.jsonl](validation_battery_scored2.jsonl)
+- [_STRESS-CLINIKO-REVIEW-v1.md](_STRESS-CLINIKO-REVIEW-v1.md)
+- [GPT-AUTO-TEST-v3.md](GPT-AUTO-TEST-v3.md)
 
 These files are the basis for all numeric claims below.
 
 ## 2. Experimental Setup (frozen)
 
-From `VALIDATION_BATTERY_REPORT2.md`:
+From [VALIDATION_BATTERY_REPORT2.md](VALIDATION_BATTERY_REPORT2.md):
 
 - model: `Qwen3-4B-Hivemind`
 - temperature: `0.2`
@@ -89,7 +89,7 @@ This likely explains the gains in hallucination/refusal metrics and part of the 
 
 This repository also includes a separate workflow-stability battery using clinical-style test cases.
 
-From `prepub/_STRESS-CLINIKO-REVIEW-v1.md`:
+From [_STRESS-CLINIKO-REVIEW-v1.md](_STRESS-CLINIKO-REVIEW-v1.md):
 
 - total runs: `45`
 - passed: `45`
@@ -104,7 +104,7 @@ Per-case repeatability (15 repeats each):
 - `TEST-CASE-Shoulder.txt`: stable diagnosis `Rotator cuff tendinopathy` (`15/15`)
 - `TEST-CASE-cervical.txt`: stable diagnosis `Mechanical neck pain` (`15/15`)
 
-From `prepub/GPT-AUTO-TEST-v3.md`:
+From [GPT-AUTO-TEST-v3.md](GPT-AUTO-TEST-v3.md):
 
 - overall average (successful runs): `85.82`
 - previous-cohort average shift: `78.83 -> 85.33` (`+6.50`)
@@ -139,8 +139,8 @@ Rule-of-Three note for zero-event stress observations (`0/45`):
 
 This repository contains:
 
-- raw run outputs (`validation_battery_raw2.jsonl`)
-- scored outputs (`validation_battery_scored2.jsonl`)
+- raw run outputs ([validation_battery_raw2.jsonl](validation_battery_raw2.jsonl))
+- scored outputs ([validation_battery_scored2.jsonl](validation_battery_scored2.jsonl))
 - summary reports and CIs
 
 Next peer-review step is to publish the benchmark runner + rubric scripts as a turnkey reproduction package.
@@ -152,5 +152,4 @@ Under bounded grounding constraints, via python router, this local 4B setup demo
 - fewer observed hallucination flags in the tested battery
 - stronger refusal behavior on insufficient-evidence prompts
 - explicit tradeoffs in adversarial calibration dimensions
-
 
