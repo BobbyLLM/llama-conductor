@@ -9,7 +9,7 @@ TL;DR: "In God we trust. All others bring data." - Deming
 
 ---
 
-## Quick Links
+## 🔗 Quick Links
 
 - [What's New](NEW.md) - Latest fixes and what I borked along the way
 - [FAQ](FAQ.md) - Deep dives on how this actually works
@@ -20,9 +20,9 @@ TL;DR: "In God we trust. All others bring data." - Deming
 
 ---
 
-## Some problems This Solves
+## 🛠️ Some problems This Solves
 
-### 1) Context bloat on small hardware
+### 1) 🧠 Context bloat on small hardware
 
 WITHOUT llama-conductor:
 
@@ -48,7 +48,7 @@ Result:
 - Bonus: Tweak your --ctx and maybe, just maybe, your Raspberry Pi *can* run that 4B model at decent tok/s, without memory loss or chug.
 
 
-### 2) Goldfish memory and confident misremembering
+### 2) 🐠 Goldfish memory and confident misremembering
 
 WITHOUT llama-conductor:
 
@@ -73,7 +73,7 @@ Result:
 - Facts have a limited Time To Live (TTL) and can be Touched (to extend life) or Flushed. TL;DR: no silent bloat.
 
 
-### 3) Lies, damned lies, and statistics
+### 3) 🧾 Lies, damned lies, and statistics
 
 WITHOUT llama-conductor:
 
@@ -103,7 +103,7 @@ Examples:
 - `Source: Locked file (SUMM_*.md)` -> grounded to locked source | Confidence: based on % extracted facts; reported as low-->top
 - `Sources: Vault` -> Mentats/Vault path
 
-### 4) Grounding drift in normal chat (fixed with `>>scratch` / `>>lock`)
+### 4) 📌 Grounding drift in normal chat (fixed with `>>scratch` / `>>lock`)
 
 WITHOUT llama-conductor:
 
@@ -137,7 +137,7 @@ Result:
 
 ---
 
-### 5) Modes (get the stick out of your LLMs butt)
+### 5) 🎛️ Modes (get the stick out of your LLMs butt)
 
 WITHOUT llama-conductor:
 
@@ -159,7 +159,7 @@ Result:
 - Style profile (`Profile | Sarc | Snark`) affects tone, not grounding contracts.
 - Nb: for best results, pick an abliterated model that hasn't been lobotomised 
 
-### 6) Vibes-based answers in deep retrieval (`##mentats`)
+### 6) 🧪 Vibes-based answers in deep retrieval (`##mentats`)
 
 WITHOUT llama-conductor:
 
@@ -186,7 +186,7 @@ Result:
 - You have a deep store vault of information you can reference / update.
 ---
 
-## Quickstart
+## 🚀 Quickstart
 
 ### Required stack
 
@@ -213,28 +213,28 @@ Recommended start order: Qdrant -> llama-swap -> router -> frontend
 
 ---
 
-## Cute. What does this crap *Actually* do?
+## ⚙️ Cute. What does this crap *Actually* do?
 
 
-### Deterministic Memory (`!!` / `??`)
+### 🧩 Deterministic Memory (`!!` / `??`)
 
 - Stores what you said, as you said it. No LLM smoothing.
 - Recalls what was stored, deterministically
 - Uses TTL/touch lifecycle so memory doesn't become junkyard mode
 
-### Context Control (Vodka CTC)
+### ✂️ Context Control (Vodka CTC)
 
 - Prevents context-window ballooning
 - Keeps turn-time behavior stable on modest hardware
 - Preserves usable memory without dragging full chat history every turn
 
-### Strict Grounding Paths (`>>lock`, `>>scratch`)
+### 🎯 Strict Grounding Paths (`>>lock`, `>>scratch`)
 
 - `>>lock` constrains normal answers to one SUMM file. LLM grounds facts to THAT source. If not there? Signals LOUDLY.
 - `>>scratch` As above but used for transient stuff you copy/paste (think: news article you want to mull over. See FAQ for example).
 - End result: both make provenance behavior explicit when grounded vs fallback
 
-### Deterministic sidecars 
+### 🧰 Deterministic sidecars
 
 
 >>calc / >>find / >>list / >>flush / >>status / >>wiki 
@@ -247,7 +247,7 @@ Recommended start order: Qdrant -> llama-swap -> router -> frontend
 - >>wiki pulls answers from wikipedia (preset to first 400 words; acts as summary)
 - >>trust (you ask question, router gives you options for data sources. You choose, not it)
 
-### Mode switches (serious, fun, fun rewrite)
+### 🎚️ Mode switches (serious, fun, fun rewrite)
 
 ```text
 >>fun          # sticky fun mode on
@@ -265,7 +265,7 @@ Result:
 - You can switch style fast without re-engineering prompts each turn.
 - Grounding contracts still apply where they should.
 
-### Profiles, Sarcasm, Snark (ala TARS from interstellar)
+### 🤖 Profiles, Sarcasm, Snark (ala TARS from interstellar)
 
 Yep. Basically TARS sliders.
 
@@ -275,7 +275,7 @@ Result:
 - Coupled with modes --> `fun` and `fr` have more style range.
 - This changes *delivery* style, *not* evidence contracts.
 
-### Footer status 
+### 🧷 Footer status
 
 Footer is your "show your work" receipt line. It's deterministic graded, not LLM 'trust me bro' vibes. 
 
@@ -287,7 +287,7 @@ Result:
 - cleaner output, same provenance signal
 - faster trust decision: accept / verify / lock harder
 
-### Grounded Deep Retrieval (`##mentats`)
+### 🏛️ Grounded Deep Retrieval (`##mentats`)
 
 - Queries Vault-backed knowledge only
 - Refuses when evidence is missing
@@ -298,7 +298,7 @@ Result:
 ---
 
 
-## So, in summary, why should you give a shit?
+## ✅ So, in summary, why should you give a shit?
 
 1. Helps potato PC by reducing memory pressure without making LLM into a goldfish.
 2. Bounded context (CTC and preset policy)
@@ -309,7 +309,7 @@ Result:
 
 ---
 
-## License
+## 📜 License
 
 AGPL-3.0-or-later. See `LICENSE`.
 
