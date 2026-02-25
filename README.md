@@ -302,7 +302,7 @@ Result:
 
 1. Helps potato PC by reducing memory pressure without making LLM into a goldfish.
 2. Bounded context (CTC and preset policy)
-3. Reasoning strictly lockable (>>lock, >>scratch). Greatly reduced hallucinations (see: `PAPER.md`) 
+3. Reasoning strictly lockable (>>lock, >>scratch). Greatly reduced hallucinations (see: [PAPER.md](prepub/PAPER.md))
 4. Deterministic memory path separate from model weights. You said it, it remembers it EXACTLY. 
 5. File KB flow stays simple (folder-based ingest -> SUMM -> Vault)
 6. Guarded retrieval/reasoning contracts keep failure modes explicit
