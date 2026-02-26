@@ -155,7 +155,7 @@ _DECISION_INTENT_RE = re.compile(r"\b(should i|should we|do i|do we)\b", re.IGNO
 _DECISION_OR_RE = re.compile(r"\bor\b", re.IGNORECASE)
 _OPT_WALK_RE = re.compile(r"\bwalk(?:ing)?\b", re.IGNORECASE)
 _OPT_DRIVE_RE = re.compile(r"\bdrive|driving\b", re.IGNORECASE)
-_ASSET_PATTERN = r"(?:car|truck|van|bus|train|tram|boat|ship|motorcycle|bike|scooter)"
+_ASSET_PATTERN = r"(?:car|truck|van|bus|train|tram|boat|ship|motorcycle|motorbike|bike|scooter)"
 _GENERIC_ASSET_ACTION_RE = re.compile(
     r"\b(?:wash|service|repair|fuel|charge|park|move|tow|transport|clean)\s+(?:my|the)\s+(?P<asset>[a-z][a-z0-9_-]*(?:\s+[a-z][a-z0-9_-]*){0,3})\b",
     re.IGNORECASE,
@@ -198,6 +198,14 @@ _EXPLICIT_REENGAGE_RE = re.compile(
 )
 _CORRECTION_INTENT_RE = re.compile(
     r"\b(i mean|i meant|no i meant|sorry i meant|rather than|not)\b",
+    re.IGNORECASE,
+)
+_DELEGATE_DECISION_RE = re.compile(
+    r"\b(you tell me|you decide|you choose|your call|pick for me|choose for me|idk|i dont know|i don't know|not sure)\b",
+    re.IGNORECASE,
+)
+_CLARIFIER_EXPLAIN_RE = re.compile(
+    r"\b(what do you mean|explain|which one|what are the options|options|huh|confused)\b",
     re.IGNORECASE,
 )
 
@@ -584,11 +592,21 @@ def _infer_asset_label(text: str) -> str:
     t = " ".join((text or "").split()).lower()
     generic = _extract_asset_candidate(t)
     if generic:
-        return generic
-    for asset in ("car", "train", "bus", "truck", "van", "tram", "boat", "ship", "motorcycle", "bike", "scooter"):
+        return _canonical_asset(generic)
+    for asset in ("car", "train", "bus", "truck", "van", "tram", "boat", "ship", "motorcycle", "motorbike", "bike", "scooter"):
         if re.search(rf"\b{re.escape(asset)}\b", t):
-            return asset
+            return _canonical_asset(asset)
     return "asset"
+
+
+def _canonical_asset(asset: str) -> str:
+    a = (asset or "").strip().lower()
+    aliases = {
+        "motorbike": "motorcycle",
+        "motor cycle": "motorcycle",
+        "motor-bike": "motorcycle",
+    }
+    return aliases.get(a, a)
 
 
 def _infer_destination_label(text: str) -> str:
@@ -600,13 +618,13 @@ def _infer_destination_label(text: str) -> str:
 
 
 def _is_drive_option_compatible(asset: str) -> bool:
-    a = (asset or "").strip().lower()
+    a = _canonical_asset(asset)
     # Keep this deliberately small and high-precision.
     return a in {"car", "truck", "van", "bus", "motorcycle", "bike", "scooter"}
 
 
 def _asset_ref(asset: str) -> str:
-    a = (asset or "").strip().lower()
+    a = _canonical_asset(asset)
     if a in {"car", "truck", "van", "bus", "train", "tram", "boat", "ship", "motorcycle", "bike", "scooter"}:
         return a
     if _is_likely_animal(a):
@@ -647,6 +665,13 @@ def _infer_clarify_options(asset: str) -> list[str]:
     if a == "it":
         return ["move it to the destination", "tow/haul/transport it", "get yourself there first"]
     return [f"move the {a} to the destination", f"tow/haul/transport the {a}", "get yourself there first"]
+
+
+def _default_clarifier_choice(frame: Dict[str, Any]) -> str:
+    asset = str(frame.get("asset") or "asset").strip() or "asset"
+    if _is_likely_animal(asset):
+        return "yourself_first_walk"
+    return "operate"
 
 
 def _normalize_text_tokens(text: str) -> set[str]:
@@ -814,6 +839,8 @@ def solve_constraint_followup(*, frame: Dict[str, Any], query: str) -> StateReas
                     frame=dict(frame),
                 )
         choice = _match_clarify_choice(t, clarify_options)
+        if (not choice) and _DELEGATE_DECISION_RE.search(t):
+            choice = _default_clarifier_choice(frame)
         if choice:
             asset = str(frame.get("asset") or "asset").strip() or "asset"
             ref = _asset_ref(asset)
@@ -938,20 +965,91 @@ def solve_constraint_followup(*, frame: Dict[str, Any], query: str) -> StateReas
                     reason="clarification_user_confused_rephrase",
                     frame=dict(frame),
                 )
+
+        # Generic sane-bucket fallback:
+        # if user doesn't pick an option and isn't asking to explain options,
+        # treat as implicit delegation to avoid infinite clarification loops.
+        if not _CLARIFIER_EXPLAIN_RE.search(t):
+            choice = _default_clarifier_choice(frame)
+            out_frame = dict(frame)
+            out_frame["needs_clarification"] = False
+            out_frame["selected_action"] = (
+                "operate" if choice == "operate" else "yourself_first_walk"
+            )
+            asset = str(frame.get("asset") or "asset").strip() or "asset"
+            ref = _asset_ref(asset)
+            noun = _asset_noun(ref)
+            if choice == "operate":
+                ans = (
+                    f"I'll pick the practical default: move it under its own power. "
+                    f"That gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "clarification_implicit_delegate_default_operate"
+            else:
+                ans = (
+                    f"I'll pick the practical default: get yourself there first (walk). "
+                    f"That gets you there, but {noun} still needs a separate move/tow step."
+                    "\nSource: Contextual"
+                )
+                reason = "clarification_implicit_delegate_default_yourself_first"
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=False,
+                family="constraint_decision",
+                answer=ans,
+                reason=reason,
+                frame=out_frame,
+            )
         opts = clarify_options[:3]
+        repeat_count = int(frame.get("clarifier_repeat_count", 0) or 0)
+        if repeat_count >= 1:
+            # Guardrail: avoid repeating the same clarifier endlessly.
+            choice = _default_clarifier_choice(frame)
+            out_frame = dict(frame)
+            out_frame["needs_clarification"] = False
+            out_frame["clarifier_repeat_count"] = repeat_count + 1
+            out_frame["selected_action"] = "operate" if choice == "operate" else "yourself_first_walk"
+            asset = str(frame.get("asset") or "asset").strip() or "asset"
+            ref = _asset_ref(asset)
+            noun = _asset_noun(ref)
+            if choice == "operate":
+                ans = (
+                    f"Got it. I'll choose the practical default: move it under its own power. "
+                    f"That gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "clarification_repeat_default_operate"
+            else:
+                ans = (
+                    f"Got it. I'll choose the practical default: get yourself there first (walk). "
+                    f"That gets you there, but {noun} still needs a separate move/tow step."
+                    "\nSource: Contextual"
+                )
+                reason = "clarification_repeat_default_yourself_first"
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=False,
+                family="constraint_decision",
+                answer=ans,
+                reason=reason,
+                frame=out_frame,
+            )
         if len(opts) == 3:
             ans = (
                 f"Quick check: did you mean {opts[0]}, {opts[1]}, or {opts[2]}? "
                 "Pick one and I'll solve it cleanly."
                 "\nSource: Contextual"
             )
+            out_frame = dict(frame)
+            out_frame["clarifier_repeat_count"] = repeat_count + 1
             return StateReasoningResult(
                 handled=True,
                 fail_loud=True,
                 family="constraint_decision",
                 answer=ans,
                 reason="clarification_still_required",
-                frame=dict(frame),
+                frame=out_frame,
             )
 
     # Intent-gate for post-choice conversational follow-ups: keep deterministic guidance
@@ -961,6 +1059,49 @@ def solve_constraint_followup(*, frame: Dict[str, Any], query: str) -> StateReas
         low = t.lower()
         tok = _normalize_text_tokens(low)
         lane_disengaged = bool(frame.get("decision_lane_disengaged", False))
+        # Idempotent delegate handling for post-choice turns (e.g., regenerate "you choose"/"idk").
+        if _DELEGATE_DECISION_RE.search(t):
+            asset = str(frame.get("asset") or "asset").strip() or "asset"
+            ref = _asset_ref(asset)
+            noun = _asset_noun(ref)
+            frame_dist_km = frame.get("distance_km")
+            frame_dist_km = float(frame_dist_km) if isinstance(frame_dist_km, (int, float)) else None
+            if selected_action in {"yourself_first_walk", "yourself_first_drive", "walk"}:
+                if frame_dist_km is not None:
+                    clause = _yourself_first_distance_clause(frame_dist_km)
+                    ans = (
+                        f"Still the same answer: get yourself there first. At about {_fmt(frame_dist_km)} km, {clause}. "
+                        f"{noun.capitalize()} still needs a separate move/tow step."
+                        "\nSource: Contextual"
+                    )
+                else:
+                    ans = (
+                        f"Still the same answer: get yourself there first. For this short distance, walking is usually the practical choice. "
+                        f"{noun.capitalize()} still needs a separate move/tow step."
+                        "\nSource: Contextual"
+                    )
+                reason = "post_choice_delegate_replay_yourself_first"
+            elif selected_action == "tow_transport":
+                ans = (
+                    f"Still the same answer: transport it. That gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "post_choice_delegate_replay_tow_transport"
+            else:
+                ans = (
+                    f"Still the same answer: move it under its own power. That gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "post_choice_delegate_replay_operate"
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=False,
+                family="constraint_decision",
+                answer=ans,
+                reason=reason,
+                frame=dict(frame),
+            )
+
         if lane_disengaged and _is_correction_intent(t) and not _is_explicit_reengage(t):
             out_frame = dict(frame)
             out_frame["decision_lane_disengaged"] = True
@@ -1034,13 +1175,13 @@ def solve_constraint_followup(*, frame: Dict[str, Any], query: str) -> StateReas
             if selected_action in {"yourself_first_walk", "yourself_first_drive", "walk"}:
                 if frame_dist_km is not None and frame_dist_km >= 1.0:
                     ans = (
-                        f"Same branch: get yourself there first. At about {_fmt(frame_dist_km)} km, driving is usually the practical low-effort choice. "
+                        f"Still the same answer: get yourself there first. At about {_fmt(frame_dist_km)} km, driving is usually the practical low-effort choice. "
                         f"{noun.capitalize()} still needs a separate move/tow step."
                         "\nSource: Contextual"
                     )
                 else:
                     ans = (
-                        f"Same branch: get yourself there first. For this short distance, walking is usually the practical choice. "
+                        f"Still the same answer: get yourself there first. For this short distance, walking is usually the practical choice. "
                         f"{noun.capitalize()} still needs a separate move/tow step."
                         "\nSource: Contextual"
                     )

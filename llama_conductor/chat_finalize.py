@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from difflib import SequenceMatcher
+import hashlib
 from typing import Any, Callable, List, Optional
 
 
@@ -17,6 +18,7 @@ def finalize_chat_response(
     mode: str = "serious",
     sensitive_override_once: bool = False,
     bypass_serious_anti_loop: bool = False,
+    deterministic_state_solver: bool = False,
     serious_task_forward_fallback: str,
     make_stream_response: Callable[[str], Any],
     make_json_response: Callable[[str], Any],
@@ -59,7 +61,8 @@ def finalize_chat_response(
     if lock_active:
         text = apply_locked_output_policy_fn(text, state)
 
-    if rewrite_response_style_fn is not None:
+    skip_profile_rewrite = bool(deterministic_state_solver and mode in ("fun", "fun_rewrite"))
+    if rewrite_response_style_fn is not None and not skip_profile_rewrite:
         try:
             sensitive = classify_sensitive_context_fn(user_text)
             text = rewrite_response_style_fn(
@@ -83,6 +86,26 @@ def finalize_chat_response(
     if mode in ("fun", "fun_rewrite"):
         try:
             text = enforce_fun_antiparrot_fn(text, user_text)
+        except Exception:
+            pass
+
+    # Tiny zero-cost FUN kicker for deterministic train transport answers.
+    # Applied late so it survives style/cleanup passes.
+    if deterministic_state_solver and mode == "fun":
+        try:
+            t = (text or "").strip()
+            low = t.lower()
+            if (
+                t
+                and "quick check: did you mean" not in low
+                and "train" in low
+                and "destination" in low
+                and not t.rstrip().endswith(("Choo!", "All aboard!", "Full steam!"))
+            ):
+                kickers = ("Choo!", "All aboard!", "Full steam!")
+                key = f"{getattr(state, 'session_id', '')}|{user_text}|{t}"
+                idx = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16) % len(kickers)
+                text = t.rstrip() + " " + kickers[idx]
         except Exception:
             pass
 
@@ -165,6 +188,7 @@ def finalize_chat_response(
         lock_active=lock_active,
         scratchpad_grounded=scratchpad_grounded,
         has_facts_block=has_facts_block,
+        deterministic_state_solver=deterministic_state_solver,
     )
     text = append_profile_footer_fn(text=text, state=state, user_text=user_text)
 
