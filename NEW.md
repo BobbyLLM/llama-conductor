@@ -1,6 +1,6 @@
 ﻿# What's New
 
-*** V1.5.0 (latest)
+*** V1.5.1 (latest)
 
 TL;DR
 - The router is cleaner under the hood, easier to maintain, and more predictable in tricky reasoning turns.
