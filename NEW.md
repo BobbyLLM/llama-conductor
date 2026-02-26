@@ -2,19 +2,30 @@
 
 *** V1.5.1 (latest)
 
-TL;DR
-- The router is cleaner under the hood, easier to maintain, and more predictable in tricky reasoning turns.
-- Logic guardrails were tightened so out-of-scope turns fall back cleanly instead of getting stuck in brittle heuristics.
-- Release promotion flow is now cleaner and less error-prone.
+TL;DR:
+Patch over `1.5.0`.
+No shiny new toys. This one is about the router not doing dumb loopy stuff when you hit regenerate.
 
-Highlights
-- Continued decomposition:
-  - orchestration remains in `router_fastapi.py`
-  - routing/reasoning/finalization moved into focused modules (`chat_*`, `state_*`, `router_*`)
-- State/correction flow hardening:
-  - improved correction-binding behavior on follow-up numeric adjustments
-  - cleaner pass-through when prompts are outside deterministic scope
-  - final consistency verification before return
+- Fixed deterministic follow-up stability (`you choose`, `idk`, repeat prompts).
+- Added replay guard so regenerate keeps deterministic answers instead of falling into model waffle.
+- Smoothed replay phrasing:
+  - `Same branch: ...` -> `Still the same answer: ...`
+- FUN transport kicker punctuation now intentional (`!`) and still zero extra latency.
+- Net effect: less drift, less weirdness, same workflow.
+
+---
+*** V1.5.0
+
+TL;DR:
+Big under-the-hood cleanup release.
+Less spaghetti, more structure, same operator-facing behavior.
+
+- Decomposed a large chunk of router internals into clearer modules.
+- Hardened deterministic reasoning path for transport/capacity/constraint-style problems.
+- Added consistency/replay safeguards to reduce follow-up stochastic drift.
+- Continued UX pass on command surfaces (`>>status`, `>>status full`, `>>help full`).
+- Tightened public refactor process so private/internal stuff is less likely to leak.
+- Net effect: easier to maintain, easier to test, less brittle under iteration.
 
 ---
 *** V1.3.2
