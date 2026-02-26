@@ -5,7 +5,8 @@ from typing import Any, Dict, List
 
 import requests
 
-from .config import LLAMA_SWAP_URL, ROLES, MODEL_DEBUG
+from .config import LLAMA_SWAP_URL, ROLES, MODEL_DEBUG, MODEL_DEBUG_PAYLOAD
+from .privacy_utils import safe_preview, short_hash
 
 
 def resolve_model(role: str) -> str:
@@ -43,17 +44,16 @@ def call_model_prompt(
         print(f"Model: {model_name}")
         print(f"Role: {role}")
         print(f"Prompt length: {len(prompt)} chars")
+        print(f"Prompt hash: {short_hash(prompt)}")
         print(f"Max tokens: {max_tokens}")
         print(f"Temperature: {temperature}")
         print(f"Top-p: {top_p}")
-        print(f"\nPrompt preview (first 500 chars):")
-        print(f"{'-'*70}")
-        print(prompt[:500])
-        print(f"{'-'*70}")
-        print(f"\nPrompt preview (last 500 chars):")
-        print(f"{'-'*70}")
-        print(prompt[-500:] if len(prompt) > 500 else prompt)
-        print(f"{'-'*70}\n")
+        if MODEL_DEBUG_PAYLOAD:
+            red = safe_preview(prompt, max_len=1200)
+            print(f"\nPrompt preview (PII-redacted):")
+            print(f"{'-'*70}")
+            print(red)
+            print(f"{'-'*70}\n")
 
     try:
         resp = requests.post(LLAMA_SWAP_URL, json=payload, timeout=180)
@@ -78,20 +78,22 @@ def call_model_prompt(
                 msg = choices[0].get("message", {})
                 content = msg.get("content", "")
                 print(f"Response length: {len(content)} chars")
-                print(f"\nResponse preview (first 500 chars):")
-                print(f"{'-'*70}")
-                print(content[:500])
-                print(f"{'-'*70}")
-                print(f"\nResponse preview (last 100 chars):")
-                print(f"{'-'*70}")
-                print(content[-100:] if len(content) > 100 else content)
-                print(f"{'-'*70}\n")
+                print(f"Response hash: {short_hash(content)}")
+                if MODEL_DEBUG_PAYLOAD:
+                    print(f"\nResponse preview (PII-redacted):")
+                    print(f"{'-'*70}")
+                    print(safe_preview(content, max_len=1200))
+                    print(f"{'-'*70}\n")
         
         choices = data.get("choices", []) or []
         if not choices:
             return "[router error: no choices from model]"
         msg = choices[0].get("message", {}) or {}
-        return str(msg.get("content", "") or "").strip()
+        content = str(msg.get("content", "") or "").strip()
+        if not content:
+            # Safety: never emit empty assistant content to callers/UI.
+            return "Noted."
+        return content
     except Exception as e:
         if MODEL_DEBUG and debug_context:
             print(f"\n[MODEL DEBUG] ERROR: {e}\n")
@@ -128,6 +130,9 @@ def call_model_messages(
         if not choices:
             return "[router error: no choices from model]"
         msg = choices[0].get("message", {}) or {}
-        return str(msg.get("content", "") or "").strip()
+        content = str(msg.get("content", "") or "").strip()
+        if not content:
+            return "Noted."
+        return content
     except Exception as e:
         return f"[model '{model_name}' unavailable: {e}]"

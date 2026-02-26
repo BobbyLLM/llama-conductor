@@ -1,4 +1,4 @@
-# router_config.yaml
+﻿# router_config.yaml
 # version 1.0.5 - CORRECTED
 
 # Where to send OpenAI-compatible chat completion requests.
@@ -40,6 +40,9 @@ rag:
 
 # Vodka settings (overrides vodka_filter.py defaults)
 vodka:
+  # Presets reduce knob-soup; explicit keys below still override preset values.
+  # fast|balanced|max-recall
+  preset: "balanced"
   storage_dir: "."  # empty = cwd, or set explicit path
   base_ttl_days: 3
   touch_extension_days: 5
@@ -50,36 +53,26 @@ vodka:
   keep_first: false
   max_chars: 6000
   enable_summary: true
-  summary_every_n_user_msgs: 4
-  summary_max_words: 80
-  summary_inject_max_units: 3
-  summary_inject_max_chars: 500
-  summary_memory_max_units: 96
   summary_segments_per_message: 8
-  summary_require_session_id: true
-  summary_include_assistant: false
-  summary_store_pii: false
-  summary_pii_redaction_token: "[REDACTED]"
 
-# Serious-mode generation tuning
-serious:
-  max_tokens: 384
+footer:
+  profile:
+    enabled: true
+    # always|non_default|debug
+    mode: "non_default"
 
-# Recall semantic layer (deterministic first, semantic formatter with fallback)
-recall:
-  semantic_layer_enabled: true
-  semantic_role: "thinker"
-  semantic_max_tokens: 260
-  semantic_temperature: 0.1
-  semantic_top_p: 0.9
-  semantic_unknown_ratio_max: 0.28
+# Deterministic state-transition reasoning router.
+# Phase 1 scope: bounded capacity / transfer family.
+state_solver:
+  enabled: true
+  auto_route: true
+  apply_in_raw: false
 
 # Vault chunking (for >>move to vault ingestion)
 vault:
   chunk_words: 250        # Smaller chunks = better semantic matching for queries
   chunk_overlap_words: 50  # Overlap prevents losing context at chunk boundaries
 
-# Mentats diagnostics (off by default; payload logging opt-in).
 mentats:
   debug: false
   debug_payload: false
@@ -93,3 +86,4 @@ scratchpad:
   max_chars: 1200          # max chars contributed to facts block
   max_age_minutes: 60      # hard expiry; pruned on scratchpad access
   exhaustive_response_mode: "raw"  # raw|llm; raw bypasses LLM for "all facts/everything" intents
+

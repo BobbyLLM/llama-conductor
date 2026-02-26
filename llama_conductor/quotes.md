@@ -93,9 +93,10 @@ Then finish it. Because I'm with you till the end of the line.
 Yes, this is Tony Stank. You're in the right place.
 Good men don't need rules. Today is not the day to find out why I have so many.
 She's my carer. She cares so I don't have to.
+I yam what I yam.
 
 ## warm supportive compassionate hopeful resilient
-I'm not your failure, Obi-Wan.
+I am not your failure, Obi-Wan.
 Do, or do not. There is no try.
 If there's no bigger meaning, if there's no win, then the smallest act of kindness is the greatest thing in the world.
 I will not die a monster.

@@ -13,11 +13,19 @@ import re
 
 _CONF_RE = re.compile(
     r"^\s*Confidence:\s*(low|medium|med|high|top)\s*\|\s*Source:\s*(Model|Docs|User|Contextual|Mixed)\s*$",
-    re.IGNORECASE,
+    re.IGNORECASE | re.MULTILINE,
+)
+_SRC_RE = re.compile(
+    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad)\s*$",
+    re.IGNORECASE | re.MULTILINE,
 )
 _CONF_PREFIX_RE = re.compile(r"^\s*Confidence:\s*", re.IGNORECASE)
 _INLINE_CONF_RE = re.compile(
     r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed)\s*",
+    re.IGNORECASE,
+)
+_SIMPLE_SOURCE_LINE_RE = re.compile(
+    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad)\s*$",
     re.IGNORECASE,
 )
 
@@ -27,6 +35,14 @@ def _strip_confidence_lines(text: str) -> str:
     kept = []
     for ln in lines:
         if _CONF_RE.match(ln or "") or _CONF_PREFIX_RE.match(ln or ""):
+            continue
+        # Remove redundant bare source lines; footer adds canonical source line.
+        # Keep detailed source lines (e.g., locked-file/model-fallback variants).
+        # Preserve explicit scratchpad provenance line for scratchpad contract tests.
+        if _SIMPLE_SOURCE_LINE_RE.match(ln or ""):
+            if (ln or "").strip().lower() == "source: scratchpad":
+                kept.append((ln or "").strip())
+                continue
             continue
         ln2 = _INLINE_CONF_RE.sub("", ln).rstrip()
         kept.append(ln2)
@@ -53,6 +69,12 @@ def _detect_abstract_source(
     m = _CONF_RE.search(t)
     if m:
         src = (m.group(2) or "").strip().title()
+        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed"} else "Model"
+    m_src = _SRC_RE.search(t)
+    if m_src:
+        src = (m_src.group(1) or "").strip().title()
+        if src == "Scratchpad":
+            return "Docs"
         return src if src in {"Model", "Docs", "User", "Contextual", "Mixed"} else "Model"
 
     if lock_active:
