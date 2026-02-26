@@ -8,6 +8,8 @@ from __future__ import annotations
 from typing import List, Dict, Any, Callable
 import os
 import time
+from .config import MENTATS_DEBUG, MENTATS_DEBUG_PAYLOAD
+from .privacy_utils import safe_preview, short_hash
 
 # Where to write Mentats debug logs
 MENTATS_DEBUG_LOG = os.path.abspath("mentats_debug.log")
@@ -15,13 +17,18 @@ MENTATS_DEBUG_LOG = os.path.abspath("mentats_debug.log")
 
 def _log_mentats_debug(step_name: str, query: str, text: str, session_id: str = "") -> None:
     """Append a short debug record for Mentats to mentats_debug.log."""
+    if not MENTATS_DEBUG:
+        return
     try:
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         with open(MENTATS_DEBUG_LOG, "a", encoding="utf-8") as f:
             f.write(f"==== {ts} | session={session_id or 'N/A'} | step={step_name} ====\n")
-            f.write(f"QUERY: {query}\n\n")
-            preview = text if len(text) <= 3000 else text[:3000] + "\n...[truncated]...\n"
-            f.write(preview)
+            f.write(f"QUERY_META: len={len(query or '')} sha={short_hash(query or '')}\n")
+            f.write(f"OUTPUT_META: len={len(text or '')} sha={short_hash(text or '')}\n")
+            if MENTATS_DEBUG_PAYLOAD:
+                f.write(f"QUERY_PREVIEW: {safe_preview(query, max_len=500)}\n\n")
+                preview = safe_preview(text, max_len=3000)
+                f.write(preview)
             f.write("\n\n")
     except Exception:
         # fail-open: debug logging must never break the pipeline

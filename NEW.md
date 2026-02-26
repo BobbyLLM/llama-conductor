@@ -1,6 +1,23 @@
 ﻿# What's New
 
-*** V1.3.2 (latest)
+*** V1.5.0 (latest)
+
+TL;DR
+- The router is cleaner under the hood, easier to maintain, and more predictable in tricky reasoning turns.
+- Logic guardrails were tightened so out-of-scope turns fall back cleanly instead of getting stuck in brittle heuristics.
+- Release promotion flow is now cleaner and less error-prone.
+
+Highlights
+- Continued decomposition:
+  - orchestration remains in `router_fastapi.py`
+  - routing/reasoning/finalization moved into focused modules (`chat_*`, `state_*`, `router_*`)
+- State/correction flow hardening:
+  - improved correction-binding behavior on follow-up numeric adjustments
+  - cleaner pass-through when prompts are outside deterministic scope
+  - final consistency verification before return
+
+---
+*** V1.3.2
 
 TL;DR
 - Vodka recall is now cleaner, stricter, and more predictable under pressure.

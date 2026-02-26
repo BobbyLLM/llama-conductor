@@ -375,6 +375,8 @@ def run_fun(
     history: List[Dict[str, Any]],
     facts_block: str,
     quote_pool: List[str],
+    seed_override: str = "",
+    base_answer_override: str = "",
     vodka,
     call_model: Callable[..., str],
     thinker_role: str = "thinker",
@@ -392,27 +394,29 @@ def run_fun(
     transcript = _pack_history(history)
 
     # --- THINKER (correct content) ---
-    thinker_prompt = (
-        f"{FUN_THINKER_PROMPT}\n\n"
-        f"CHAT HISTORY:\n{transcript or '[none]'}\n\n"
-        f"FACTS_BLOCK:\n{facts_block or 'NONE'}\n\n"
-        f"QUESTION:\n{user_text}\n\n"
-        "ANSWER:\n"
-    )
+    base_answer = (base_answer_override or "").strip()
+    if not base_answer:
+        thinker_prompt = (
+            f"{FUN_THINKER_PROMPT}\n\n"
+            f"CHAT HISTORY:\n{transcript or '[none]'}\n\n"
+            f"FACTS_BLOCK:\n{facts_block or 'NONE'}\n\n"
+            f"QUESTION:\n{user_text}\n\n"
+            "ANSWER:\n"
+        )
 
-    base_answer = call_model(
-        role=thinker_role,
-        prompt=thinker_prompt,
-        max_tokens=280,
-        temperature=0.3,
-        top_p=0.9,
-    )
-    base_answer = (base_answer or "").strip()
+        base_answer = call_model(
+            role=thinker_role,
+            prompt=thinker_prompt,
+            max_tokens=280,
+            temperature=0.3,
+            top_p=0.9,
+        )
+        base_answer = (base_answer or "").strip()
     if not base_answer:
         return ""
 
     # --- STYLE ---
-    seed = _pick_kicker(quote_pool, session_id)
+    seed = (seed_override or "").strip() or _pick_kicker(quote_pool, session_id)
     # Keep mode_kicker for the actor prompt (behavior preserved); DO NOT return it directly.
     mode_kicker = _format_mode_kicker("FUN", seed)
 

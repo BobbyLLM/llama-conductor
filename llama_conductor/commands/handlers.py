@@ -1,4 +1,4 @@
-# commands/handlers.py
+﻿# commands/handlers.py
 """Main command handling logic."""
 
 import os
@@ -22,7 +22,6 @@ from ..interaction_profile import (
 )
 from ..helpers import is_command, strip_cmd_prefix, parse_args
 from ..vault_ops import summ_new_in_kb, move_summ_to_vault
-from .cliniko import handle_cliniko_command
 
 # Optional imports (feature-detected)
 try:
@@ -704,70 +703,6 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         # Format and return recommendations
         return "[trust] " + format_recommendations(recommendations, query=query)
 
-    # cliniko (DETERMINISTIC clinical note pipeline)
-    if parts and parts[0].lower() == "cliniko":
-        subcommand = parts[1].lower() if len(parts) > 1 else ""
-
-        # Default: treat '>>cliniko' as 'auto' when full note payload is present
-        _known_subcommands = {
-            "auto", "parse", "compact", "review",
-            "help", "status",
-            "sidecar", "generate", "sanitize",
-        }
-        if (not subcommand) or (subcommand not in _known_subcommands):
-            _lead = (cmd_text or "").lstrip()
-            _tail = ""
-            for _prefix in (">>cliniko", "»cliniko", "Â»cliniko"):
-                if _lead.lower().startswith(_prefix):
-                    _tail = _lead[len(_prefix):].lstrip()
-                    break
-            if _tail and ("\n" in _tail or len(_tail) >= 200):
-                return handle_cliniko_command("auto", _tail, state, session_id)
-        
-        # Explicit subcommands
-        if subcommand == "auto":
-            _low = (cmd_text or "").lower()
-            user_raw_text = ""
-            for auto_prefix in (">>cliniko auto", "»cliniko auto", "Â»cliniko auto"):
-                if auto_prefix in _low:
-                    idx = _low.find(auto_prefix) + len(auto_prefix)
-                    user_raw_text = (cmd_text or "")[idx:].lstrip()
-                    break
-            if not user_raw_text:
-                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
-            
-            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
-        
-        if subcommand == "parse":
-            _low = (cmd_text or "").lower()
-            user_raw_text = ""
-            for parse_prefix in (">>cliniko parse", "»cliniko parse", "Â»cliniko parse"):
-                if parse_prefix in _low:
-                    idx = _low.find(parse_prefix) + len(parse_prefix)
-                    user_raw_text = (cmd_text or "")[idx:].lstrip()
-                    break
-            if not user_raw_text:
-                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
-            
-            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
-        
-        # Legacy compact (redirect but support for transition)
-        if subcommand == "compact":
-            _low = (cmd_text or "").lower()
-            user_raw_text = ""
-            for compact_prefix in (">>cliniko compact", "»cliniko compact"):
-                if compact_prefix in _low:
-                    idx = _low.find(compact_prefix) + len(compact_prefix)
-                    user_raw_text = (cmd_text or "")[idx:].lstrip()
-                    break
-            if not user_raw_text:
-                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
-            
-            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
-        
-        # Other subcommands (help, status, legacy generate/sanitize)
-        return handle_cliniko_command(subcommand, "", state, session_id)
-
     # attach/detach/list
     if parts and parts[0].lower() in ("attach", "a"):
         if len(parts) < 2:
@@ -1083,6 +1018,10 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         state.fun_sticky = False
         state.fun_rewrite_sticky = False
         state.raw_sticky = False
+        state.deterministic_last_family = ""
+        state.deterministic_last_reason = ""
+        state.deterministic_last_answer = ""
+        state.deterministic_last_frame = {}
         purged = 0
         if purge_session_memory_jsonl:
             try:

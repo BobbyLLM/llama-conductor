@@ -51,6 +51,19 @@ class SessionState:
     serious_last_body_signature: str = ""
     serious_repeat_streak: int = 0
 
+    # Runtime config preset override (empty means use router_config default).
+    vodka_preset_override: str = ""
+
+    # Last deterministic reasoning frame (for follow-up consistency checks).
+    deterministic_last_family: str = ""
+    deterministic_last_reason: str = ""
+    deterministic_last_answer: str = ""
+    deterministic_last_frame: Dict[str, Any] = field(default_factory=dict)
+
+    # Last conversational turn snapshots (for correction-binding when clients send short history).
+    last_user_text: str = ""
+    last_assistant_text: str = ""
+
 
 # Global session storage
 _SESSIONS: Dict[str, SessionState] = {}

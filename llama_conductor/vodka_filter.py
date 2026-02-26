@@ -14,6 +14,7 @@ import os
 import re
 import time
 import datetime as dt
+from difflib import SequenceMatcher
 from .privacy_utils import contains_likely_pii, redact_pii, safe_preview, short_hash
 
 FILTER_VERSION = "1.0.3"
@@ -419,6 +420,10 @@ class Filter:
         self._mu_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._mu_index: Dict[str, Dict[str, set[str]]] = {}
         self._mu_last_update_turn: Dict[str, int] = {}
+        self._mu_last_inject_turn: Dict[str, int] = {}
+        self._mu_last_inject_count: Dict[str, int] = {}
+        self._mu_last_query: Dict[str, str] = {}
+        self._mu_last_candidate_count: Dict[str, int] = {}
         # Eager-load facts.json on init to eliminate warm-up problem
         self._get_storage_and_fr()  # Force load storage and FastRecall immediately
 
@@ -1290,6 +1295,10 @@ class Filter:
         self._mu_cache.pop(sid, None)
         self._mu_index.pop(sid, None)
         self._mu_last_update_turn.pop(sid, None)
+        self._mu_last_inject_turn.pop(sid, None)
+        self._mu_last_inject_count.pop(sid, None)
+        self._mu_last_query.pop(sid, None)
+        self._mu_last_candidate_count.pop(sid, None)
 
     def _refresh_memory_index(self, session_id: str, units: List[Dict[str, Any]]) -> None:
         sid = self._normalize_session_id(session_id)
@@ -1637,6 +1646,63 @@ class Filter:
         s = re.sub(r"^(?:you|i)\s+(?:also\s+)?mentioned\s+", "", s, flags=re.IGNORECASE)
         return s.strip(" ,.;:")
 
+    def _looks_like_prior_session_reference(self, query: str) -> bool:
+        q = " ".join((query or "").lower().split())
+        if not q:
+            return False
+        hints = (
+            "again",
+            "as before",
+            "remind me",
+            "did i",
+            "have i",
+            "what did i",
+            "what have i",
+            "nothing else",
+            "anything else",
+        )
+        return any(h in q for h in hints)
+
+    def _recall_fail_loud_response(self, query: str, *, reason: str = "insufficient") -> str:
+        if reason == "partial_token":
+            line = (
+                "Sorry, I can't verify that reliably from this session. "
+                "I found partial token overlap only, which can be a token trap, so I won't guess."
+            )
+        elif reason == "possible_flush":
+            line = "Cannot verify, as prior session appears to have been flushed? Sorry!"
+        else:
+            line = "Sorry, I can't verify that from this session, so I won't guess!"
+        return f"{line}\n\nConfidence: medium | Source: Contextual"
+
+    def _has_partial_token_trap(self, mention_targets: List[str], evidence_units: List[Dict[str, Any]]) -> bool:
+        targets = [
+            " ".join((t or "").lower().split()).strip()
+            for t in (mention_targets or [])
+            if t and len(str(t).strip()) >= 4
+        ]
+        if not targets:
+            return False
+        words: set[str] = set()
+        for u in (evidence_units or [])[:12]:
+            txt = str(u.get("text") or "").lower()
+            words.update(re.findall(r"[a-z0-9][a-z0-9\-']+", txt))
+        if not words:
+            return False
+        for target in targets:
+            if target in words:
+                continue
+            for w in words:
+                if len(w) < 4:
+                    continue
+                if target in w or w in target:
+                    if w != target:
+                        return True
+                ratio = SequenceMatcher(None, target, w).ratio()
+                if 0.72 <= ratio < 0.99:
+                    return True
+        return False
+
     def _infer_recall_intents(self, query: str, mention_targets: List[str]) -> set[str]:
         q = " ".join((query or "").lower().split())
         toks = self._tokenize_for_search(q)
@@ -1671,15 +1737,17 @@ class Filter:
         """Global intent-aware rendering for recall answers."""
         q = " ".join((query or "").lower().split())
         q_tokens = self._tokenize_for_search(q)
+        mention_targets = [self._normalize_term(t) for t in self._extract_mention_targets(q)]
+        intents = self._infer_recall_intents(q, mention_targets)
         evidence_units = [
             u for u in (units or [])
             if not self._is_meta_recall_line(str(u.get("text") or ""))
         ]
         if not evidence_units:
+            reason = "possible_flush" if self._looks_like_prior_session_reference(q) else "insufficient"
+            if intents:
+                return self._recall_fail_loud_response(q, reason=reason)
             return ""
-
-        mention_targets = [self._normalize_term(t) for t in self._extract_mention_targets(q)]
-        intents = self._infer_recall_intents(q, mention_targets)
         sub_units = [u for u in evidence_units if str(u.get("matrix_type") or "") == "substitution"]
         promise_units = [u for u in evidence_units if str(u.get("matrix_type") or "") == "promise"]
         software_units = [u for u in evidence_units if str(u.get("matrix_type") or "") == "software"]
@@ -1813,6 +1881,8 @@ class Filter:
                 lines.append("Confidence: high | Source: Contextual")
                 return "\n".join(lines)
             if mention_targets:
+                if self._has_partial_token_trap(mention_targets, evidence_units):
+                    return self._recall_fail_loud_response(q, reason="partial_token")
                 joined = ", ".join(mention_targets[:4])
                 return f"No, you did not mention: {joined}.\nConfidence: high | Source: Contextual"
             return "No, you did not mention that.\nConfidence: high | Source: Contextual"
@@ -1997,7 +2067,8 @@ class Filter:
                     picked.append(self._compact_memory_text(txt, max_len=180))
 
         if not picked:
-            return "No recall evidence found for this query.\n\nConfidence: medium | Source: Contextual"
+            reason = "possible_flush" if self._looks_like_prior_session_reference(query) else "insufficient"
+            return self._recall_fail_loud_response(query, reason=reason)
 
         if want_tech:
             pairs: List[str] = []
@@ -2199,6 +2270,11 @@ class Filter:
         recall_mode = self._is_recall_query(q)
 
         sid = self._normalize_session_id(session_id)
+        turn_now = self._count_user_messages(messages)
+        self._mu_last_query[sid] = self._compact_memory_text(q, max_len=180)
+        self._mu_last_inject_turn[sid] = max(0, int(turn_now))
+        self._mu_last_inject_count[sid] = 0
+        self._mu_last_candidate_count[sid] = 0
         by_id = self._mu_cache.get(sid)
         idx_map = self._mu_index.get(sid)
         if not by_id or not idx_map:
@@ -2219,12 +2295,14 @@ class Filter:
         candidate_ids: set[str] = set()
         for t in q_tokens:
             candidate_ids.update(idx_map.get(t, set()))
+        self._mu_last_candidate_count[sid] = len(candidate_ids)
         if not candidate_ids and not recall_mode:
             return self._upsert_memory_message(messages, "", debug_enabled=False)
 
         # Recall queries score against the full retained memory set to avoid omission.
         if recall_mode and by_id:
             candidate_ids = set(by_id.keys())
+            self._mu_last_candidate_count[sid] = len(candidate_ids)
 
         effective_max_units = max(1, int(max_units or 3))
         if recall_mode:
@@ -2249,6 +2327,7 @@ class Filter:
             picked = [by_id[uid] for _, uid in scored[:effective_max_units] if uid in by_id]
         if not picked:
             return self._upsert_memory_message(messages, "", debug_enabled=False)
+        self._mu_last_inject_count[sid] = len(picked)
         txt = self._render_memory_injection(
             picked,
             max_chars=max(0, int(max_chars or 0)),
@@ -2304,6 +2383,67 @@ class Filter:
                 )
             return cleaned
         return self._upsert_memory_message(messages, txt, debug_enabled=debug_enabled)
+
+    def get_session_memory_status(self, session_id: str, *, user_turn_hint: int = 0) -> Dict[str, Any]:
+        """Return lightweight observability for session-memory behavior."""
+        sid = self._normalize_session_id(session_id)
+        path = self._session_memory_file(sid)
+        by_id = self._mu_cache.get(sid)
+        if by_id is None:
+            units = self._load_memory_units_jsonl(path)
+            self._refresh_memory_index(sid, units)
+            by_id = self._mu_cache.get(sid, {})
+
+        unit_count = int(len(by_id or {}))
+        out = {
+            "session_id": sid,
+            "enabled_summary": bool(self.valves.enable_summary),
+            "require_session_id": bool(self.valves.summary_require_session_id),
+            "summary_every_n_user_msgs": int(self.valves.summary_every_n_user_msgs or 0),
+            "summary_inject_max_units": int(self.valves.summary_inject_max_units or 0),
+            "summary_inject_max_chars": int(self.valves.summary_inject_max_chars or 0),
+            "memory_file": path,
+            "memory_file_exists": bool(os.path.exists(path)),
+            "unit_count": unit_count,
+            "last_update_turn": int(self._mu_last_update_turn.get(sid, 0) or 0),
+            "last_inject_turn": int(self._mu_last_inject_turn.get(sid, 0) or 0),
+            "last_inject_units": int(self._mu_last_inject_count.get(sid, 0) or 0),
+            "last_candidate_count": int(self._mu_last_candidate_count.get(sid, 0) or 0),
+            "last_query": str(self._mu_last_query.get(sid, "") or ""),
+            "user_turn_hint": int(max(0, int(user_turn_hint or 0))),
+        }
+        return out
+
+    def _run_session_memory_pipeline(self, messages: List[Dict], *, body: Dict[str, Any], debug_enabled: bool) -> List[Dict]:
+        """
+        Canonical memory flow:
+          capture -> units -> retrieve -> render/inject
+
+        Compatibility note:
+        - existing helper methods (`_maybe_update_session_memory`, `_maybe_inject_session_memory`)
+          remain the implementation primitives for now.
+        - this wrapper is the single entry point used by `inlet()`.
+        """
+        sid_raw = str(body.get("session_id") or "").strip()
+        if bool(self.valves.summary_require_session_id) and not sid_raw:
+            # Explicitly disable memory injection when caller doesn't provide a session id.
+            return self._upsert_memory_message(messages, "", debug_enabled=False)
+
+        sid = sid_raw or "global"
+        every_n = int(self.valves.summary_every_n_user_msgs or 0)
+        self._maybe_update_session_memory(
+            messages=messages,
+            session_id=sid,
+            every_n=every_n,
+            debug_enabled=debug_enabled,
+        )
+        return self._maybe_inject_session_memory(
+            messages=messages,
+            session_id=sid,
+            max_units=int(self.valves.summary_inject_max_units or 3),
+            max_chars=int(self.valves.summary_inject_max_chars or 500),
+            debug_enabled=debug_enabled,
+        )
 
     def _clip_and_trim_messages(self, messages: List[Dict], n_last_pairs: int, keep_first: bool, max_chars: int) -> List[Dict]:
         system = [m for m in messages if m.get("role") == "system"]
@@ -2392,29 +2532,13 @@ class Filter:
         # 1) manual highlights (store !! / ALLCAPS)
         self._store_manual_highlights(messages, fr, debug_enabled)
 
-        # 2) session memory update + relevance-gated injection (optional)
+        # 2) canonical memory pipeline (capture -> retrieve -> render/inject)
         if bool(self.valves.enable_summary):
-            sid_raw = str(body.get("session_id") or "").strip()
-            if bool(self.valves.summary_require_session_id) and not sid_raw:
-                sid_raw = ""
-            sid = sid_raw or "global"
-            if bool(self.valves.summary_require_session_id) and not sid_raw:
-                messages = self._upsert_memory_message(messages, "", debug_enabled=False)
-            else:
-                every_n = int(self.valves.summary_every_n_user_msgs or 0)
-                self._maybe_update_session_memory(
-                    messages=messages,
-                    session_id=sid,
-                    every_n=every_n,
-                    debug_enabled=debug_enabled,
-                )
-                messages = self._maybe_inject_session_memory(
-                    messages=messages,
-                    session_id=sid,
-                    max_units=int(self.valves.summary_inject_max_units or 3),
-                    max_chars=int(self.valves.summary_inject_max_chars or 500),
-                    debug_enabled=debug_enabled,
-                )
+            messages = self._run_session_memory_pipeline(
+                messages=messages,
+                body=body,
+                debug_enabled=debug_enabled,
+            )
 
         # 3) clip
         messages = self._clip_and_trim_messages(

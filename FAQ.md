@@ -1219,25 +1219,11 @@ Answer -> Vault chunk -> SUMM file -> source metadata header
 
 - Always check `NEW.md` for most recent update 
 
-
-- NEW: Added runtime memory/context presets:
-  - `>>preset fast|balanced|max-recall` (shorthand)
-  - `>>preset set fast|balanced|max-recall`
-  - `>>preset show` / `>>preset reset`
-- NEW: Added memory observability command:
-  - `>>memory status` (preset, summary flags, unit count, last update/inject turns, last candidate count)
-- NEW: `>>help` is now compact core help; `>>help advanced` shows full command sheet.
-- IMPROVED: Profile footer is now default-minimal policy (`non_default`) to reduce footer noise.
-- IMPROVED: FUN and FR now share one deterministic selector core (separate renderers, shared gating).
-- IMPROVED: Vodka inlet now uses one canonical memory-pipeline entry (`capture -> retrieve -> render/inject`) with compatibility-safe internals.
-- BIG CHANGE: Vodka recall was refactored to be deterministic-first and less drift-prone.
-- FIX: Recall-mode answers now follow strict deterministic contracts (list / mention / mixed) instead of drifting into generic prose.
-- FIX: Follow-up recall turns like `Nothing else?` now resolve cleanly and deterministically.
-- IMPROVED: Mixed recall (`what did I promise + what software did I mention`) is cleaner and less noisy.
-- IMPROVED: Recall extraction reduced false positives from unrelated terms.
-- IMPROVED: Added a mixed-domain recall contract smoke gate to catch regressions early.
-- IMPROVED: Recall uncertainty now fails loud with a short plain-English line instead of guessing.
-- IMPROVED: Fuzzy near-matches now disclose "partial token overlap" risk (token-trap guardrail) rather than inventing.
+- NEW: Core router internals were decomposed into focused modules (`chat_*`, `state_*`, `router_*`) to reduce monolith risk and make behavior easier to maintain.
+- IMPROVED: Correction/follow-up handling is more stable on tricky "I meant X not Y" turns, with cleaner pass-through when a query falls outside deterministic scope.
+- IMPROVED: Consistency guardrail now catches obvious state/constraint contradictions before final output.
+- IMPROVED: Public release staging is now standardized, with stricter promotion checks before shipping.
+- STABLE: Existing grounding contracts (`>>lock`, `>>scratch`, Mentats/Vault, confidence/source footer) are preserved.
 
 ### What does `Profile | Sarc | Snark` mean?
 
