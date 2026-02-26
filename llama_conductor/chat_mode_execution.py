@@ -1,6 +1,41 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
+import hashlib
+
+
+def _maybe_append_fun_train_kicker(
+    *,
+    text: str,
+    user_text: str,
+    session_id: str,
+    seed_quote: str,
+) -> str:
+    """Add a tiny train-themed kicker for deterministic FUN transport answers.
+
+    Design constraints:
+    - no extra model call
+    - scoped narrowly (train prompts only)
+    - never mutate clarifier prompts
+    """
+    t = (text or "").strip()
+    q = (user_text or "").lower()
+    if not t:
+        return t
+    if "quick check: did you mean" in t.lower():
+        return t
+    if "train" not in q and "train" not in t.lower():
+        return t
+    if "destination" not in t.lower():
+        return t
+    # Avoid double-appending.
+    if t.rstrip().endswith(("Choo!", "All aboard!", "Full steam!")):
+        return t
+
+    kickers = ("Choo!", "All aboard!", "Full steam!")
+    key = f"{session_id}|{q}|{seed_quote}|{t}"
+    idx = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16) % len(kickers)
+    return t.rstrip() + " " + kickers[idx]
 
 
 async def maybe_handle_fun_fr_raw(
@@ -33,6 +68,33 @@ async def maybe_handle_fun_fr_raw(
     finalize_chat_response: Callable[..., Any],
 ) -> Optional[Any]:
     if fun_mode == "fun":
+        # Preserve deterministic solver output exactly when present.
+        # We only decorate with a FUN header/quote; we do not run a rewrite pass.
+        if (state_solver_answer or "").strip():
+            base = (state_solver_answer or "").strip()
+            sel = await run_sync(select_fun_style_seed, state=state, user_text=user_text, base_text=base)
+            quote = str(sel.get("seed") or "")
+            base = _maybe_append_fun_train_kicker(
+                text=base,
+                user_text=user_text,
+                session_id=session_id,
+                seed_quote=quote,
+            )
+            text = f'[FUN] "{quote}"\n\n{base}' if quote else f"[FUN]\n\n{base}"
+            return finalize_chat_response(
+                text=text,
+                user_text=user_text,
+                state=state,
+                lock_active=lock_active,
+                scratchpad_grounded=scratchpad_grounded,
+                scratchpad_quotes=scratchpad_quotes,
+                has_facts_block=bool((facts_block or "").strip()),
+                stream=stream,
+                mode="fun",
+                sensitive_override_once=sensitive_override_once,
+                deterministic_state_solver=True,
+            )
+
         if run_fun is None:
             base = (state_solver_answer or "").strip()
             if not base:
@@ -107,6 +169,7 @@ async def maybe_handle_fun_fr_raw(
             stream=stream,
             mode="fun",
             sensitive_override_once=sensitive_override_once,
+            deterministic_state_solver=bool((state_solver_answer or "").strip()),
         )
 
     if fun_mode == "fun_rewrite":
@@ -148,6 +211,7 @@ async def maybe_handle_fun_fr_raw(
             stream=stream,
             mode="fun_rewrite",
             sensitive_override_once=sensitive_override_once,
+            deterministic_state_solver=bool((state_solver_answer or "").strip()),
         )
 
     if state.raw_sticky and run_raw:
@@ -176,4 +240,3 @@ async def maybe_handle_fun_fr_raw(
         )
 
     return None
-

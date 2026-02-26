@@ -216,8 +216,33 @@ def _debug_user_fragment(text: str) -> str:
     return f"<redacted len={len(raw)} sha={short_hash(raw)}>"
 
 
+def _norm_query_text(text: str) -> str:
+    return " ".join(str(text or "").lower().split()).strip()
+
+
+def _extract_replay_base_answer(last_assistant_text: str) -> str:
+    lines: List[str] = []
+    for ln in str(last_assistant_text or "").splitlines():
+        s = (ln or "").strip()
+        if not s:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        low = s.lower()
+        if s.startswith("[FUN]") or s.startswith("[FUN REWRITE]"):
+            continue
+        if low.startswith("confidence:") or low.startswith("source:") or low.startswith("profile:"):
+            continue
+        lines.append(s)
+    return "\n".join(lines).strip()
+
+
 _SERIOUS_TASK_FORWARD_FALLBACK = (
     "Understood. No more meta. Give me the exact task and desired output format, and I will answer directly."
+)
+_DELEGATE_DECISION_RE = re.compile(
+    r"\b(you tell me|you decide|you choose|your call|pick for me|choose for me|idk|i dont know|i don't know|not sure)\b",
+    re.IGNORECASE,
 )
 
 
@@ -234,6 +259,7 @@ def _finalize_chat_response(
     mode: str = "serious",
     sensitive_override_once: bool = False,
     bypass_serious_anti_loop: bool = False,
+    deterministic_state_solver: bool = False,
 ):
     return _chat_finalize_response(
         text=text,
@@ -247,6 +273,7 @@ def _finalize_chat_response(
         mode=mode,
         sensitive_override_once=sensitive_override_once,
         bypass_serious_anti_loop=bypass_serious_anti_loop,
+        deterministic_state_solver=deterministic_state_solver,
         serious_task_forward_fallback=_SERIOUS_TASK_FORWARD_FALLBACK,
         make_stream_response=lambda t: StreamingResponse(_stream_sse(t), media_type="text/event-stream"),
         make_json_response=lambda t: JSONResponse(_make_openai_response(t)),
@@ -317,13 +344,16 @@ async def _chat_exception_guard(request: Request, call_next):
 
 
 @app.on_event("startup")
-async def _startup_cleanup() -> None:
+async def _startup() -> None:
     try:
         base = str(cfg_get("vodka.storage_dir", "") or "").strip()
         purged = purge_session_memory_jsonl(base)
         _dbg(f"[DEBUG] startup session-memory purge deleted={purged}")
     except Exception:
         pass
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    return None
 
 
 @app.get("/healthz")
@@ -419,7 +449,8 @@ async def v1_chat_completions(req: Request):
         return "Chat Summary"
 
     if _is_openwebui_title_task(user_text_raw):
-        if ROUTER_DEBUG:
+        debug_titles = bool(cfg_get("router.debug", False))
+        if debug_titles:
             _dbg("[DEBUG] openwebui title task bypass")
         title_json = json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
         return JSONResponse(_make_openai_response(title_json))
@@ -836,10 +867,103 @@ async def v1_chat_completions(req: Request):
     state_solver_fail_loud = False
     state_solver_answer = ""
     state_solver_reason = ""
+    state_solver_frame = {}
+    user_q_norm = _norm_query_text(user_text)
+    prev_user_q_norm = _norm_query_text(getattr(state, "last_user_text", ""))
+    last_asst_text = str(getattr(state, "last_assistant_text", "") or "")
+
+    # Delegate short-circuit: if user asks us to choose and the immediately prior
+    # answer was deterministic/contextual, replay the deterministic base answer.
+    if (
+        _DELEGATE_DECISION_RE.search(user_text)
+        and ("source: contextual" in last_asst_text.lower())
+        and ("quick check: did you mean" not in last_asst_text.lower())
+    ):
+        replay_base = _extract_replay_base_answer(last_asst_text)
+        if replay_base:
+            state_solver_used = True
+            state_solver_reason = "delegate_replay_last_contextual"
+            state_solver_answer = replay_base
+            state_solver_frame = dict(getattr(state, "deterministic_last_frame", {}) or {})
+            query_family = "constraint_decision"
+
+    # Deterministic replay cache for exact-repeat queries in active constraint lane
+    # (e.g., regenerate on "you choose"/"idk" after a deterministic answer).
+    try:
+        immediate_delegate_replay = (
+            bool(_DELEGATE_DECISION_RE.search(user_text))
+            and ("source: contextual" in str(getattr(state, "last_assistant_text", "") or "").lower())
+            and (
+                bool(str(getattr(state, "deterministic_last_answer", "") or "").strip())
+                or ("destination" in str(getattr(state, "last_assistant_text", "") or "").lower())
+            )
+        )
+        if (
+            bool(cfg_get("state_solver.enabled", True))
+            and bool(cfg_get("state_solver.auto_route", True))
+            and (
+                str(getattr(state, "deterministic_last_family", "") or "") == "constraint_decision"
+                or immediate_delegate_replay
+            )
+            and (
+                bool(str(getattr(state, "deterministic_last_answer", "") or "").strip())
+                or bool(_extract_replay_base_answer(getattr(state, "last_assistant_text", "")))
+            )
+            and user_q_norm
+            and (
+                user_q_norm == str(getattr(state, "deterministic_last_query_norm", "") or "")
+                or user_q_norm == prev_user_q_norm
+            )
+        ):
+            state_solver_used = True
+            state_solver_reason = "replay_exact_query"
+            state_solver_answer = str(getattr(state, "deterministic_last_answer", "") or "").strip() or _extract_replay_base_answer(
+                getattr(state, "last_assistant_text", "")
+            )
+            state_solver_frame = dict(getattr(state, "deterministic_last_frame", {}) or {})
+            query_family = "constraint_decision"
+    except Exception:
+        pass
+
+    # Follow-up deterministic decision handling (works across serious/fun/fr).
+    # This computes a deterministic base answer/frame without forcing an early return,
+    # so fun/fr renderers can still style the output.
+    if (
+        (not state_solver_used)
+        and
+        solve_constraint_followup is not None
+        and str(getattr(state, "deterministic_last_family", "") or "") == "constraint_decision"
+        and isinstance(getattr(state, "deterministic_last_frame", None), dict)
+        and bool(getattr(state, "deterministic_last_frame", {}))
+        and bool(cfg_get("state_solver.enabled", True))
+        and bool(cfg_get("state_solver.auto_route", True))
+        and not lock_active
+    ):
+        try:
+            apply_in_raw = bool(cfg_get("state_solver.apply_in_raw", False))
+            if (not state.raw_sticky) or apply_in_raw:
+                fr0 = solve_constraint_followup(
+                    frame=dict(getattr(state, "deterministic_last_frame", {}) or {}),
+                    query=user_text,
+                )
+                fr0_frame = dict(getattr(fr0, "frame", {}) or {})
+                if fr0_frame:
+                    state.deterministic_last_frame = dict(fr0_frame)
+                if bool(getattr(fr0, "handled", False)):
+                    state_solver_used = True
+                    state_solver_fail_loud = bool(getattr(fr0, "fail_loud", False))
+                    state_solver_reason = str(getattr(fr0, "reason", "") or "")
+                    state_solver_answer = str(getattr(fr0, "answer", "") or "").strip()
+                    state_solver_frame = fr0_frame
+                    query_family = "constraint_decision"
+        except Exception:
+            pass
     if classify_query_family is not None and solve_state_transition_query is not None:
         try:
             query_family = classify_query_family(user_text)
             if (
+                not state_solver_used
+                and
                 bool(cfg_get("state_solver.enabled", True))
                 and bool(cfg_get("state_solver.auto_route", True))
                 and query_family in ("state_transition", "constraint_decision")
@@ -853,6 +977,7 @@ async def v1_chat_completions(req: Request):
                         state_solver_fail_loud = bool(getattr(sr, "fail_loud", False))
                         state_solver_reason = str(getattr(sr, "reason", "") or "")
                         state_solver_answer = str(getattr(sr, "answer", "") or "").strip()
+                        state_solver_frame = dict(getattr(sr, "frame", {}) or {})
         except Exception:
             pass
 
@@ -887,6 +1012,13 @@ async def v1_chat_completions(req: Request):
         finalize_chat_response=_finalize_chat_response,
     )
     if mode_resp is not None:
+        if state_solver_used and state_solver_answer:
+            state.deterministic_last_family = str(query_family or "state_transition")
+            state.deterministic_last_reason = str(state_solver_reason or "")
+            state.deterministic_last_answer = str(state_solver_answer or "")
+            state.deterministic_last_query_norm = user_q_norm
+            if isinstance(state_solver_frame, dict) and state_solver_frame:
+                state.deterministic_last_frame = dict(state_solver_frame)
         return mode_resp
 
     # Normal serious
@@ -910,6 +1042,7 @@ async def v1_chat_completions(req: Request):
                     state_solver_fail_loud = bool(getattr(sr2, "fail_loud", False))
                     state_solver_reason = str(getattr(sr2, "reason", "") or "")
                     state_solver_answer = str(getattr(sr2, "answer", "") or "").strip()
+                    state_solver_frame = dict(getattr(sr2, "frame", {}) or {})
         except Exception:
             pass
 
@@ -917,6 +1050,9 @@ async def v1_chat_completions(req: Request):
         state.deterministic_last_family = str(query_family or "state_transition")
         state.deterministic_last_reason = str(state_solver_reason or "")
         state.deterministic_last_answer = str(state_solver_answer or "")
+        state.deterministic_last_query_norm = user_q_norm
+        if isinstance(state_solver_frame, dict) and state_solver_frame:
+            state.deterministic_last_frame = dict(state_solver_frame)
         return _finalize_chat_response(
             text=state_solver_answer,
             user_text=user_text,
@@ -1034,6 +1170,7 @@ async def v1_chat_completions(req: Request):
         state.deterministic_last_reason = ""
         state.deterministic_last_answer = ""
         state.deterministic_last_frame = {}
+        state.deterministic_last_query_norm = ""
 
     return _finalize_chat_response(
         text=text,

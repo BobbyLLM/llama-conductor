@@ -59,6 +59,7 @@ class SessionState:
     deterministic_last_reason: str = ""
     deterministic_last_answer: str = ""
     deterministic_last_frame: Dict[str, Any] = field(default_factory=dict)
+    deterministic_last_query_norm: str = ""
 
     # Last conversational turn snapshots (for correction-binding when clients send short history).
     last_user_text: str = ""
