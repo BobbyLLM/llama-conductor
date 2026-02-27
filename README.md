@@ -17,6 +17,7 @@ TL;DR: "In God we trust. All others bring data." - Deming
 - [Quickstart](#quickstart) - Get it running in 5 minutes
 - [Y U DO DIS?](DESIGN.md) - Design fool-osophy and Q&A
 - [BULLSHIT. PROVE IT](prepub/PAPER.md) - Ok, I will (Prepub draft + evidence bundle)
+- [Mom, can we get ChatGPT? Mom: we have ChatGPT at home](meme-test.md) - A fun meme test that shows the effect of deterministic grounding
 
 ---
 
