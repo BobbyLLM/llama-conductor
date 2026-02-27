@@ -232,7 +232,7 @@ Recommended start order: Qdrant -> llama-swap -> router -> frontend
 ### 🎯 Strict Grounding Paths (`>>lock`, `>>scratch`)
 
 - `>>lock` constrains normal answers to one SUMM file. LLM grounds facts to THAT source. If not there? Signals LOUDLY.
-- `>>scratch` As above but used for transient stuff you copy/paste (think: news article you want to mull over. See FAQ for example).
+- `>>scratch` As above but used for transient stuff you copy/paste (think: news article you want to mull over. [See FAQ for example](https://codeberg.org/BobbyLLM/llama-conductor/src/branch/main/FAQ.md#deep-example)).
 - End result: both make provenance behavior explicit when grounded vs fallback
 
 ### 🧰 Deterministic sidecars
@@ -271,7 +271,7 @@ Result:
 Yep. Basically TARS sliders.
 
 Result:
-- Profile tone (sarcasm, snark, directness) adapts to how you want to be answered (see FAQ for details)
+- Profile tone (sarcasm, snark, directness) adapts to how you want to be answered (see [FAQ for details](https://codeberg.org/BobbyLLM/llama-conductor/src/branch/main/FAQ.md#what-does-profile-sarc-snark-mean))
 - Coupled with mode --> `serious` keeps the tightest leash.
 - Coupled with modes --> `fun` and `fr` have more style range.
 - This changes *delivery* style, *not* evidence contracts.
