@@ -1363,6 +1363,8 @@ What, this wasn't enough? May God have mercy on your soul.
 
 Submit a ticket. I read and respond once a week (usually Sunday or Mondays) between 11-1pm UTC. 
 
+Else, you can roll the dice: sanding-oink-grant(AT)duck(DOT)com or find me on Lemmy.
+
 Sorry - real life commitments :( 
 
 ## License
