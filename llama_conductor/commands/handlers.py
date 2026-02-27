@@ -96,10 +96,10 @@ except Exception:
 def _core_help_text() -> str:
     return (
         "# Router Help (Core)\n\n"
-        "Use `>>help advanced` for the full command sheet.\n\n"
+        "Use `>>help full` (or `>>help advanced`) for the full command sheet.\n\n"
         "## Essentials\n"
         "Attach docs, lock a source, and inspect session state.\n"
-        "- `>>status`\n"
+        "- `>>status` | `>>status full` | `>>status raw`\n"
         "- `>>attach <kb>` | `>>detach <kb>` | `>>detach all`\n"
         "- `>>list_kb` | `>>list_files` | `>>lock <SUMM_*.md>` | `>>unlock`\n"
         "- `>>scratch` | `>>attach scratchpad` | `>>scratchpad status|list|show|clear|add|delete`\n"
@@ -113,7 +113,7 @@ def _core_help_text() -> str:
         "Tune tone and memory behavior for this session.\n"
         "- `>>profile show|set|reset|on|off`\n"
         "- `>>profile <casual|feral|turbo>`\n"
-        "- `>>memory status`\n"
+        "- `>>memory status|show|clear`\n"
         "- `>>preset <fast|balanced|max-recall>`\n"
         "- `>>preset show|set <fast|balanced|max-recall>|reset`\n\n"
         "## Utilities\n"
@@ -212,7 +212,25 @@ def _source_filesystem_kbs(state: SessionState) -> set:
     }
 
 
-def _render_status(session_id: str, state: SessionState) -> str:
+def _memory_status_snapshot(session_id: str, state: SessionState) -> Dict[str, object]:
+    out: Dict[str, object] = {
+        "unit_count": "n/a",
+        "last_update_turn": "n/a",
+    }
+    try:
+        if state.vodka and hasattr(state.vodka, "get_session_memory_status"):
+            payload = state.vodka.get_session_memory_status(
+                session_id=session_id,
+                user_turn_hint=int(getattr(state, "profile_turn_counter", 0) or 0),
+            )
+            out["unit_count"] = int(payload.get("unit_count", 0) or 0)
+            out["last_update_turn"] = int(payload.get("last_update_turn", 0) or 0)
+    except Exception:
+        pass
+    return out
+
+
+def _render_status_raw(session_id: str, state: SessionState) -> str:
     cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip()
     effective_preset = (state.vodka_preset_override or cfg_preset or "balanced").strip()
     return (
@@ -241,7 +259,85 @@ def _render_status(session_id: str, state: SessionState) -> str:
     )
 
 
+def _render_status(session_id: str, state: SessionState) -> str:
+    cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip()
+    effective_preset = (state.vodka_preset_override or cfg_preset or "balanced").strip()
+    modes: List[str] = []
+    if state.raw_sticky:
+        modes.append("raw")
+    elif state.fun_rewrite_sticky:
+        modes.append("fun rewrite")
+    elif state.fun_sticky:
+        modes.append("fun")
+    else:
+        modes.append("serious")
+    lock_label = "none"
+    if state.locked_summ_file:
+        kb = state.locked_summ_kb or "unknown"
+        lock_label = f"{state.locked_summ_file}@{kb}"
+    attached = sorted(state.attached_kbs)
+    if len(attached) <= 4:
+        attach_label = ", ".join(attached) if attached else "none"
+    else:
+        attach_label = f"{len(attached)} attached"
+    memory = _memory_status_snapshot(session_id, state)
+    return (
+        "# Router Status\n\n"
+        f"- `Session`: `{session_id}`\n"
+        f"- `Mode`: `{', '.join(modes)}`\n"
+        f"- `Grounding`: attached=`{attach_label}` | lock=`{lock_label}`\n"
+        f"- `Memory`: preset=`{effective_preset}` | units=`{memory.get('unit_count')}` | last_update_turn=`{memory.get('last_update_turn')}`\n"
+        f"- `Retrieval`: fs_hits=`{state.rag_last_hits}` | vault_hits=`{state.vault_last_hits}`\n"
+        f"- `Profile`: enabled=`{state.profile_enabled}` | strength=`{state.profile_effective_strength:.2f}`\n"
+    )
+
+
+def _render_status_full(session_id: str, state: SessionState) -> str:
+    cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip()
+    effective_preset = (state.vodka_preset_override or cfg_preset or "balanced").strip()
+    return (
+        "# Router Status (Full)\n\n"
+        "## Session\n"
+        f"- `session_id`: `{session_id}`\n"
+        f"- `attached_kbs`: `{sorted(state.attached_kbs)}`\n"
+        f"- `locked_summ_file`: `{state.locked_summ_file}`\n"
+        f"- `locked_summ_kb`: `{state.locked_summ_kb}`\n"
+        "\n"
+        "## Modes\n"
+        f"- `fun_sticky`: `{state.fun_sticky}`\n"
+        f"- `fun_rewrite_sticky`: `{state.fun_rewrite_sticky}`\n"
+        f"- `raw_sticky`: `{state.raw_sticky}`\n"
+        "\n"
+        "## Profile\n"
+        f"- `profile_enabled`: `{state.profile_enabled}`\n"
+        f"- `profile_confidence`: `{state.interaction_profile.confidence:.2f}`\n"
+        f"- `profile_effective_strength`: `{state.profile_effective_strength:.2f}`\n"
+        f"- `profile_output_compliance`: `{state.profile_output_compliance:.2f}`\n"
+        f"- `profile_blocked_nicknames`: `{sorted(state.profile_blocked_nicknames)!r}`\n"
+        f"- `profile_last_updated_turn`: `{state.interaction_profile.last_updated_turn}`\n"
+        "\n"
+        "## Retrieval\n"
+        f"- `last_query`: `{state.rag_last_query}`\n"
+        f"- `last_hits`: `{state.rag_last_hits}`\n"
+        f"- `vault_last_query`: `{state.vault_last_query}`\n"
+        f"- `vault_last_hits`: `{state.vault_last_hits}`\n"
+        "\n"
+        "## Runtime Control\n"
+        f"- `vodka_preset`: `{effective_preset}`\n"
+        f"- `pending_lock_candidate`: `{state.pending_lock_candidate}`\n"
+        f"- `pending_sensitive_confirm_query`: `{state.pending_sensitive_confirm_query}`\n"
+        f"- `serious_ack_reframe_streak`: `{state.serious_ack_reframe_streak}`\n"
+        f"- `serious_repeat_streak`: `{state.serious_repeat_streak}`\n"
+        "\n"
+        "Tip: use `>>status raw` for machine-readable key/value output.\n"
+    )
+
+
 def _dispatch_exact_early(low: str, *, state: SessionState, session_id: str) -> Optional[str]:
+    if low in ("status full", "statusfull"):
+        return _render_status_full(session_id, state)
+    if low in ("status raw", "statusraw"):
+        return _render_status_raw(session_id, state)
     handlers: Dict[str, Callable[[], str]] = {
         "status": lambda: _render_status(session_id, state),
     }
@@ -422,7 +518,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
     # memory observability
     if parts and parts[0].lower() == "memory":
         sub = parts[1].lower() if len(parts) > 1 else "status"
-        if sub in ("status", "show"):
+        if sub in ("status", "show", "clear"):
             if state.vodka is None and VodkaFilter is not None:
                 try:
                     state.vodka = VodkaFilter()
@@ -445,6 +541,33 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
                     pass
             if not state.vodka or not hasattr(state.vodka, "get_session_memory_status"):
                 return "[memory] unavailable (Vodka not initialized)"
+
+            if sub == "clear":
+                try:
+                    sid = str(session_id or "").strip()
+                    if hasattr(state.vodka, "_normalize_session_id"):
+                        sid = str(state.vodka._normalize_session_id(sid))
+                    path = ""
+                    if hasattr(state.vodka, "_session_memory_file"):
+                        path = str(state.vodka._session_memory_file(sid) or "")
+                    removed = 0
+                    if path and os.path.exists(path):
+                        try:
+                            if hasattr(state.vodka, "_load_memory_units_jsonl"):
+                                removed = len(state.vodka._load_memory_units_jsonl(path))
+                        except Exception:
+                            removed = 0
+                    if path and hasattr(state.vodka, "_reset_session_memory_store"):
+                        state.vodka._reset_session_memory_store(sid, path)
+                    elif path:
+                        try:
+                            os.remove(path)
+                        except Exception:
+                            pass
+                    return f"[memory] cleared session memory (sid={sid}, removed_units={removed})"
+                except Exception as e:
+                    return f"[memory] clear failed: {e.__class__.__name__}"
+
             try:
                 payload = state.vodka.get_session_memory_status(
                     session_id=session_id,
@@ -452,6 +575,33 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
                 )
             except Exception as e:
                 return f"[memory] status unavailable: {e.__class__.__name__}"
+
+            if sub == "show":
+                try:
+                    path = str(payload.get("memory_file") or "").strip()
+                    units = []
+                    if path and hasattr(state.vodka, "_load_memory_units_jsonl"):
+                        units = list(state.vodka._load_memory_units_jsonl(path))
+                    if not units:
+                        return "[memory show]\n(no units)"
+                    lines = [
+                        "[memory show]",
+                        f"session_id={payload.get('session_id')}",
+                        f"unit_count={len(units)}",
+                    ]
+                    for i, rec in enumerate(units[:10], 1):
+                        txt = str(rec.get("text") or "").strip().replace("\n", " ")
+                        if len(txt) > 180:
+                            txt = txt[:177].rstrip() + "..."
+                        tr = rec.get("turn_range") or [0, 0]
+                        tags = rec.get("tags") or []
+                        tag_txt = ", ".join(str(t) for t in tags[:4]) if tags else "-"
+                        lines.append(f"{i}. turn={tr} tags={tag_txt}")
+                        lines.append(f"   {txt}")
+                    return "\n".join(lines)
+                except Exception as e:
+                    return f"[memory] show unavailable: {e.__class__.__name__}"
+
             cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip() or "balanced"
             active_preset = (state.vodka_preset_override or cfg_preset).strip()
             return (
@@ -468,7 +618,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
                 f"last_candidate_count={payload.get('last_candidate_count')}\n"
                 f"last_query={payload.get('last_query')!r}\n"
             )
-        return "[memory] usage: >>memory status"
+        return "[memory] usage: >>memory status|show|clear"
 
     # profile controls
     if parts and parts[0].lower() == "profile":

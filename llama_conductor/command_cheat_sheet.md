@@ -12,22 +12,29 @@ Tips:
 ## Default operators (start here)
 - `>>help` compact command list
 - `>>status` inspect session state
+- `>>status full` expanded human-readable diagnostics
+- `>>status raw` machine-readable key/value diagnostics
 - `>>attach <kb>` then `>>list_files`
 - `>>lock SUMM_<name>.md` to force deterministic grounding
 - ask your question normally
-- `>>memory status` inspect memory pipeline health
+- `>>memory status|show|clear` inspect/manage memory pipeline
 - `>>preset fast|balanced|max-recall` quick runtime preset switch
 
 Minimal examples:
 - `>>preset fast`
 - `>>memory status`
+- `>>memory show`
 - `>>profile casual`
 
 ## Quick utilities (`>>`)
 - `>>help` show compact core help
-- `>>help advanced` show full sheet
-- `>>status` show session state
+- `>>help full` alias for full sheet (`>>help advanced`)
+- `>>status` compact status view
+- `>>status full` expanded human-readable status view
+- `>>status raw` machine-readable key/value status view
 - `>>memory status` show memory pipeline diagnostics
+- `>>memory show` preview retained memory units
+- `>>memory clear` clear current session memory units
 - `>>profile show` show interaction profile (session-ephemeral)
 - `>>profile set <field>=<value>` set profile field
 - `>>profile reset` reset profile defaults/scores
@@ -54,7 +61,7 @@ Tips:
 - Use these when you want a direct tool result rather than a free-form chat answer.
 - API-backed commands (`wiki`, `exchange`, `weather`) can fail if upstream services are unavailable.
 - Soft aliases are supported: `profile show|set|reset|on|off`.
-- Soft aliases are supported: `preset show|set|reset`, `preset fast|balanced|max-recall`, `memory status`.
+- Soft aliases are supported: `preset show|set|reset`, `preset fast|balanced|max-recall`, `memory status|show|clear`.
 - Manual `>>profile set` values are pinned and take precedence over inferred updates until changed again or reset.
 
 ## KB attachment (`>>`)

@@ -146,11 +146,21 @@ def apply_deterministic_footer(
     lock_active: bool,
     scratchpad_grounded: bool,
     has_facts_block: bool,
+    deterministic_state_solver: bool = False,
     normalize_sources_footer_fn: Callable[..., str] | None,
 ) -> str:
     if not normalize_sources_footer_fn:
         return text
     try:
+        if deterministic_state_solver:
+            t = (text or "").strip()
+            if t:
+                # Preserve deterministic provenance on mode-wrapped answers.
+                if "Source: Contextual" not in t:
+                    t = t + "\nSource: Contextual"
+            else:
+                t = "Source: Contextual"
+            text = t
         return normalize_sources_footer_fn(
             text=text,
             lock_active=lock_active,
