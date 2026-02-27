@@ -6,7 +6,7 @@ A recent blog post / ad spot by Opper.ai (https://opper.ai/blog/car-wash-test) n
 
 The logical answer is - you should drive (obviously), as the car needs to get to the car wash.  
 
-However, according to Opper.ai, only 11/53 cloud-based AI passed the test (~20%). Worrying, about the same error rate as humans (but more on that at the end).
+However, according to Opper.ai, only 11/53 cloud-based AI passed the test (~20%). Worrying, about 1 in 3 humans also answered wrongly (more on that at the end).
 
 I wanted to see what a properly constrained "fail loud", grounded deterministic system would do. For your entertainment, I present Qwen3-4B HIVEMIND + llama-conductor infra (https://codeberg.org/BobbyLLM/llama-conductor).
 
