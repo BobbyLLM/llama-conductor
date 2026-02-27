@@ -163,7 +163,7 @@ Deterministic confidence/source footer normalization (non-Mentats paths):
 
 ---
 
-*** V1.2.3 (latest)
+*** V1.2.3
 
 TLDR: you can now >>lock a SUMM<name>.md file and reason ONLY over that file, similar to >>scratch pipeline...but without having to copy paste. Should the information NOT be within the locked file, the model will attempt to answer based on pre-trained data and will LOUDLY state "not in locked file; here's my best guess". I hope that this (along with the stdlib summary extraction method) further improves you confidence in provided answers. As always - glassbox, fail states LOUD, trust-but-verify. 
 
@@ -488,6 +488,7 @@ vault:
 - Try `>>trust <your question>` to get tool recommendations
 - Check `mentats_debug.log` for deep reasoning traces
 - See [FAQ](FAQ.md) for architecture & troubleshooting
+
 
 
 
