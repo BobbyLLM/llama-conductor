@@ -152,6 +152,16 @@ _NEG_NUM_VERB_RE = re.compile(
 )
 
 _DECISION_INTENT_RE = re.compile(r"\b(should i|should we|do i|do we)\b", re.IGNORECASE)
+_DECISION_SHORTHAND_RE = re.compile(
+    r"\b("
+    r"walk\s+or\s+drive|drive\s+or\s+walk|"
+    r"walk\s*/\s*drive|drive\s*/\s*walk|"
+    r"walk\s+vs\.?\s+drive|drive\s+vs\.?\s+walk|"
+    r"is\s+your\s+advice\s+to\s+walk\s+or\s+drive|"
+    r"advice\s+to\s+walk\s+or\s+drive"
+    r")\b",
+    re.IGNORECASE,
+)
 _DECISION_OR_RE = re.compile(r"\bor\b", re.IGNORECASE)
 _OPT_WALK_RE = re.compile(r"\bwalk(?:ing)?\b", re.IGNORECASE)
 _OPT_DRIVE_RE = re.compile(r"\bdrive|driving\b", re.IGNORECASE)
@@ -160,10 +170,15 @@ _GENERIC_ASSET_ACTION_RE = re.compile(
     r"\b(?:wash|service|repair|fuel|charge|park|move|tow|transport|clean)\s+(?:my|the)\s+(?P<asset>[a-z][a-z0-9_-]*(?:\s+[a-z][a-z0-9_-]*){0,3})\b",
     re.IGNORECASE,
 )
+_ASSET_NEEDS_WASH_RE = re.compile(
+    r"\b(?:my|the)\s+(?P<asset>[a-z][a-z0-9_-]*(?:\s+[a-z][a-z0-9_-]*){0,3})\s+needs?\s+wash\b",
+    re.IGNORECASE,
+)
 _ASSET_TASK_RE = re.compile(
     r"\b("
     rf"wash\s+(?:my|the)\s+{_ASSET_PATTERN}"
     rf"|{_ASSET_PATTERN}\s+wash"
+    rf"|(?:my|the)\s+{_ASSET_PATTERN}\s+needs?\s+wash"
     rf"|take\s+(?:my|the)\s+{_ASSET_PATTERN}\s+to"
     rf"|service\s+(?:my|the)\s+{_ASSET_PATTERN}"
     rf"|repair\s+(?:my|the)\s+{_ASSET_PATTERN}"
@@ -176,6 +191,18 @@ _ASSET_TASK_RE = re.compile(
 )
 _FOLLOWUP_QUERY_RE = re.compile(
     r"\b(then what|now what|what now|are you sure|still|so what|what should i do)\b",
+    re.IGNORECASE,
+)
+_SHOULD_I_WALK_DRIVE_RE = re.compile(
+    r"\bshould\s+i\b.*\b(?:walk.*drive|drive.*walk)\b",
+    re.IGNORECASE,
+)
+_WALK_DRIVE_QUERY_RE = re.compile(
+    r"\b(walk\s+or\s+drive|drive\s+or\s+walk)\b",
+    re.IGNORECASE,
+)
+_PRECONDITION_CHECK_RE = re.compile(
+    r"\b(does\s+that\s+satisfy|does\s+this\s+satisfy|satisf(?:y|ies|ied)|meet(?:s|ing)?)\b.*\b(precondition|requirement)\b",
     re.IGNORECASE,
 )
 _CONFUSION_RE = re.compile(
@@ -205,7 +232,11 @@ _DELEGATE_DECISION_RE = re.compile(
     re.IGNORECASE,
 )
 _CLARIFIER_EXPLAIN_RE = re.compile(
-    r"\b(what do you mean|explain|which one|what are the options|options|huh|confused)\b",
+    r"\b(what do you mean|explain|which one|what are the options|options|huh|confused|walk\s+or\s+drive|drive\s+or\s+walk)\b",
+    re.IGNORECASE,
+)
+_RELAXED_DECISION_CONTEXT_RE = re.compile(
+    r"\b(back to|now|again|instead|away|distance|station|wash)\b",
     re.IGNORECASE,
 )
 
@@ -233,6 +264,29 @@ def classify_query_family(query: str) -> str:
     if _is_constraint_decision_candidate(t):
         return "constraint_decision"
     return "other"
+
+
+def is_constraint_decision_query(query: str) -> bool:
+    """Shared high-precision detector for fresh constraint decision prompts."""
+    return _is_constraint_decision_candidate(query)
+
+
+def classify_constraint_turn(query: str, *, frame: Optional[Dict[str, Any]] = None) -> str:
+    """Classify turn role for constraint lane orchestration.
+
+    Returns one of:
+    - fresh_decision: new top-level decision turn (must bypass sticky follow-up lane)
+    - asset_shift: topic/entity moved to a different asset than active frame
+    - followup_or_other: may be a true follow-up or unrelated turn
+    """
+    t = " ".join(str(query or "").split())
+    if not t:
+        return "followup_or_other"
+    if _is_constraint_decision_candidate(t):
+        return "fresh_decision"
+    if _has_frame_asset_shift(frame, t):
+        return "asset_shift"
+    return "followup_or_other"
 
 
 def solve_state_transition_query(query: str) -> StateReasoningResult:
@@ -543,17 +597,31 @@ def _is_constraint_decision_candidate(text: str) -> bool:
     t = " ".join((text or "").split())
     if not t:
         return False
-    if not _DECISION_INTENT_RE.search(t):
+    has_shorthand = bool(_DECISION_SHORTHAND_RE.search(t))
+    if not (_DECISION_INTENT_RE.search(t) or has_shorthand):
         return False
-    if not _DECISION_OR_RE.search(t):
+    if (not has_shorthand) and (not _DECISION_OR_RE.search(t)):
         return False
     if not (_OPT_WALK_RE.search(t) and _OPT_DRIVE_RE.search(t)):
         return False
-    # High precision trigger: must imply a task requiring an asset physically at destination.
-    # Prefer explicit known-asset matcher, then fallback to structural generic action-on-asset matcher.
-    if not (_ASSET_TASK_RE.search(t) or _GENERIC_ASSET_ACTION_RE.search(t)):
+    # High precision trigger: explicit task context requiring an asset at destination.
+    has_task_context = bool(
+        _ASSET_TASK_RE.search(t)
+        or _GENERIC_ASSET_ACTION_RE.search(t)
+        or _ASSET_NEEDS_WASH_RE.search(t)
+    )
+    if has_task_context:
+        return True
+    # Relaxed continuation for shorthand decision turns after entity/topic shifts:
+    # allow compact "back to car ... walk or drive" style prompts when they still
+    # include an explicit asset token and contextual cue (distance/back-to/etc).
+    if has_shorthand:
+        low = t.lower()
+        asset = _extract_explicit_asset_label(low, require_task_context=False)
+        if asset and (_RELAXED_DECISION_CONTEXT_RE.search(low) or _DISTANCE_RE.search(low)):
+            return True
         return False
-    return True
+    return False
 
 
 def _clean_asset_phrase(raw: str) -> str:
@@ -585,17 +653,53 @@ def _extract_asset_candidate(text: str) -> Optional[str]:
         v = _clean_asset_phrase(m.group("asset"))
         if v and v != "asset":
             return v
+    m2 = _ASSET_NEEDS_WASH_RE.search(t)
+    if m2 and m2.group("asset"):
+        v2 = _clean_asset_phrase(m2.group("asset"))
+        if v2 and v2 != "asset":
+            return v2
     return None
 
 
-def _infer_asset_label(text: str) -> str:
+def _extract_explicit_asset_label(text: str, *, require_task_context: bool = True) -> Optional[str]:
     t = " ".join((text or "").split()).lower()
+    if not t:
+        return None
     generic = _extract_asset_candidate(t)
     if generic:
-        return _canonical_asset(generic)
+        v = _canonical_asset(generic)
+        if v and v != "asset":
+            return v
+    # Only treat bare asset tokens as explicit when task context is present,
+    # unless caller opts into relaxed mode for walk/drive entity-shift detection.
+    if require_task_context and (not _ASSET_TASK_RE.search(t)) and (not _GENERIC_ASSET_ACTION_RE.search(t)) and (not _ASSET_NEEDS_WASH_RE.search(t)):
+        return None
     for asset in ("car", "train", "bus", "truck", "van", "tram", "boat", "ship", "motorcycle", "motorbike", "bike", "scooter"):
         if re.search(rf"\b{re.escape(asset)}\b", t):
             return _canonical_asset(asset)
+    return None
+
+
+def _has_frame_asset_shift(frame: Optional[Dict[str, Any]], text: str) -> bool:
+    if not isinstance(frame, dict):
+        return False
+    if str(frame.get("kind") or "") != "option_feasibility":
+        return False
+    frame_asset_raw = str(frame.get("asset") or "").strip().lower()
+    if not frame_asset_raw:
+        return False
+    low = " ".join((text or "").split()).lower()
+    has_walk_drive = bool(_OPT_WALK_RE.search(low) and _OPT_DRIVE_RE.search(low))
+    query_asset = _extract_explicit_asset_label(text, require_task_context=(not has_walk_drive))
+    if not query_asset:
+        return False
+    return _canonical_asset(frame_asset_raw) != _canonical_asset(query_asset)
+
+
+def _infer_asset_label(text: str) -> str:
+    explicit = _extract_explicit_asset_label(text, require_task_context=False)
+    if explicit:
+        return explicit
     return "asset"
 
 
@@ -687,6 +791,8 @@ def _match_clarify_choice(query: str, options: list[str]) -> Optional[str]:
         return None
     qt = _normalize_text_tokens(q)
     opts_join = " ".join((options or [])).lower()
+    if {"walk", "drive"} <= qt:
+        return None
 
     # Stage-aware precedence: if options explicitly include propulsion refinement,
     # map user wording directly to operate/tow branches.
@@ -736,6 +842,26 @@ def _match_clarify_choice(query: str, options: list[str]) -> Optional[str]:
             best = opt
     if best_score >= 1:
         return best
+    return None
+
+
+def _post_choice_action_hint(query: str) -> Optional[str]:
+    q = (query or "").strip().lower()
+    if not q:
+        return None
+    qt = _normalize_text_tokens(q)
+    # Keep ambiguous baseline phrasing in clarifier lane.
+    if {"walk", "drive"} <= qt:
+        return None
+    # Explicit transport/movement cues from hostile follow-ups.
+    if {"teleport", "teleportation", "warp", "portal", "beam"} & qt:
+        return "tow/transport"
+    if {"tow", "transport", "truck", "haul", "drag", "dragging", "trailer", "winch", "rope"} & qt:
+        return "tow/transport"
+    if {"under", "own", "power"} <= qt or {"self", "propelled"} <= qt:
+        return "operate"
+    if {"move", "moving", "relocate"} & qt:
+        return "move"
     return None
 
 
@@ -809,9 +935,10 @@ def solve_constraint_followup(*, frame: Dict[str, Any], query: str) -> StateReas
         return StateReasoningResult(family="constraint_decision")
     if str(frame.get("kind") or "") != "option_feasibility":
         return StateReasoningResult(family="constraint_decision")
-    # Fresh top-level decision questions must be re-solved as new decisions,
-    # not treated as sticky follow-ups from prior selected action.
-    if _is_constraint_decision_candidate(t):
+    turn_kind = classify_constraint_turn(t, frame=frame)
+    # Fresh top-level decision questions and explicit entity shifts must be
+    # treated as new turns and re-solved by the top-level decision solver.
+    if turn_kind in {"fresh_decision", "asset_shift"}:
         return StateReasoningResult(family="constraint_decision")
     # If a deterministic clarifier question is active, resolve direct user choice first.
     needs_clarification = bool(frame.get("needs_clarification", False))
@@ -1102,6 +1229,20 @@ def solve_constraint_followup(*, frame: Dict[str, Any], query: str) -> StateReas
                 frame=dict(frame),
             )
 
+        # Explicit action reselection after a prior choice should stay deterministic
+        # (for example: "I pick move"), not fall through to model small-talk.
+        if re.search(r"\b(i\s+pick|i\s+choose|pick|choose)\b", low):
+            asset = str(frame.get("asset") or "asset").strip() or "asset"
+            options = _infer_clarify_options(asset)
+            picked = _match_clarify_choice(low, options)
+            if picked:
+                reselection_frame = dict(frame)
+                reselection_frame["needs_clarification"] = True
+                reselection_frame["clarify_options"] = options
+                reselection_frame["decision_lane_disengaged"] = False
+                reselection_frame.pop("selected_action", None)
+                return solve_constraint_followup(frame=reselection_frame, query=picked)
+
         if lane_disengaged and _is_correction_intent(t) and not _is_explicit_reengage(t):
             out_frame = dict(frame)
             out_frame["decision_lane_disengaged"] = True
@@ -1133,6 +1274,46 @@ def solve_constraint_followup(*, frame: Dict[str, Any], query: str) -> StateReas
         frame_dist_km = frame.get("distance_km")
         frame_dist_km = float(frame_dist_km) if isinstance(frame_dist_km, (int, float)) else None
 
+        # Keep deterministic lane for explicit action-method reselections after a prior choice.
+        post_choice_hint = _post_choice_action_hint(low)
+        if post_choice_hint:
+            reselection_frame = dict(frame)
+            reselection_frame["needs_clarification"] = True
+            reselection_frame["clarify_options"] = _infer_clarify_options(asset)
+            reselection_frame["decision_lane_disengaged"] = False
+            reselection_frame.pop("selected_action", None)
+            return solve_constraint_followup(frame=reselection_frame, query=post_choice_hint)
+
+        # Deterministic yes/no on "does that satisfy the precondition?" style checks.
+        if _PRECONDITION_CHECK_RE.search(low):
+            if selected_action in {"yourself_first_walk", "yourself_first_drive", "walk"}:
+                ans = (
+                    f"Not by itself. Getting yourself there first does not move {noun} to the destination, "
+                    "so it does not satisfy the original hard precondition."
+                    "\nSource: Contextual"
+                )
+                reason = "post_choice_precondition_check_yourself_first"
+            elif selected_action == "tow_transport":
+                ans = (
+                    f"Yes. Transporting it satisfies the precondition because it gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "post_choice_precondition_check_tow_transport"
+            else:
+                ans = (
+                    f"Yes. Moving it under its own power satisfies the precondition because it gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "post_choice_precondition_check_operate"
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=False,
+                family="constraint_decision",
+                answer=ans,
+                reason=reason,
+                frame=dict(frame),
+            )
+
         # Deterministic distance refinement for "get yourself there first" branch.
         if selected_action in {"yourself_first_walk", "yourself_first_drive", "walk"} and not (({"self"} & tok) or ({"myself"} & tok)):
             km = _distance_km(low)
@@ -1157,7 +1338,7 @@ def solve_constraint_followup(*, frame: Dict[str, Any], query: str) -> StateReas
             bool(_DISTANCE_RE.search(low))
             or bool(_FOLLOWUP_QUERY_RE.search(low))
             or bool(_CONSTRAINT_FUEL_FALSE_RE.search(low) or _CONSTRAINT_FUEL_TRUE_RE.search(low))
-            or bool(re.search(r"\bshould\s+i\b.*\bwalk\b.*\bdrive\b", low))
+            or bool(_SHOULD_I_WALK_DRIVE_RE.search(low) or _WALK_DRIVE_QUERY_RE.search(low))
             or bool(({"self"} & tok) or ({"myself"} & tok))
         ):
             out_frame = dict(frame)
@@ -1193,7 +1374,7 @@ def solve_constraint_followup(*, frame: Dict[str, Any], query: str) -> StateReas
                     reason="post_choice_self_myself_normalized",
                     frame=dict(frame),
                 )
-        if re.search(r"\bshould\s+i\b.*\bwalk\b.*\bdrive\b", low):
+        if _SHOULD_I_WALK_DRIVE_RE.search(low) or _WALK_DRIVE_QUERY_RE.search(low):
             asset = str(frame.get("asset") or "asset").strip() or "asset"
             ref = _asset_ref(asset)
             action_label = {
