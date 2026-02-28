@@ -51,7 +51,8 @@ Minimal examples:
 - `>>preset set <fast|balanced|max-recall>` set runtime preset for this session
 - `>>preset reset` clear runtime override and use config default
 - `>>calc <expression>` calculator (`+ - * / %`, `**` = power), parentheses, functions (`sqrt/log/sin/cos`)
-- `>>wiki <topic>` Wikipedia summary fetch
+- >>wiki <topic> Wikipedia summary fetch
+- >>define <word> Etymonline first-entry etymology summary (deterministic HTML cleanup)
 - `>>exchange <query>` currency conversion (via Frankfurter API, real-time rates)
 - `>>weather <location>` current weather (via Open-Meteo API; use single word or "City Country")
 - `>>find <query>` search attached KB files
@@ -238,3 +239,4 @@ Tips:
 Tips:
 - If an answer is weak and hits are `0`, the issue is likely missing retrieval; if hits are non-zero, the issue is more likely synthesis/interpretation quality.
 - Hit counts are a quick clue, not a quality grade.
+

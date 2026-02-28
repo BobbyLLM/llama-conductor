@@ -1,6 +1,14 @@
 ﻿# What's New
 
-*** V1.5.1 (latest)
+*** V1.5.2 (latest)
+
+TL;DR:
+- Added deterministic >>define <word> sidecar for etymology lookup (Etymonline source).
+- >>trust now recognizes etymology intent and recommends >>define first when appropriate.
+- Trust output formatting is cleaner/scannable, and single-token lexical queries now include a >>define parity option.
+
+---
+*** V1.5.1
 
 TL;DR:
 Patch over `1.5.0`.
@@ -488,6 +496,7 @@ vault:
 - Try `>>trust <your question>` to get tool recommendations
 - Check `mentats_debug.log` for deep reasoning traces
 - See [FAQ](FAQ.md) for architecture & troubleshooting
+
 
 
 

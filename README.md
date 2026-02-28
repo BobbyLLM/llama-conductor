@@ -238,7 +238,7 @@ Recommended start order: Qdrant -> llama-swap -> router -> frontend
 ### 🧰 Deterministic sidecars
 
 
->>calc / >>find / >>list / >>flush / >>status / >>wiki 
+>>calc / >>find / >>list / >>flush / >>status / >>wiki / >>define 
 - Router executes deterministic pathways
 - No creative writing layer in the middle
 
@@ -246,6 +246,7 @@ Recommended start order: Qdrant -> llama-swap -> router -> frontend
 - Lower token spend, lower latency, less "creative accounting".
 - Great for boring operational tasks where wrong answers are expensive.
 - >>wiki pulls answers from wikipedia (preset to first 400 words; acts as summary)
+- >>define pulls etymology from Etymonline and returns deterministic first-entry summary
 - >>trust (you ask question, router gives you options for data sources. You choose, not it)
 
 ### 🎚️ Mode switches (serious, fun, fun rewrite)
@@ -313,6 +314,7 @@ Result:
 ## 📜 License
 
 AGPL-3.0-or-later. See `LICENSE`.
+
 
 
 

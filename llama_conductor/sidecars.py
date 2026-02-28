@@ -3,15 +3,17 @@
 Includes helpers for:
 - calculator and memory utilities
 - quote/KB search helpers
-- wiki, exchange, and weather lookups
+- wiki, define, exchange, and weather lookups
 """
 
 from __future__ import annotations
 import re
+import html as ihtml
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 import math
 import requests
+from urllib.parse import quote
 
 # ============================================================================
 # Data Classes
@@ -51,6 +53,14 @@ class WikiResult:
     """Result of >>wiki query."""
     title: Optional[str] = None
     summary: str = ""
+    error: Optional[str] = None
+
+
+@dataclass
+class DefineResult:
+    """Result of >>define query."""
+    term: Optional[str] = None
+    etymology: str = ""
     error: Optional[str] = None
 
 
@@ -489,6 +499,81 @@ def handle_wiki_query(topic: str, max_chars: int = 500) -> str:
         return f"[wiki] HTTP error: {e.response.status_code}"
     except Exception as e:
         return f"[wiki] Error: {e}"
+
+
+# ============================================================================
+# Etymology Definition (>>define)
+# ============================================================================
+
+
+_WS_RE = re.compile(r"\s+")
+
+
+def _normalize_define_term(term: str) -> str:
+    t = " ".join((term or "").strip().split())
+    # Drop trailing punctuation that often appears in natural prompts.
+    t = re.sub(r"[.!?,;:)\]\"'`]+$", "", t)
+    t = re.sub(r"^[([\"'`]+", "", t)
+    return t.strip()
+
+
+def handle_define_query(term: str, max_chars: int = 500) -> str:
+    """
+    Fetch and normalize etymology from Etymonline first entry block.
+    """
+    q = _normalize_define_term(term)
+    if not q:
+        return "[define] No term provided"
+
+    try:
+        url = f"https://www.etymonline.com/word/{quote(q)}"
+        resp = requests.get(url, headers={"User-Agent": "llama-conductor/1.5.2 (+define etymonline)"}, timeout=8)
+        resp.raise_for_status()
+        html = resp.text
+
+        # First etymology entry block on page.
+        m = re.search(
+            r"<section class=\"prose-lg[^\"]*\"[^>]*>.*?<h2[^>]*>"
+            r"(?:.*?)<span[^>]*>(?P<word>.*?)</span>\s*"
+            r"<span[^>]*>(?P<pos>\(.*?\))</span>.*?</h2>"
+            r".*?<section[^>]*>\s*<p>(?P<body>.*?)</p>",
+            html,
+            flags=re.S | re.I,
+        )
+        if not m:
+            return f"[define] '{q}' not found or entry parse failed"
+
+        def _clean_html_text(s: str) -> str:
+            t = re.sub(r"<script[^>]*>.*?</script>", " ", s, flags=re.S | re.I)
+            t = re.sub(r"<style[^>]*>.*?</style>", " ", t, flags=re.S | re.I)
+            t = re.sub(r"</?(i|em|b|strong)[^>]*>", "", t, flags=re.I)
+            t = re.sub(r"<a[^>]*>", "", t, flags=re.I)
+            t = t.replace("</a>", "")
+            t = re.sub(r"<[^>]+>", " ", t)
+            t = ihtml.unescape(t)
+            t = _WS_RE.sub(" ", t).strip()
+            return t
+
+        word = _clean_html_text(m.group("word"))
+        pos = _clean_html_text(m.group("pos"))
+        body = _clean_html_text(m.group("body"))
+        if not body:
+            return f"[define] '{q}' found, but etymology body was empty"
+        if len(body) > max_chars:
+            body = body[:max_chars].rsplit(" ", 1)[0] + "..."
+
+        return f"[define] {word}{pos}\n\n{body}"
+
+    except requests.exceptions.Timeout:
+        return "[define] Request timeout"
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 404:
+            return f"[define] '{q}' not found"
+        if e.response is not None and e.response.status_code == 403:
+            return "[define] Upstream blocked request (403). Retry later."
+        return f"[define] HTTP error: {e.response.status_code if e.response is not None else 'unknown'}"
+    except Exception as e:
+        return f"[define] Error: {e}"
 
 
 # ============================================================================
