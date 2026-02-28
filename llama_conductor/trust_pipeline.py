@@ -26,6 +26,11 @@ _ENCYCLOPEDIA_LEADS = (
     "origin of", "history of", "meaning of", "what are", "who are"
 )
 
+# Signals for etymology-focused lookups. These should tend toward >>define suggestions.
+_ETYMOLOGY_LEADS = (
+    "define", "etymology of", "origin of the word", "word origin", "where does"
+)
+
 # Words that usually indicate multi-step reasoning rather than encyclopedia lookup.
 _REASONING_MARKERS = (
     "compare", "analyze", "evaluate", "assess", "pros and cons", "argue", "debate", "justify",
@@ -81,6 +86,8 @@ def classify_query(query: str) -> Dict[str, Any]:
 
     if _is_encyclopedia_query(q):
         patterns.append("encyclopedia_lookup")
+    if _is_etymology_query(q):
+        patterns.append("etymology_lookup")
 
     # --- Reasoning patterns ---
     if re.search(r"\b(compare|analyze|evaluate|assess|pros and cons)\b", q, re.I):
@@ -174,6 +181,54 @@ def _suggest_wiki_title(query: str) -> str:
     q = re.sub(r"[\?\.!]+$", "", q).strip()
     return q
 
+
+
+def _is_etymology_query(query: str) -> bool:
+    """Detect word-origin/etymology intent that should suggest >>define."""
+    q = (query or "").strip()
+    if not q:
+        return False
+    ql = q.lower()
+
+    if re.search(r"\b(etymology|etymon|word origin|word roots?|origin of the word)\b", ql):
+        return True
+    if re.search(r"^\s*where does .+ come from\??\s*$", ql):
+        return True
+    if re.search(r"^\s*define\s+[A-Za-z][A-Za-z0-9'`\-\.]*\s*[?.!]*\s*$", ql):
+        return True
+
+    for lead in _ETYMOLOGY_LEADS:
+        if ql.startswith(lead + " "):
+            return True
+    return False
+
+
+def _suggest_define_term(query: str) -> str:
+    """Extract a likely payload term for >>define from a natural-language query."""
+    q = (query or "").strip()
+    if not q:
+        return q
+
+    patterns = [
+        r"^\s*define\s+(.+?)\s*$",
+        r"^\s*etymology of\s+(.+?)\s*$",
+        r"^\s*what is the etymology of\s+(.+?)\s*$",
+        r"^\s*origin of the word\s+(.+?)\s*$",
+        r"^\s*word origin[:\s]+(.+?)\s*$",
+        r"^\s*where does\s+(.+?)\s+come from\??\s*$",
+    ]
+
+    term = q
+    for pat in patterns:
+        m = re.match(pat, q, flags=re.I)
+        if m:
+            term = m.group(1).strip()
+            break
+
+    term = re.sub(r"^[\"'`(\[]+", "", term)
+    term = re.sub(r"[\"'`)\].,!?;:]+$", "", term)
+    term = " ".join(term.split())
+    return term or q
 
 
 def _is_exchange_query(query: str) -> bool:
@@ -295,6 +350,24 @@ def _is_encyclopedia_query(query: str) -> bool:
     return False
 
 
+def _is_define_candidate_token(query: str) -> bool:
+    """Single-token lexical candidate where >>define is useful as a parallel option."""
+    q = (query or "").strip()
+    toks = re.findall(r"[A-Za-z0-9']+", q)
+    if len(toks) != 1:
+        return False
+    t = toks[0]
+    if not t.isalpha():
+        return False
+    if not t.islower():
+        return False
+    if len(t) < 3:
+        return False
+    if t in _WIKI_SINGLE_TOKEN_DENYLIST:
+        return False
+    return True
+
+
 # ============================================================================
 # Resource Checking
 # ============================================================================
@@ -413,8 +486,20 @@ def generate_recommendations(
     if primary_type == "factual":
         r = ord("A")
 
-        # If the query is encyclopedia-shaped, offer >>wiki prominently.
-        if "encyclopedia_lookup" in pats:
+        # Etymology intent: prioritize deterministic >>define.
+        if "etymology_lookup" in pats:
+            recommendations.append({
+                "rank": _next_rank(r),
+                "tool": ">>define",
+                "confidence": "HIGH",
+                "reason": "Word-origin/etymology lookup (deterministic sidecar)",
+                "command": f">>define {_suggest_define_term(query)}",
+                "note": "Use a single word or short term for best extraction."
+            })
+            r += 1
+
+        # If the query is encyclopedia-shaped, offer >>wiki prominently (unless etymology-first).
+        if "encyclopedia_lookup" in pats and "etymology_lookup" not in pats:
             recommendations.append({
                 "rank": _next_rank(r),
                 "tool": ">>wiki",
@@ -429,7 +514,7 @@ def generate_recommendations(
         recommendations.append({
             "rank": _next_rank(r),
             "tool": "##mentats",
-            "confidence": "HIGH" if "encyclopedia_lookup" not in pats else "MEDIUM",
+            "confidence": "HIGH" if not ({"encyclopedia_lookup", "etymology_lookup"} & pats) else "MEDIUM",
             "reason": f"Multi-pass verified reasoning using {vault_kb_name} (Qdrant)",
             "command": f"##mentats {query}"
         })
@@ -522,33 +607,71 @@ def generate_recommendations(
         return recommendations
 
     # ===== GENERAL QUERIES =====
+    if "etymology_lookup" in pats:
+        recommendations.append({
+            "rank": "A",
+            "tool": ">>define",
+            "confidence": "HIGH",
+            "reason": "Word-origin/etymology lookup (deterministic sidecar)",
+            "command": f">>define {_suggest_define_term(query)}",
+            "note": "Use a single word or short term for best extraction."
+        })
+        recommendations.append({
+            "rank": "B",
+            "tool": ">>wiki",
+            "confidence": "MEDIUM",
+            "reason": "Fallback broader encyclopedia context if needed",
+            "command": f">>wiki {_suggest_wiki_title(_suggest_define_term(query))}"
+        })
+        recommendations.append({
+            "rank": "C",
+            "tool": "serious mode",
+            "confidence": "LOW",
+            "reason": "Model-only answer may be less source-grounded for etymology",
+            "command": query
+        })
+        return recommendations
+
     # For short named-entity lookups that weren't captured as 'factual' by leading verbs,
     # suggest >>wiki as an option (but do not force it).
     if "encyclopedia_lookup" in pats:
+        r = ord("A")
         recommendations.append({
-            "rank": "A",
+            "rank": _next_rank(r),
             "tool": ">>wiki",
             "confidence": "HIGH",
             "reason": "Encyclopedia-style lookup (stable public reference)",
             "command": f">>wiki {_suggest_wiki_title(query)}",
             "note": "Use the entity/article title (not the full question)."
         })
+        r += 1
         recommendations.append({
-            "rank": "B",
+            "rank": _next_rank(r),
             "tool": "serious mode",
             "confidence": "MEDIUM",
             "reason": "Default reasoning pipeline",
             "command": query
         })
+        r += 1
         # KB suggestion remains optional, but lower priority for encyclopedia lookups.
         if resources["kbs_available"] and not resources["has_kbs"]:
             kb_list = ", ".join(resources["kbs_available"])
             recommendations.append({
-                "rank": "C",
+                "rank": _next_rank(r),
                 "tool": ">>attach all",
                 "confidence": "LOW",
                 "reason": f"Attach KBs ({kb_list}) and run query for grounded answers",
                 "command": ">>attach all"
+            })
+            r += 1
+        if _is_define_candidate_token(query):
+            recommendations.append({
+                "rank": _next_rank(r),
+                "tool": ">>define",
+                "confidence": "HIGH",
+                "reason": "Word-origin/etymology lookup (deterministic sidecar)",
+                "command": f">>define {_suggest_define_term(query)}",
+                "note": "Use a single word or short term for best extraction."
             })
         return recommendations
 
@@ -599,14 +722,14 @@ def format_recommendations(recommendations: List[Dict[str, str]], query: str = "
         reason = rec["reason"]
         command = rec["command"]
         lines.append(f"{rank}) **{tool}** (confidence: {confidence})")
-        lines.append(f"   {reason}")
+        lines.append(f"   - {reason}")
         label = "Command"
-        if tool == ">>wiki":
+        if tool in {">>wiki", ">>define"}:
             label = "Suggested command"
-        lines.append(f"   {label}: `{command}`")
+        lines.append(f"   - {label}: `{command}`")
         note = rec.get("note", "")
         if note:
-            lines.append(f"   Note: {note}")
+            lines.append(f"   - Note: {note}")
         lines.append("")
     lines.append("**Choose an option (A, B, C...) or type your own command.**")
     return "\n".join(lines)
@@ -644,7 +767,7 @@ def handle_trust_command(
 
 
 if __name__ == "__main__":
-    print("=== Testing trust_pipeline.py v1.1.1 ===\n")
+    print("=== Testing trust_pipeline.py v1.1.2 ===\n")
 
     mock_kbs = set()
     mock_kb_paths = {"amiga": "/path/to/amiga", "c64": "/path/to/c64", "dogs": "/path/to/dogs"}
@@ -657,6 +780,8 @@ if __name__ == "__main__":
         "Albert Einstein",
         "who is Marie Curie",
         "what is origin of deathclaw in Fallout",
+        "define potable",
+        "where does contra come from",
         "Compare microservices vs monolithic architecture",
     ]
 

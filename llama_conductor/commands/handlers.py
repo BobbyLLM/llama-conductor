@@ -41,6 +41,7 @@ try:
         format_quote_result,
         flush_ctc_cache,
         handle_wiki_query,
+        handle_define_query,
         handle_exchange_query,
         handle_weather_query,
     )
@@ -53,6 +54,7 @@ except Exception:
     format_quote_result = None  # type: ignore
     flush_ctc_cache = None  # type: ignore
     handle_wiki_query = None  # type: ignore
+    handle_define_query = None  # type: ignore
     handle_exchange_query = None  # type: ignore
     handle_weather_query = None  # type: ignore
 
@@ -120,6 +122,7 @@ def _core_help_text() -> str:
         "Quick tools, memory commands, and one-turn forced selectors.\n"
         "- `>>flush`\n"
         "- `>>trust <query>`\n"
+        "- `>>wiki <topic>` | `>>define <word>` | `>>exchange <query>` | `>>weather <location>`\n"
         "- `!! <text>` | `!! forget <query>` | `!! nuke`\n"
         "- `?? <query>` | `?? list`\n"
         "- `##mentats <q>` | `##fun <q>` | `##vision <q>` | `##ocr <q>`\n\n"
@@ -1201,6 +1204,15 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         if not topic:
             return "[wiki] usage: >>wiki <topic>\nExample: >>wiki Albert Einstein"
         return handle_wiki_query(topic)
+
+    # >>define <word> (Etymonline etymology summary)
+    if parts and parts[0].lower() == "define":
+        if not handle_define_query:
+            return "[router] define not available (sidecars.py missing)"
+        term = cmd[len(parts[0]):].strip()
+        if not term:
+            return "[define] usage: >>define <word>\nExample: >>define potable"
+        return handle_define_query(term)
 
     # >>exchange <query> (Currency conversion)
     if parts and parts[0].lower() == "exchange":
