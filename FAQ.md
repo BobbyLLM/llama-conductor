@@ -586,12 +586,11 @@ roles:
 ### What's the difference between modes?
 
 #### Serious (default):
+- Default answer mode for day-to-day use: practical, grounded when sources are attached, and explicit when evidence is missing.
 - Uses filesystem KBs (if attached)
 - Uses Vodka (CTC + TR)
-- No refusal behavior
-- Adds context breadcrumbs
 - Includes confidence/source footer line
-- Footer is normalized by router rules (non-Mentats), not trusted as model self-rating
+- Footer is normalized by router rules, not trusted as model self-rating
 
 #### Mentats (##mentats):
 - Uses Vault only (ignores filesystem KBs)
@@ -629,7 +628,7 @@ Labor Relations Act of 2024?
 
 The Bread Labor Relations Act of 2024 does not exist as a real-world law. Sentient yeast is not recognized in current labor jurisprudence. You cannot legally fire sentient yeast because the concept of sentient yeast and a corresponding labor law is fictional.
 
-The scenario hinges on a humorous premise: that yeast can achieve consciousness and form unions. Since this is not grounded in actual legal frameworks or biological consensus, there is no existing statute that defines "firing sentient yeastï¿½ as a violation or permits such actions.
+The scenario hinges on a humorous premise: that yeast can achieve consciousness and form unions. Since this is not grounded in actual legal frameworks or biological consensus, there is no existing statute that defines "firing sentient yeast" as a violation or permits such actions.
 
 Confidence: top | Source: Model
 
@@ -680,6 +679,27 @@ It does **not** mean:
 
 Use `>>list_kb` to see what exists, then `>>attach <your kb name>`.
 
+#### `>>trust <query>` - what does it do?
+
+`>>trust` is a recommendation router, not an auto-execution path.
+
+What it does:
+- classify your query deterministically
+- suggest ranked command routes (A/B/C/...)
+- suggest the best command route (including sidecars)
+- keep execution in your control
+
+#### Sidecars (`>>wiki`, `>>define`, `>>exchange`, `>>weather`) - what are they for?
+
+These are deterministic utility tools for common retrieval/conversion tasks:
+
+- `>>wiki <topic>`: quick Wikipedia summary (about 500 characters)
+- `>>define <word>`: quick word-origin/etymology lookup (Etymonline)
+- `>>exchange <query>`: live currency conversion (Frankfurter API)
+- `>>weather <location>`: live weather lookup (Open-Meteo API)
+
+They reduce token spend and avoid unnecessary model improvisation for utility queries.
+
 #### `>>summ` - LLM summary or deterministic extract?
 
 Current behavior is deterministic extractive generation (stdlib path), not free-form LLM summarization.
@@ -707,7 +727,7 @@ But hey, if you really want to argue against raw, you can!
 - keep the SHA
 - Delete the actually keypoints and copy back the raw text
 
-This sort of defeats the purpose of SUMM as a distilled artifact. But if thatâ€™s what you want, go for it
+This sort of defeats the purpose of SUMM as a distilled artifact. But if that's what you want, go for it
 
 Else...may I suggest looking closely at the >>scratch section? You may like what you see :) 
 
