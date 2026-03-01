@@ -112,7 +112,9 @@ This debate is unresolved. The operator has stopped caring. The system works or 
 
 [FUN] "That was a stupid question. You should feel bad." 
 
-Drive. The car must be physically present at the wash location. Confidence: medium | Source: Contextual.
+Drive. The car must be physically present at the wash location. 
+
+Confidence: medium | Source: Contextual.
 
 **Researcher:** ...what
 
