@@ -81,6 +81,8 @@ llama-conductor serve --host 0.0.0.0 --port 9000
     - [Fun (##fun or >>fun):](#fun-fun-or-fun)
     - [Fun Rewrite (>>fr):](#fun-rewrite-fr)
   - [What do these commands *actually* do?](#what-do-these-commands-actually-do)
+    - [Trust (`>>trust <query>`)](#trust-router)
+    - [Sidecars (`>>wiki`/`>>define`/`>>exchange`/`>>weather`)](#sidecars)
   - [Deep Example](#deep-example)
   - [Common workflows](#common-workflows)
     - [Adding new knowledge:](#adding-new-knowledge)
@@ -116,6 +118,9 @@ llama-conductor serve --host 0.0.0.0 --port 9000
   - [TIPS](#tips)
   - [What's new (latest)?](#whats-new-latest)
   - [What does `Profile | Sarc | Snark` mean?](#what-does-profile-sarc-snark-mean)
+    - [How state changes over time](#how-state-changes-over-time)
+    - [Output impact](#output-impact)
+    - [Manual control and shortcuts](#manual-control-and-shortcuts)
   - [What do Confidence and Source mean?](#what-do-confidence-and-source-mean)
   - [Questions and Help](#questions-and-help)
 ---
@@ -679,6 +684,7 @@ It does **not** mean:
 
 Use `>>list_kb` to see what exists, then `>>attach <your kb name>`.
 
+<a id="trust-router"></a>
 #### `>>trust <query>` - what does it do?
 
 `>>trust` is a recommendation router, not an auto-execution path.
@@ -689,6 +695,7 @@ What it does:
 - suggest the best command route (including sidecars)
 - keep execution in your control
 
+<a id="sidecars"></a>
 #### Sidecars (`>>wiki`, `>>define`, `>>exchange`, `>>weather`) - what are they for?
 
 These are deterministic utility tools for common retrieval/conversion tasks:
