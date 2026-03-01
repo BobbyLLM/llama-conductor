@@ -2,6 +2,7 @@
 """Main command handling logic."""
 
 import os
+import re
 from typing import Callable, Dict, List, Optional
 
 from ..config import (
@@ -98,7 +99,7 @@ except Exception:
 def _core_help_text() -> str:
     return (
         "# Router Help (Core)\n\n"
-        "Use `>>help full` (or `>>help advanced`) for the full command sheet.\n\n"
+        "Use `>>faq` for FAQ navigation, or `>>help full` for the full command sheet.\n\n"
         "## Essentials\n"
         "Attach docs, lock a source, and inspect session state.\n"
         "- `>>status` | `>>status full` | `>>status raw`\n"
@@ -121,6 +122,7 @@ def _core_help_text() -> str:
         "## Utilities\n"
         "Quick tools, memory commands, and one-turn forced selectors.\n"
         "- `>>flush`\n"
+        "- `>>faq`\n"
         "- `>>trust <query>`\n"
         "- `>>wiki <topic>` | `>>define <word>` | `>>exchange <query>` | `>>weather <location>`\n"
         "- `!! <text>` | `!! forget <query>` | `!! nuke`\n"
@@ -133,6 +135,178 @@ def _core_help_text() -> str:
         "4. Optional strict grounding: `>>list_files` then `>>lock SUMM_<name>.md`\n"
         "5. Need deep retrieval? Use `##mentats <query>`\n"
     )
+
+
+def _faq_md_path() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(here, "..", ".."))
+    return os.path.join(repo_root, "FAQ.md")
+
+
+def _anchor_slug(text: str) -> str:
+    t = (text or "").strip().lower()
+    t = re.sub(r"[`*_~\[\]\(\)\"'.,:;!?/\\|]", "", t)
+    t = t.replace("&", "and")
+    t = re.sub(r"\s+", "-", t)
+    t = re.sub(r"-{2,}", "-", t).strip("-")
+    return t
+
+
+def _extract_faq_sections(max_items: int = 32) -> List[Dict[str, str]]:
+    path = _faq_md_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except Exception:
+        return []
+
+    sections: List[Dict[str, str]] = []
+    in_faq_section = False
+    current_title = ""
+    current_body: List[str] = []
+
+    def _flush_current() -> None:
+        nonlocal current_title, current_body
+        if not current_title:
+            return
+        body = "\n".join(current_body).strip()
+        sections.append({"title": current_title, "body": body})
+        current_title = ""
+        current_body = []
+
+    for line in lines:
+        s = line.strip()
+        if s.lower() == "## frequently asked questions (faq)":
+            in_faq_section = True
+            continue
+        if in_faq_section and s.startswith("## ") and s.lower() != "## frequently asked questions (faq)":
+            _flush_current()
+            break
+        if not in_faq_section:
+            continue
+        if s.startswith("### "):
+            _flush_current()
+            title = s[4:].strip()
+            if title:
+                current_title = title
+            continue
+        if not current_title:
+            continue
+        current_body.append(line)
+
+    _flush_current()
+
+    include_titles = {
+        "Advanced: How does provenance work?",
+        "TIPS",
+        "What's new (latest)?",
+        "What does `Profile | Sarc | Snark` mean?",
+        "How state changes over time",
+        "Output impact",
+        "Manual control and shortcuts",
+        "What do Confidence and Source mean?",
+        "Questions and Help",
+    }
+    seen = {str(s.get("title", "")).strip() for s in sections}
+
+    all_sections: List[Dict[str, str]] = []
+    current_title = ""
+    current_body = []
+
+    def _flush_all() -> None:
+        nonlocal current_title, current_body
+        if not current_title:
+            return
+        all_sections.append({"title": current_title, "body": "\n".join(current_body).strip()})
+        current_title = ""
+        current_body = []
+
+    for line in lines:
+        s = line.strip()
+        if s.startswith("### "):
+            _flush_all()
+            current_title = s[4:].strip()
+            continue
+        if current_title:
+            current_body.append(line)
+    _flush_all()
+
+    for sec in all_sections:
+        title = str(sec.get("title", "")).strip()
+        if title in include_titles and title not in seen:
+            sections.append(sec)
+            seen.add(title)
+
+    return sections[:max_items]
+
+
+def _faq_nav_text() -> str:
+    path = _faq_md_path()
+    if not os.path.exists(path):
+        return "[faq] FAQ.md not found in repo root."
+
+    sections = _extract_faq_sections(max_items=40)
+    lines = [
+        "# FAQ Navigator",
+        "",
+        "Primary doc: FAQ.md",
+        f"Local path: {path}",
+        "",
+    ]
+    if sections:
+        lines.append("Top sections:")
+        for i, sec in enumerate(sections, 1):
+            title = str(sec.get("title", "")).strip()
+            if not title:
+                continue
+            lines.append(f"{i}. {title}")
+    else:
+        lines.extend([
+            "Top sections:",
+            "- (could not parse headings; open FAQ.md directly)",
+        ])
+    lines.extend([
+        "",
+        "Tips:",
+        "- Use `>>faq` anytime to reopen this navigator.",
+        "- Use `>>faq <n>` to print a specific FAQ section.",
+        "- Use `>>faq list` to reprint section numbers.",
+        "- Use `>>help advanced` for the full command reference.",
+    ])
+    return "\n".join(lines)
+
+
+def _faq_show_text(selector: str) -> str:
+    path = _faq_md_path()
+    if not os.path.exists(path):
+        return "[faq] FAQ.md not found in repo root."
+    sections = _extract_faq_sections(max_items=64)
+    if not sections:
+        return "[faq] could not parse FAQ sections. Open FAQ.md directly."
+
+    sel = (selector or "").strip()
+    if not sel:
+        return "[faq] usage: >>faq show <number>"
+    try:
+        idx = int(sel)
+    except Exception:
+        idx = -1
+    if idx >= 1 and idx <= len(sections):
+        sec = sections[idx - 1]
+        title = str(sec.get("title", "")).strip()
+        body = str(sec.get("body", "")).strip()
+        slug = _anchor_slug(title)
+        out = [
+            f"# FAQ {idx}: {title}",
+            "",
+            f"Source: FAQ.md#{slug}",
+            "",
+            body or "(section has no body text)",
+            "",
+            "Tip: `>>faq` returns to the main list.",
+        ]
+        return "\n".join(out)
+    return f"[faq] invalid section number '{sel}'. Use `>>faq list`."
 
 
 def load_help_text(*, advanced: bool = False) -> str:
@@ -480,6 +654,18 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         if sub in ("advanced", "full"):
             return load_help_text(advanced=True)
         return load_help_text(advanced=False)
+
+    # local FAQ navigator (docs only)
+    if parts and parts[0].lower() == "faq":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub in ("", "list", "toc", "index"):
+            return _faq_nav_text()
+        if sub == "show":
+            selector = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+            return _faq_show_text(selector)
+        if sub.isdigit():
+            return _faq_show_text(sub)
+        return "[faq] usage: >>faq | >>faq list | >>faq show <number>"
 
     # runtime preset controls (session-scoped override)
     if parts and parts[0].lower() == "preset":

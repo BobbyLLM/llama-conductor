@@ -1,6 +1,16 @@
 ﻿# What's New
 
-*** V1.5.2 (latest)
+*** V1.5.3 (latest)
+
+TL;DR:
+- Added deterministic >>faq navigator command for local FAQ navigation in installed builds.
+- >>faq provides a numbered section index plus >>faq <n> section print path (webview-safe).
+- Expanded FAQ navigator coverage to include key reference/ops sections outside the core FAQ block.
+- Simplified core >>help wording to foreground >>faq and reduce operator clutter.
+
+---
+
+*** V1.5.2
 
 TL;DR:
 - Added deterministic >>define <word> sidecar for etymology lookup (Etymonline source).
@@ -496,6 +506,7 @@ vault:
 - Try `>>trust <your question>` to get tool recommendations
 - Check `mentats_debug.log` for deep reasoning traces
 - See [FAQ](FAQ.md) for architecture & troubleshooting
+
 
 
 
