@@ -8,9 +8,8 @@
 
 **Location:**
 
-https://github.com/BobbyLLM/llama-conductor
-
-https://codeberg.org/BobbyLLM/llama-conductor
+- https://github.com/BobbyLLM/llama-conductor
+- https://codeberg.org/BobbyLLM/llama-conductor
 ---
 
 **Special Containment Procedures:**
