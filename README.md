@@ -18,6 +18,7 @@ TL;DR: "In God we trust. All others bring data." - Deming
 - [Y U DO DIS?](DESIGN.md) - Design fool-osophy and Q&A
 - [BULLSHIT. PROVE IT](prepub/PAPER.md) - Ok, I will (Prepub draft + evidence bundle)
 - [Mom, can we get ChatGPT? Mom: we have ChatGPT at home](meme-test.md) - A fun meme test that shows the effect of deterministic grounding
+- [SCP-LLM-121](SCP.md) "My God...it got loose?!?" (yeah, I got bored)
 
 ---
 
@@ -238,7 +239,7 @@ Recommended start order: Qdrant -> llama-swap -> router -> frontend
 ### 🧰 Deterministic sidecars
 
 
->>calc / >>find / >>list / >>flush / >>status / >>wiki / >>define 
+>>calc / >>find / >>list / >>flush / >>status / >>wiki 
 - Router executes deterministic pathways
 - No creative writing layer in the middle
 
@@ -246,7 +247,6 @@ Recommended start order: Qdrant -> llama-swap -> router -> frontend
 - Lower token spend, lower latency, less "creative accounting".
 - Great for boring operational tasks where wrong answers are expensive.
 - >>wiki pulls answers from wikipedia (preset to first 400 words; acts as summary)
-- >>define pulls etymology from Etymonline and returns deterministic first-entry summary
 - >>trust (you ask question, router gives you options for data sources. You choose, not it)
 
 ### 🎚️ Mode switches (serious, fun, fun rewrite)
@@ -314,7 +314,6 @@ Result:
 ## 📜 License
 
 AGPL-3.0-or-later. See `LICENSE`.
-
 
 
 
