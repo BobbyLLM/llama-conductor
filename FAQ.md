@@ -675,7 +675,7 @@ Confidence: high | Source: Model
 
 A KB is just a folder path from `kb_paths` in `router_config.yaml`.
 
-`>>attach c64` means: "for normal grounded queries, include retrievable context from that filesystem KB."
+`>>attach c64` means: "attach the `c64` folder (and its contents), then ground normal answers using retrievable context from that filesystem KB."
 
 It does **not** mean:
 - Vault is attached
@@ -1396,5 +1396,6 @@ Sorry - real life commitments :(
 
 ## License
 AGPL-3.0-or-later. See `LICENSE`
+
 
 
