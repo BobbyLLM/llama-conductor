@@ -12,7 +12,7 @@ import re
 
 
 _CONF_RE = re.compile(
-    r"^\s*Confidence:\s*(low|medium|med|high|top)\s*\|\s*Source:\s*(Model|Docs|User|Contextual|Mixed)\s*$",
+    r"^\s*Confidence:\s*(unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _SRC_RE = re.compile(
@@ -21,7 +21,7 @@ _SRC_RE = re.compile(
 )
 _CONF_PREFIX_RE = re.compile(r"^\s*Confidence:\s*", re.IGNORECASE)
 _INLINE_CONF_RE = re.compile(
-    r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed)\s*",
+    r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed|Scratchpad)\s*",
     re.IGNORECASE,
 )
 _SIMPLE_SOURCE_LINE_RE = re.compile(
@@ -64,23 +64,21 @@ def _detect_abstract_source(
     if "source: locked file (" in low:
         return "Docs"
     if "source: scratchpad" in low:
-        return "Docs"
+        return "Scratchpad"
 
     m = _CONF_RE.search(t)
     if m:
         src = (m.group(2) or "").strip().title()
-        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed"} else "Model"
+        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad"} else "Model"
     m_src = _SRC_RE.search(t)
     if m_src:
         src = (m_src.group(1) or "").strip().title()
-        if src == "Scratchpad":
-            return "Docs"
-        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed"} else "Model"
+        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad"} else "Model"
 
     if lock_active:
         return "Model" if "not found in locked source" in low else "Docs"
     if scratchpad_grounded:
-        return "Docs"
+        return "Scratchpad"
     if has_facts_block:
         if "source: model" in low:
             return "Model"
@@ -101,7 +99,7 @@ def _compute_confidence(
         return "unverified"
     if source in {"User", "Contextual", "Mixed"}:
         return "medium"
-    if source == "Docs":
+    if source in {"Docs", "Scratchpad"}:
         if lock_active and locked_fact_lines >= 4:
             return "top"
         if (not lock_active) and has_facts_block and rag_hits >= 4:
