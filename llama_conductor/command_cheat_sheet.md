@@ -29,6 +29,8 @@ Minimal examples:
 ## Quick utilities (`>>`)
 - `>>help` show compact core help
 - `>>help full` alias for full sheet (`>>help advanced`)
+- `>>faq` show FAQ navigator with numbered top-section TOC
+- `>>faq <n>` print FAQ section `n` directly in chat
 - `>>status` compact status view
 - `>>status full` expanded human-readable status view
 - `>>status raw` machine-readable key/value status view
