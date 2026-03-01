@@ -160,7 +160,7 @@ Vodka CTC trims context automatically:
 ```
 
 Result:
-- Consistent prompt size, stable performance, and optional rolling deterministic summary (stdlib extractive).
+- Consistent prompt size, stable performance, and optional rolling deterministic summary using built-in Python text processing (extractive, no LLM generation).
 - Tok/s you started with, is what you keep (more or less).
 - Bonus: Tweak your `--ctx` and maybe your Raspberry Pi can run that 4B model without chug.
 
@@ -469,7 +469,7 @@ Research direction for this design pattern (verifier/critic pass improving relia
    >>summ new
    ```
    Creates: `SUMM_<file>.md` with SHA-256 hash
-   - Current behavior: `>>summ` uses a deterministic extractive pipeline (stdlib), not an LLM generation call.
+   - Current behavior: `>>summ` uses deterministic extractive text processing built with Python's standard library, not an LLM generation call.
    - Mechanics stay the same: source file is moved to `/original/`, SUMM file is created beside it.
 
 2. **Promote to Vault**:
@@ -709,7 +709,7 @@ They reduce token spend and avoid unnecessary model improvisation for utility qu
 
 #### `>>summ` - LLM summary or deterministic extract?
 
-Current behavior is deterministic extractive generation (stdlib path), not free-form LLM summarization.
+Current behavior is deterministic extractive generation using built-in Python text processing (no LLM generation), not free-form LLM summarization.
 
 That means:
 - lower hallucination risk than generative summary
@@ -1364,12 +1364,12 @@ They show how grounded an answer is, not how confident the model sounds.
 
 #### How confidence is assigned (plain English)
 
-The router checks evidence signals, then assigns a tier:
+The router checks where support came from and how direct that support is, then assigns a tier:
 
-- Strong grounded evidence present (locked SUMM / scratchpad / docs with clear hits) -> `high` to `top`
-- Some grounding signal but partial/weaker support -> `medium`
-- Thin grounding, ambiguous support, or weak retrieval -> `low`
-- No grounded support and fallback to model knowledge -> `unverified`
+- Clear, direct support in the active source scope (for example locked SUMM, scratchpad, or strong doc hits) -> `high` to `top`
+- Real source support exists, but only partly answers the question -> `medium`
+- Source was touched, but support is weak/noisy/unclear -> `low`
+- No grounded support; answer fell back to model knowledge -> `unverified`
 
 So confidence means:
 
