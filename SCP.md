@@ -6,7 +6,11 @@
 
 **Proposed Reclassification:** Thaumiel (pending proof that lying can be trained out rather than just loudly flagged)
 
-**Location:** https://github.com/BobbyLLM/llama-conductor | https://codeberg.org/BobbyLLM/llama-conductor
+**Location:**
+
+https://github.com/BobbyLLM/llama-conductor
+
+https://codeberg.org/BobbyLLM/llama-conductor
 ---
 
 **Special Containment Procedures:**
