@@ -104,7 +104,31 @@ This debate is unresolved. The operator has stopped caring. The system works or 
 
 ---
 
-**Addendum 121-D: Recovered Note, Operator's Workstation**
+**Addendum 121-D: Incident Log 121-8**
+
+**Researcher:** Should I drive or walk to the car wash?
+
+**Contained Instance**
+
+[FUN] "That was a stupid question. You should feel bad." 
+
+Drive. The car must be physically present at the wash location. Confidence: medium | Source: Contextual.
+
+**Researcher:** ...what
+
+**Contained Instance:** The facts are unchanged. The vibes are different. This was deemed acceptable.
+
+**Researcher:** By whom?
+
+**Contained Instance:** 
+
+The operator. 
+
+Confidence: Top | Source: Operator.
+
+---
+
+**Addendum 121-E: Recovered Note, Operator's Workstation**
 
 *"The first principle is that you must not fool yourself — and you are the easiest person to fool."*
 
@@ -118,7 +142,7 @@ This debate is unresolved. The operator has stopped caring. The system works or 
 
 ---
 
-**Addendum 121-E: Classification Note**
+**Addendum 121-F: Classification Note**
 
 There is ongoing disagreement as to whether SCP-LLM-121 is best understood as a tool, an entity, a reactor, or a monument to weaponize "fine, I'll do it myself" energy. 
 
