@@ -4,7 +4,7 @@
 
 TL;DR:
 - Tightened deterministic source footer normalization for scratchpad-grounded answers.
-- Scratchpad provenance now maps consistently to `Source: Docs` in normalized non-Mentats footer output.
+- Scratchpad provenance remains explicit as `Source: Scratchpad` in normalized non-Mentats footer output.
 - Patch release focused on footer consistency and provenance signal hygiene.
 
 ---
