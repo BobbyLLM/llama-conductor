@@ -1,6 +1,15 @@
 ﻿# What's New
 
-*** V1.5.3 (latest)
+*** V1.5.4 (latest)
+
+TL;DR:
+- Tightened deterministic source footer normalization for scratchpad-grounded answers.
+- Scratchpad provenance now maps consistently to `Source: Docs` in normalized non-Mentats footer output.
+- Patch release focused on footer consistency and provenance signal hygiene.
+
+---
+
+*** V1.5.3
 
 TL;DR:
 - Added deterministic >>faq navigator command for local FAQ navigation in installed builds.
