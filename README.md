@@ -196,9 +196,9 @@ Result:
 2. Frontend (llama.cpp WebUI + shim, OWUI, SillyTavern, or direct API client)
 3. Qdrant (required for grounded `##mentats`)
 
-Recommended default: llama.cpp + Qdrant.
+Recommended default: llama.cpp + Qdrant. Yes, really. 
 
-Kick-the-tires mode: llama.cpp alone for core routing/chat (Mentats/Vault paths unavailable).
+ULTRA bare bones, kick-the-tires mode: llama.cpp alone for core routing/chat (but Mentats/Vault paths unavailable).
 
 ### Install
 
