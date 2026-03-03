@@ -7,6 +7,10 @@ import re
 from difflib import SequenceMatcher
 
 from .config import cfg_get
+try:
+    from .state_reasoning import classify_constraint_turn  # type: ignore
+except Exception:
+    classify_constraint_turn = None  # type: ignore
 
 
 def _maybe_append_fun_train_kicker(
@@ -263,6 +267,11 @@ def _is_constraint_like_query(text: str) -> bool:
     t = str(text or "").lower()
     if not t:
         return False
+    if classify_constraint_turn is not None:
+        try:
+            return classify_constraint_turn(t, frame=None) == "fresh_decision"
+        except Exception:
+            pass
     if not (("should i" in t) or ("do i" in t)):
         return False
     if not (("walk" in t) and ("drive" in t)):
@@ -443,6 +452,7 @@ async def maybe_handle_fun_fr_raw(
         )
 
     if fun_mode == "fun_rewrite":
+        deterministic_preview = bool((state_solver_answer or "").strip())
         base_preview = (state_solver_answer or "").strip()
         if not base_preview:
             base_preview = _deterministic_constraint_explanation(state=state, user_text=user_text).strip()
@@ -469,7 +479,7 @@ async def maybe_handle_fun_fr_raw(
             or _history_has_constraint_answer_signal(history_text_only)
         ):
             constraint_explain_followup = True
-        fr_constraint_context = bool(constraint_like or constraint_explain_followup)
+        fr_constraint_context = bool(deterministic_preview or constraint_like or constraint_explain_followup)
         if fr_constraint_context:
             safe_base = str(base_preview or "").strip()
             if safe_base and ("source:" not in safe_base.lower()):

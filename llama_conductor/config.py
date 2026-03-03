@@ -47,7 +47,17 @@ def cfg_get(path: str, default: Any) -> Any:
 load_config(DEFAULT_CONFIG_PATH)
 
 # Export commonly used config values
-LLAMA_SWAP_URL: str = str(cfg_get("llama_swap_url", "http://127.0.0.1:8011/v1/chat/completions"))
+UPSTREAM_CHAT_URL: str = str(
+    cfg_get(
+        "backend.upstream_chat_url",
+        cfg_get(
+            "upstream_chat_url",
+            cfg_get("llama_swap_url", "http://127.0.0.1:8011/v1/chat/completions"),
+        ),
+    )
+)
+# Back-compat alias retained for modules not yet migrated.
+LLAMA_SWAP_URL: str = UPSTREAM_CHAT_URL
 ROLES: Dict[str, str] = dict(cfg_get("roles", {}))
 KB_PATHS: Dict[str, str] = dict(cfg_get("kb_paths", {}))
 VAULT_KB_NAME: str = str(cfg_get("vault_kb_name", "vault"))
@@ -65,8 +75,6 @@ VAULT_CHUNK_WORDS = int(cfg_get("vault.chunk_words", 600))
 VAULT_OVERLAP_WORDS = int(cfg_get("vault.chunk_overlap_words", 175))
 
 # Runtime debug/privacy flags
-MODEL_DEBUG = bool(cfg_get("router.model_debug", False))
-MODEL_DEBUG_PAYLOAD = bool(cfg_get("router.model_debug_payload", False))
 MENTATS_DEBUG = bool(cfg_get("mentats.debug", False))
 MENTATS_DEBUG_PAYLOAD = bool(cfg_get("mentats.debug_payload", False))
 ROUTER_DEBUG = bool(cfg_get("router.debug", False))

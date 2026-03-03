@@ -74,6 +74,15 @@ _DIRECT_TOTAL_CAP_RE = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+_CONTAINER_OZ_CONTEXT_RE = re.compile(
+    r"\b(?:cup|container|bucket|bottle)\b[^\n]{0,80}\b(?:oz|ounce|ounces|fluid\s*ounces?)\b"
+    r"|\b(?:oz|ounce|ounces|fluid\s*ounces?)\b[^\n]{0,80}\b(?:cup|container|bucket|bottle)\b",
+    re.IGNORECASE,
+)
+_CONTAINER_CAP_OZ_RE = re.compile(
+    r"(?P<cap>\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces|fluid\s*ounces?)\s*cup",
+    re.IGNORECASE,
+)
 
 _BALANCE_START_STRONG_RE = re.compile(
     r"""
@@ -123,6 +132,7 @@ _POS_VERBS = (
 )
 _NEG_VERBS = (
     "remove", "removed", "removes",
+    "take out", "takes out", "taking out", "took out",
     "spend", "spent", "spends",
     "withdraw", "withdrew", "withdrawn", "withdraws",
     "leave", "left", "leaves",
@@ -148,6 +158,18 @@ _POS_NUM_VERB_RE = re.compile(
 )
 _NEG_NUM_VERB_RE = re.compile(
     rf"(?P<num>\d+(?:\.\d+)?)\s*(?:people|persons|passengers|units?|items?|tickets?|oz|ounces?|dollars?|bucks|usd|\$)?\s*(?P<verb>{_NEG_VERB_RE})\b",
+    re.IGNORECASE,
+)
+_OPERATION_MENTION_RE = re.compile(
+    r"\b("
+    r"add|added|adding|receive|received|receives|gain|gained|gains|deposit|deposited|deposits|"
+    r"board|boarded|boards|enter|entered|enters|arrive|arrived|arrives|restock|restocked|restocks|"
+    r"remove|removed|removes|take\s+out|takes\s+out|taking\s+out|took\s+out|"
+    r"spend|spent|spends|withdraw|withdrew|withdrawn|withdraws|"
+    r"leave|left|leaves|exit|exited|exits|sell|sold|sells|ship|shipped|ships|"
+    r"use|used|uses|offload|offloaded|offloads|"
+    r"pour|poured|pouring|transfer|transferred|transferring"
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -308,6 +330,10 @@ def solve_state_transition_query(query: str) -> StateReasoningResult:
         delta = _as_float(m_add.group("delta"))
         if cap is None or start is None or delta is None:
             return _fail_loud("Missing values for capacity/addition state update.")
+        if _has_unparsed_operation_fragment(t, covered_spans=[(m_add.start(), m_add.end())]):
+            return _fail_loud(
+                "Detected additional operation(s) outside the supported single-step capacity-add parse."
+            )
         total = start + delta
         contained = min(cap, total)
         overflow = max(0.0, total - cap)
@@ -332,6 +358,10 @@ def solve_state_transition_query(query: str) -> StateReasoningResult:
         cap = _as_float(m_direct.group("cap"))
         if total is None or cap is None:
             return _fail_loud("Missing direct total/capacity values.")
+        if _has_unparsed_operation_fragment(t, covered_spans=[(m_direct.start(), m_direct.end())]):
+            return _fail_loud(
+                "Detected additional operation(s) outside direct total-vs-capacity parsing."
+            )
         contained = min(cap, max(0.0, total))
         overflow = max(0.0, total - cap)
         if _ASK_OVERFLOW_RE.search(t):
@@ -354,6 +384,13 @@ def solve_state_transition_query(query: str) -> StateReasoningResult:
         start2 = _as_float(m2.group("start2")) if m2.group("start2") is not None else 0.0
         if inp is None or cap1 is None or cap2 is None or start2 is None:
             return _fail_loud("Missing values for transfer-chain state update.")
+        if _has_unparsed_operation_fragment(
+            t,
+            covered_spans=[(m1.start(), m1.end()), (m2.start(), m2.end())],
+        ):
+            return _fail_loud(
+                "Detected additional operation(s) beyond the supported two-step transfer chain parse."
+            )
 
         first_contained = min(cap1, inp)
         first_overflow = max(0.0, inp - cap1)
@@ -398,11 +435,15 @@ def solve_state_transition_query(query: str) -> StateReasoningResult:
 
 
 def _fail_loud(msg: str) -> StateReasoningResult:
+    template = (
+        "Use normalized format: start=<n>, cap=<n|none>, "
+        "ops=[+n,-n,transfer A->B,...]."
+    )
     return StateReasoningResult(
         handled=True,
         fail_loud=True,
         family="state_transition",
-        answer=f"Cannot verify this state update deterministically: {msg}\nSource: Contextual",
+        answer=f"Cannot verify this state update deterministically: {msg} {template}\nSource: Contextual",
         reason="fail_loud_partial_parse",
     )
 
@@ -472,6 +513,31 @@ def _prefill_suffix(start2: float) -> str:
     return f" (already holding {_fmt(start2)} oz)"
 
 
+def _mask_spans(text: str, spans: list[tuple[int, int]]) -> str:
+    if not spans:
+        return text
+    out = text
+    for s, e in sorted(spans, key=lambda x: x[0], reverse=True):
+        s2 = max(0, int(s))
+        e2 = min(len(out), int(e))
+        if e2 <= s2:
+            continue
+        out = out[:s2] + (" " * (e2 - s2)) + out[e2:]
+    return out
+
+
+def _has_unparsed_operation_fragment(text: str, *, covered_spans: list[tuple[int, int]]) -> bool:
+    rem = _mask_spans(text, covered_spans)
+    return bool(_OPERATION_MENTION_RE.search(rem) and _NUM_RE.search(rem))
+
+
+def _has_operation_mention_mismatch(text: str, *, parsed_ops: list[tuple[int, int, float, str]]) -> bool:
+    mentions = [m.start() for m in _OPERATION_MENTION_RE.finditer(text)]
+    if not mentions:
+        return False
+    return len(mentions) > len(parsed_ops)
+
+
 def _extract_signed_ops(text: str) -> list[tuple[int, int, float, str]]:
     rows: list[tuple[int, int, float, str]] = []
     for m in _POS_VERB_NUM_RE.finditer(text):
@@ -513,11 +579,24 @@ def _solve_generic_balance_update(text: str) -> StateReasoningResult:
     ops = _extract_signed_ops(text)
     if not ops:
         return StateReasoningResult()
+    if _has_operation_mention_mismatch(text, parsed_ops=ops):
+        return _fail_loud(
+            "Some operation words were detected but could not be parsed into deterministic numeric updates."
+        )
 
     cap = None
     m_cap = _BALANCE_CAP_RE.search(text)
     if m_cap:
         cap = _as_float(m_cap.group("cap"))
+    if cap is None:
+        m_cap_oz = _CONTAINER_CAP_OZ_RE.search(text)
+        if m_cap_oz:
+            cap = _as_float(m_cap_oz.group("cap"))
+    container_oz_context = bool(_CONTAINER_OZ_CONTEXT_RE.search(text))
+    if container_oz_context and len(ops) > 1:
+        return _fail_loud(
+            "Container-capacity query appears multi-step; current generic parser only supports one deterministic container update without explicit step schema."
+        )
 
     delta_total = 0.0
     pieces: list[str] = []

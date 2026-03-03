@@ -20,6 +20,25 @@ from .privacy_utils import contains_likely_pii, redact_pii, safe_preview, short_
 FILTER_VERSION = "1.0.3"
 SUMMARY_PREFIX = "[CHAT_SUMMARY] "
 MEMORY_PREFIX = "[SESSION_MEMORY] "
+SOFTWARE_HINT_TERMS: Tuple[str, ...] = (
+    "app",
+    "apps",
+    "software",
+    "service",
+    "platform",
+    "browser",
+    "os",
+    "tool",
+    "tools",
+    "firewall",
+    "pi-hole",
+    "smart-tube",
+    "smarttube",
+    "kaios",
+    "jellyfin",
+    "firefox",
+)
+SOFTWARE_ENTITY_WHITELIST: Tuple[str, ...] = ("kaios", "jellyfin", "smarttube", "firefox")
 
 # -------------------------------
 # JSON backend (minimal)
@@ -50,6 +69,39 @@ except Exception:
 
 def _ts() -> str:
     return dt.datetime.now().astimezone().strftime("%B %d, %Y at %H:%M:%S %Z")
+
+
+def _parse_ts_common(s: str) -> Optional[dt.datetime]:
+    """Parse Vodka timestamps across supported legacy/new variants."""
+    if not s:
+        return None
+
+    # Preferred format with timezone token.
+    try:
+        return dt.datetime.strptime(s, "%B %d, %Y at %H:%M:%S %Z").replace(
+            tzinfo=dt.datetime.now().astimezone().tzinfo
+        )
+    except Exception:
+        pass
+
+    # Fallback: parse date/time prefix and ignore non-standard tz names.
+    try:
+        parts = s.rsplit(" at ", 1)
+        if len(parts) == 2:
+            date_part = parts[0]
+            time_part = parts[1].split(" ", 1)[0]
+            dt_str = f"{date_part} at {time_part}"
+            parsed = dt.datetime.strptime(dt_str, "%B %d, %Y at %H:%M:%S")
+            return parsed.replace(tzinfo=dt.datetime.now().astimezone().tzinfo)
+    except Exception:
+        pass
+
+    return None
+
+
+def _has_software_hint(text: str) -> bool:
+    low = (text or "").lower()
+    return any(k in low for k in SOFTWARE_HINT_TERMS)
 
 
 def _ensure_dir(path: str) -> str:
@@ -157,7 +209,7 @@ class Storage:
     def log(self, msg: str):
         try:
             with open(self.log_file, "a", encoding="utf-8") as f:
-                f.write(f"{_ts()} â€” {msg}\n")
+                f.write(f"{_ts()} - {msg}\n")
         except Exception:
             pass
 
@@ -223,12 +275,7 @@ class FastRecall:
         return dt_obj.strftime("%B %d, %Y at %H:%M:%S %Z")
 
     def _parse_ts(self, s: str) -> Optional[dt.datetime]:
-        try:
-            return dt.datetime.strptime(s, "%B %d, %Y at %H:%M:%S %Z").replace(
-                tzinfo=dt.datetime.now().astimezone().tzinfo
-            )
-        except Exception:
-            return None
+        return _parse_ts_common(s)
 
     def store_overflow(self, content: str) -> str:
         content = (content or "").strip()
@@ -245,7 +292,7 @@ class FastRecall:
             rec.setdefault("touch_count", 0)
             exp = now + dt.timedelta(days=self.base_ttl_days)
             rec["expires_at"] = self._fmt_ts(exp)
-            self.S.log(f"VODKA_REFRESH_CTX â€” {ctx_id}")
+            self.S.log(f"VODKA_REFRESH_CTX - {ctx_id}")
             self.S.debug_log(f"REFRESH: {ctx_id}")
         else:
             exp = now + dt.timedelta(days=self.base_ttl_days)
@@ -256,7 +303,7 @@ class FastRecall:
                 "touch_count": 0,
                 "type": "vodka_ctx",
             }
-            self.S.log(f"VODKA_ADD_CTX â€” {ctx_id} â€” len={len(content)}")
+            self.S.log(f"VODKA_ADD_CTX - {ctx_id} - len={len(content)}")
             self.S.debug_log(f"ADD: {ctx_id} value_len={len(content)}")
 
         self.S.save_facts(data)
@@ -321,7 +368,7 @@ class FastRecall:
         now = self._now()
         exp = now + dt.timedelta(days=self.touch_extension_days)
         rec["expires_at"] = self._fmt_ts(exp)
-        self.S.log(f"VODKA_TOUCH_CTX â€” {ctx_id} â€” touch_count={tc}")
+        self.S.log(f"VODKA_TOUCH_CTX - {ctx_id} - touch_count={tc}")
         self.S.debug_log(f"TOUCH: {ctx_id} count={tc}")
 
     def janitor_if_due(self, interval_seconds: int = 3600):
@@ -347,7 +394,7 @@ class FastRecall:
             if exp_dt and exp_dt < now:
                 to_delete.append(k)
         for k in to_delete:
-            self.S.log(f"VODKA_JANITOR_EXPIRE â€” {k}")
+            self.S.log(f"VODKA_JANITOR_EXPIRE - {k}")
             self.S.debug_log(f"JANITOR: {k}")
             data.pop(k, None)
 
@@ -360,7 +407,7 @@ class FastRecall:
             ctx_keys_sorted = sorted(ctx_keys, key=_key_created)
             overflow = ctx_keys_sorted[: len(ctx_keys_sorted) - self.max_items]
             for k in overflow:
-                self.S.log(f"VODKA_JANITOR_CAP â€” {k}")
+                self.S.log(f"VODKA_JANITOR_CAP - {k}")
                 self.S.debug_log(f"JANITOR: {k}")
                 data.pop(k, None)
 
@@ -388,7 +435,7 @@ class Filter:
         keep_first: bool = Field(default=True, description="Keep the first user+assistant pair.")
         max_chars: int = Field(default=1500, description="Soft cap for non-system message chars (0 disables).")
 
-        # Rolling summary (kept simple; if you donâ€™t want it, disable)
+        # Rolling summary (kept simple; if you don't want it, disable)
         enable_summary: bool = Field(default=True, description="Enable rolling summary system message.")
         summary_every_n_user_msgs: int = Field(default=4, description="Update summary once >= N user msgs.")
         summary_max_words: int = Field(default=160, description="Max words in summary.")
@@ -542,7 +589,7 @@ class Filter:
         if deleted:
             fr.S.save_facts(data)
             fr.S.log(
-                f"VODKA_FORGET_QUERY â€” qhash={short_hash(query)} qlen={len(query)} deleted={deleted}"
+                f"VODKA_FORGET_QUERY - qhash={short_hash(query)} qlen={len(query)} deleted={deleted}"
             )
         return deleted
 
@@ -565,14 +612,14 @@ class Filter:
             # Skip expired memories
             exp_s = rec.get("expires_at")
             if exp_s:
-                exp_dt = self._parse_ts_safe(exp_s)
+                exp_dt = _parse_ts_common(exp_s)
                 if exp_dt and exp_dt < now:
                     continue
             
             # Calculate TTL days remaining
             ttl_days = 0
             if exp_s:
-                exp_dt = self._parse_ts_safe(exp_s)
+                exp_dt = _parse_ts_common(exp_s)
                 if exp_dt:
                     delta = (exp_dt - now).total_seconds()
                     ttl_days = max(0, int(delta // 86400))
@@ -621,43 +668,6 @@ class Filter:
         
         return output
 
-    def _parse_ts_safe(self, s: str) -> Optional[dt.datetime]:
-        """
-        Parse timestamp safely, handling both old and new formats.
-        Tries multiple formats to handle timezone variations.
-        """
-        if not s:
-            return None
-        
-        # Try original format first (with timezone code)
-        try:
-            return dt.datetime.strptime(s, "%B %d, %Y at %H:%M:%S %Z").replace(
-                tzinfo=dt.datetime.now().astimezone().tzinfo
-            )
-        except Exception:
-            pass
-        
-        # Fallback: parse without timezone (just date and time)
-        # This handles "January 27, 2026 at 02:34:51 W. Australia Standard Time"
-        try:
-            # Strip the timezone suffix and parse just the datetime part
-            # Format: "Month DD, YYYY at HH:MM:SS TZ_NAME"
-            parts = s.rsplit(" at ", 1)  # Split on the last " at "
-            if len(parts) == 2:
-                date_part = parts[0]  # "January 27, 2026"
-                time_part = parts[1].split(" ", 1)[0]  # "02:34:51"
-                
-                dt_str = f"{date_part} at {time_part}"
-                parsed = dt.datetime.strptime(dt_str, "%B %d, %Y at %H:%M:%S")
-                # Add current timezone
-                return parsed.replace(tzinfo=dt.datetime.now().astimezone().tzinfo)
-        except Exception:
-            pass
-        
-        # If all else fails, return None
-        return None
-
-
     # -------------------------------
     # Control commands + highlights
     # -------------------------------
@@ -686,10 +696,10 @@ class Filter:
         if not isinstance(content, str):
             return messages, None
 
-        # DEFENSIVE: Normalize broken UTF-8 sequences (Â» → ??, Â» → >>)
+        # DEFENSIVE: Normalize common mojibake command prefixes.
         # This handles cases where clients send malformed Unicode
-        content = content.replace("Â»", ">>").replace("Â»", ">>")  # broken guillemet variants
-        content = content.replace("Â¿", "??").replace("Â¿", "??")  # other broken variants
+        content = content.replace("Â»", ">>").replace("»", ">>")  # broken guillemet variants
+        content = content.replace("Â¿", "??").replace("¿", "??")  # broken question-mark variants
         
         stripped = content.strip()
         norm = stripped.lower()
@@ -706,6 +716,49 @@ class Filter:
             body["messages"] = messages
             if debug_enabled:
                 print("[Vodka] nuke executed")
+            return messages, body
+
+        # !! <text> (deterministic add + hard return, no model pass-through)
+        add_match = re.match(r"^!!\s+(.+)$", stripped, flags=re.IGNORECASE | re.DOTALL)
+        if add_match and not re.match(r"^!!\s*forget(?:\s+.*)?$", stripped, flags=re.IGNORECASE):
+            note = " ".join((add_match.group(1) or "").split()).strip()
+            if not note:
+                # Keep fail-loud deterministic command behavior.
+                del messages[idx]
+                messages.append({"role": "assistant", "content": "[vodka] add failed: empty note"})
+                body["messages"] = messages
+                return messages, body
+
+            ctx_id = fr.store_overflow(note)
+            ttl_days = 0
+            touches = 0
+            try:
+                rec = fr.S.load_facts().get(ctx_id) or {}
+                touches = int(rec.get("touch_count", 0) or 0)
+                exp_s = str(rec.get("expires_at", "") or "")
+                exp_dt = _parse_ts_common(exp_s)
+                if exp_dt is not None:
+                    ttl_days = max(0, int((exp_dt - fr._now()).total_seconds() // 86400))
+                else:
+                    ttl_days = max(0, int(fr.base_ttl_days))
+            except Exception:
+                ttl_days = max(0, int(fr.base_ttl_days))
+
+            ack = (
+                f"[vodka] added: {ctx_id}\n"
+                f"TTL: {ttl_days} days remaining | Touches: {touches}\n"
+                "If you want commentary, reply: yes"
+            )
+
+            # Remove user command and hard-return deterministic ack.
+            del messages[idx]
+            messages.append({"role": "assistant", "content": ack})
+            body["messages"] = messages
+            body["_vodka_added_ctx_id"] = ctx_id
+            body["_vodka_added_text"] = note
+            body["_vodka_added_ttl_days"] = ttl_days
+            if debug_enabled:
+                print(f"[Vodka] add executed ctx={ctx_id} ttl={ttl_days} touches={touches}")
             return messages, body
 
         # !! forget <query>
@@ -909,21 +962,7 @@ class Filter:
                 score += 4
             if any(k in low for k in ("asked", "gave", "will", "plan", "need", "prefer", "replace", "mentioned", "promised")):
                 score += 2
-            if any(
-                k in low
-                for k in (
-                    "software",
-                    "apps",
-                    "app",
-                    "firewall",
-                    "pi-hole",
-                    "smart-tube",
-                    "browser",
-                    "kaios",
-                    "jellyfin",
-                    "timer",
-                )
-            ):
+            if _has_software_hint(low) or "timer" in low:
                 score += 5
             if any(k in low for k in ("phone", "device", "technology", "tablet", "controller", "console")):
                 score += 3
@@ -1553,7 +1592,7 @@ class Filter:
                 continue
             if k in seen:
                 continue
-            if k in {"kaios", "jellyfin", "smarttube", "firefox"}:
+            if k in SOFTWARE_ENTITY_WHITELIST:
                 seen.add(k)
                 out.append(term)
                 continue
@@ -1824,7 +1863,7 @@ class Filter:
                             self._normalize_recall_item(self._compact_memory_text(txt, max_len=110))
                         )
                 tags = {str(t).lower() for t in (u.get("tags") or [])}
-                if {"software", "apps"} & tags or any(k in low for k in ("app", "kaios", "jellyfin", "smart-tube", "pi-hole", "firewall")):
+                if {"software", "apps"} & tags or _has_software_hint(low):
                     software_items.extend(self._normalize_recall_item(x) for x in self._extract_soft_tech_items(txt))
 
             promised_items = self._dedupe_keep_order(promised_items)[:3]
@@ -1972,7 +2011,7 @@ class Filter:
                 tags = {str(x).lower() for x in (u.get("tags") or [])}
                 software_match = t_low in software_aliases and (
                     {"software", "apps"} & tags
-                    or any(k in txt_low for k in ("app", "kaios", "jellyfin", "smart-tube", "firewall", "pi-hole"))
+                    or _has_software_hint(txt_low)
                 )
                 typo_phone_match = (t_low == "phones") and ("pones" in txt_low or "phone" in txt_low)
                 if t_low in txt_low or software_match or typo_phone_match:
@@ -2048,7 +2087,7 @@ class Filter:
                 continue
             if want_promise and not ("promised" in tags or "promis" in txt.lower()):
                 continue
-            if want_software and not ({"software", "apps"} & tags or any(k in txt.lower() for k in ("app", "kaios", "jellyfin", "smart-tube", "firewall"))):
+            if want_software and not ({"software", "apps"} & tags or _has_software_hint(txt)):
                 continue
             if want_tech and not (
                 {"technology", "device", "phone"} & tags
@@ -2174,7 +2213,7 @@ class Filter:
                 return (
                     t == "software"
                     or bool({"software", "apps"} & tags)
-                    or any(k in txt_low for k in ("app", "software", "service", "platform", "kaios", "jellyfin", "smart-tube", "smarttube", "pi-hole", "firefox"))
+                    or _has_software_hint(txt_low)
                 )
             for u in _filter(_tool_pred):
                 _add(u)

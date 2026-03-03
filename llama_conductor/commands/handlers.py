@@ -23,6 +23,7 @@ from ..interaction_profile import (
 )
 from ..helpers import is_command, strip_cmd_prefix, parse_args
 from ..vault_ops import summ_new_in_kb, move_summ_to_vault
+from .registry import resolve_command_key
 
 # Optional imports (feature-detected)
 try:
@@ -125,6 +126,8 @@ def _core_help_text() -> str:
         "- `>>faq`\n"
         "- `>>trust <query>`\n"
         "- `>>wiki <topic>` | `>>define <word>` | `>>exchange <query>` | `>>weather <location>`\n"
+        "- `>>trust` recommends routes; execution remains manual.\n"
+        "- Sidecars are deterministic utility lookups/conversions.\n"
         "- `!! <text>` | `!! forget <query>` | `!! nuke`\n"
         "- `?? <query>` | `?? list`\n"
         "- `##mentats <q>` | `##fun <q>` | `##vision <q>` | `##ocr <q>`\n\n"
@@ -144,6 +147,7 @@ def _faq_md_path() -> str:
 
 
 def _anchor_slug(text: str) -> str:
+    """Best-effort GitHub-style anchor slug."""
     t = (text or "").strip().lower()
     t = re.sub(r"[`*_~\[\]\(\)\"'.,:;!?/\\|]", "", t)
     t = t.replace("&", "and")
@@ -195,7 +199,8 @@ def _extract_faq_sections(max_items: int = 32) -> List[Dict[str, str]]:
         current_body.append(line)
 
     _flush_current()
-
+    # Append curated late-file reference/ops sections that live outside the
+    # main FAQ block but are still operator-relevant.
     include_titles = {
         "Advanced: How does provenance work?",
         "TIPS",
@@ -287,6 +292,8 @@ def _faq_show_text(selector: str) -> str:
     sel = (selector or "").strip()
     if not sel:
         return "[faq] usage: >>faq show <number>"
+
+    # Numeric selector (primary path)
     try:
         idx = int(sel)
     except Exception:
@@ -306,6 +313,7 @@ def _faq_show_text(selector: str) -> str:
             "Tip: `>>faq` returns to the main list.",
         ]
         return "\n".join(out)
+
     return f"[faq] invalid section number '{sel}'. Use `>>faq list`."
 
 
@@ -348,6 +356,8 @@ def _reset_profile_runtime_state(state: SessionState) -> None:
     state.serious_last_body_signature = ""
     state.serious_repeat_streak = 0
     state.pending_sensitive_confirm_query = ""
+    state.pending_vodka_comment_ctx_id = ""
+    state.pending_vodka_comment_text = ""
 
 
 def _list_lockable_summ_files(state: SessionState) -> List[str]:
@@ -607,6 +617,8 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         low = "scratchpad list"
         parts = ["scratchpad", "list"]
 
+    cmd_key = resolve_command_key(low, parts)
+
     # Scratchpad shorthand aliases when scratchpad is attached
     # - >>add <text>  -> >>scratchpad add <text>
     # - >>list        -> >>scratchpad list (only when scratchpad attached)
@@ -649,26 +661,27 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return out
 
     # help surface tiering
-    if parts and parts[0].lower() == "help":
+    if cmd_key == "help":
         sub = parts[1].lower() if len(parts) > 1 else ""
         if sub in ("advanced", "full"):
             return load_help_text(advanced=True)
         return load_help_text(advanced=False)
 
     # local FAQ navigator (docs only)
-    if parts and parts[0].lower() == "faq":
+    if cmd_key == "faq":
         sub = parts[1].lower() if len(parts) > 1 else ""
         if sub in ("", "list", "toc", "index"):
             return _faq_nav_text()
         if sub == "show":
             selector = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
             return _faq_show_text(selector)
+        # convenience: allow >>faq <number>
         if sub.isdigit():
             return _faq_show_text(sub)
         return "[faq] usage: >>faq | >>faq list | >>faq show <number>"
 
     # runtime preset controls (session-scoped override)
-    if parts and parts[0].lower() == "preset":
+    if cmd_key == "preset":
         sub = parts[1].lower() if len(parts) > 1 else "show"
         allowed = {"fast", "balanced", "max-recall", "max_recall"}
         cfg_default = str(cfg_get("vodka.preset", "balanced") or "balanced").strip() or "balanced"
@@ -705,7 +718,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return "[preset] usage: >>preset show|set <fast|balanced|max-recall>|reset"
 
     # memory observability
-    if parts and parts[0].lower() == "memory":
+    if cmd_key == "memory":
         sub = parts[1].lower() if len(parts) > 1 else "status"
         if sub in ("status", "show", "clear"):
             if state.vodka is None and VodkaFilter is not None:
@@ -810,7 +823,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return "[memory] usage: >>memory status|show|clear"
 
     # profile controls
-    if parts and parts[0].lower() == "profile":
+    if cmd_key == "profile":
         def _norm_level(v: str) -> str:
             low_v = (v or "").strip().lower()
             if low_v in ("med", "mid"):
@@ -932,7 +945,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         )
 
     # scratchpad controls
-    if parts and parts[0].lower() in ("scratchpad", "scratch"):
+    if cmd_key == "scratchpad":
         if not get_session_scratchpad_path or not clear_scratchpad or not list_scratchpad_records:
             return "[scratchpad] unavailable (scratchpad_sidecar.py missing)"
 
@@ -1020,7 +1033,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         )
 
     # trust mode (tool recommendation)
-    if parts and parts[0].lower() == "trust":
+    if cmd_key == "trust":
         if not handle_trust_command or not generate_recommendations or not format_recommendations:
             return "[router] trust_pipeline not available"
         
@@ -1041,9 +1054,8 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         
         # Format and return recommendations
         return "[trust] " + format_recommendations(recommendations, query=query)
-
     # attach/detach/list
-    if parts and parts[0].lower() in ("attach", "a"):
+    if cmd_key == "attach":
         if len(parts) < 2:
             return "[router] usage: >>attach <kb|all>"
 
@@ -1105,7 +1117,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
 
         return f"[router] unknown kb: '{target}' (known: {sorted(KB_PATHS.keys())})"
 
-    if parts and parts[0].lower() in ("detach", "d"):
+    if cmd_key == "detach":
         if len(parts) < 2:
             return "[router] usage: >>detach <kb|all>"
         target = parts[1].strip().lower()
@@ -1162,7 +1174,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return out
 
     # lock / unlock SUMM source file (filesystem KB grounding scope)
-    if parts and parts[0].lower() == "lock":
+    if cmd_key == "lock":
         if len(parts) < 2:
             return "[router] usage: >>lock SUMM_<name>.md"
 
@@ -1220,7 +1232,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return out
 
     # peek
-    if parts and parts[0].lower() == "peek":
+    if cmd_key == "peek":
         q = cmd[len(parts[0]):].strip()
         if not q:
             return "[router] usage: >>peek <query>"
@@ -1230,7 +1242,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return "[peek]\n" + (facts or "(no facts)")
 
     # summ / ingest (alias)
-    if parts and parts[0].lower() in ("summ", "summarize", "ingest"):
+    if cmd_key == "summ":
         # target: NEW (summarize in currently attached KBs), or a kb name, or ALL
         target = parts[1].lower() if len(parts) >= 2 else "new"
 
@@ -1312,12 +1324,16 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             msg += "\n" + "\n".join("- " + n for n in notes[:25])
         return msg
 
+    # send to vault (operator/archive shorthand; not a router runtime archive implementation)
+    if cmd_key == "send_to_vault" or low.startswith("send to vault") or low.startswith("send_to_vault"):
+        return "[router] `>>send to vault` is an external archive/operator flow. In-router Vault promotion is `>>move to vault`."
+
     # =========================================================================
     # SIDECAR COMMANDS (non-LLM utilities)
     # =========================================================================
 
     # >>calc <expression>
-    if parts and parts[0].lower() == "calc":
+    if cmd_key == "calc":
         if not parse_and_eval_calc:
             return "[router] calc not available (sidecars.py missing)"
         expr = cmd[len(parts[0]):].strip()
@@ -1335,7 +1351,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return format_memory_list(entries)
 
     # >>find <query> (search KBs)
-    if parts and parts[0].lower() == "find":
+    if cmd_key == "find":
         if not find_quote_in_kbs:
             return "[router] find not available (sidecars.py missing)"
         query = cmd[len(parts[0]):].strip()
@@ -1383,7 +1399,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         )
 
     # >>wiki <topic> (Wikipedia summary)
-    if parts and parts[0].lower() == "wiki":
+    if cmd_key == "wiki":
         if not handle_wiki_query:
             return "[router] wiki not available (sidecars.py missing)"
         topic = cmd[len(parts[0]):].strip()
@@ -1391,8 +1407,8 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             return "[wiki] usage: >>wiki <topic>\nExample: >>wiki Albert Einstein"
         return handle_wiki_query(topic)
 
-    # >>define <word> (Etymonline etymology summary)
-    if parts and parts[0].lower() == "define":
+    # >>define <word> (Etymonline etymology)
+    if cmd_key == "define":
         if not handle_define_query:
             return "[router] define not available (sidecars.py missing)"
         term = cmd[len(parts[0]):].strip()
@@ -1401,7 +1417,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return handle_define_query(term)
 
     # >>exchange <query> (Currency conversion)
-    if parts and parts[0].lower() == "exchange":
+    if cmd_key == "exchange":
         if not handle_exchange_query:
             return "[router] exchange not available (sidecars.py missing)"
         query = cmd[len(parts[0]):].strip()
@@ -1410,7 +1426,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return handle_exchange_query(query)
 
     # >>weather <location> (Current weather)
-    if parts and parts[0].lower() == "weather":
+    if cmd_key == "weather":
         if not handle_weather_query:
             return "[router] weather not available (sidecars.py missing)"
         location = cmd[len(parts[0]):].strip()
@@ -1428,3 +1444,4 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return "[router] raw mode OFF"
 
     return f"[router] unknown command: {cmd}"
+

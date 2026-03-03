@@ -1,6 +1,19 @@
-﻿# What's New
+# What's New
 
-*** V1.5.4 (latest)
+*** V1.6.0 (latest)
+
+TL;DR:
+- Completed heavy stack cutover away from active llama-swap dependency.
+- Backend path is now provider-driven via `router_config.yaml`:
+  - `backend.provider` (`llama_cpp|vllm|ollama|custom`)
+  - `backend.upstream_base_url`
+  - `backend.upstream_chat_url`
+- `llama_swap_url` remains as deprecated fallback for older configs only.
+- Shim assets moved to `llama_conductor/shim` and launcher/docs repointed.
+
+---
+
+*** V1.5.4
 
 TL;DR:
 - Tightened deterministic source footer normalization for scratchpad-grounded answers.
@@ -515,6 +528,7 @@ vault:
 - Try `>>trust <your question>` to get tool recommendations
 - Check `mentats_debug.log` for deep reasoning traces
 - See [FAQ](FAQ.md) for architecture & troubleshooting
+
 
 
 
