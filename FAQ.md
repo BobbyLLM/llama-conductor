@@ -98,6 +98,7 @@ llama-conductor serve --host 0.0.0.0 --port 9000
     - [Adding new knowledge:](#adding-new-knowledge)
     - [Storing personal facts:](#storing-personal-facts)
     - [Recalling facts later:](#recalling-facts-later)
+  - [What the hell is a shim (and why should you care?)](#what-the-hell-is-a-shim-and-why-should-you-care)
   - [Technical Setup](#technical-setup)
     - [Architecture Overview](#architecture-overview)
     - [Model Backend: provider-driven](#model-backend-provider-driven)
@@ -917,6 +918,28 @@ NB:
 ?? server
 ?? deadline
 ```
+
+### What the hell is a shim (and why should you care?)
+
+Plain language version:
+
+- A shim is a thin "middle layer" between llama.cpp WebUI and llama-conductor. 
+- The lovely people at llama.cpp ship with inbuilt web-ui, so why not use it? It's light, fast and functional.
+- It does not replace your model, and it does not replace the router.
+- It forwards/re-wires the right calls so the WebUI can piggyback on router behavior.
+
+What this lets you do:
+
+- Keep using llama.cpp's built-in WebUI as your frontend.
+- Route chat/model traffic through llama-conductor so role routing and command behavior still apply.
+- Smooth out model metadata in the UI layer so picker/capability behavior is more consistent.
+
+Why this is cool:
+
+- Fewer moving parts for MVP: llama.cpp + shim + open the shim URL on your PC = now you have it everywhere on your LAN.
+- Add Qdrant and you have the full stack (Vault/RAG and `##mentats`).
+
+If you want full operator details (env vars, endpoints, render modes), see [SHIM-README.md](llama_conductor/shim/SHIM-README.md).
 
 ### Technical Setup
 
