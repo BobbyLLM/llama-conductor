@@ -1,9 +1,35 @@
-﻿# router_config.yaml
-# version 1.0.5 - CORRECTED
+# router_config.yaml
+# version 1.6.0
 
-# Where to send OpenAI-compatible chat completion requests.
-# Typically your llama-swap / llama.cpp OpenAI-ish endpoint.
-llama_swap_url: "http://127.0.0.1:8011/v1/chat/completions"
+# Backend upstream configuration.
+# `provider` controls `launch_stack` behavior:
+# - llama_cpp: launch local llama-server and route via configured local port
+# - vllm|ollama: do not launch local llama-server; use external upstream URLs
+# - custom: fully external backend, launcher skips upstream readiness checks
+backend:
+  provider: "llama_cpp"  # llama_cpp|vllm|ollama|custom
+  local_llama_port: 8010
+  upstream_base_url: "http://127.0.0.1:8010"
+  upstream_chat_url: "http://127.0.0.1:8010/v1/chat/completions"
+  llama_cpp:
+    # Public-safe launcher defaults (used by launch_stack.py).
+    # Set these for your machine before running local llama_cpp provider.
+    # CLI args can override any of these at runtime.
+    exe_path: "./llama-server.exe"
+    models_dir: "./models"
+    models_preset_path: "./models/llama-router-models.ini"
+    host: "0.0.0.0"
+    port: 8010
+    ctx_size: 8192
+    threads: 12
+    threads_batch: 12
+    keep: 96
+    batch_size: 512
+    ubatch_size: 256
+
+# Deprecated compatibility key (still read as fallback by config.py).
+# Prefer backend.upstream_chat_url for all new configs.
+llama_swap_url: "http://127.0.0.1:8010/v1/chat/completions"
 
 # Router bind port (when running `python router_fastapi.py`)
 port: 9000
@@ -12,14 +38,56 @@ port: 9000
 router:
   debug: false
   debug_log_user_text: false
+  image_emitter:
+    enabled: false
+
+# Frontend launch toggles (used by `launch_stack.py`).
+frontend:
+  shim:
+    # true: launch shim_server.py on startup (llama.cpp WebUI + auth + rewrite layer)
+    # false: do not launch shim, use router/backend directly
+    enabled: true
+    host: "0.0.0.0"
+    port: 8088
+    # true: inject shim toolbar/scripts into WebUI responses
+    # false: proxy without UI script injection
+    inject_ui: true
+    auth_user: "moa"
+    auth_password: ""
+    force_vision: true
+    render_mode: "buffered"  # stream|buffered
+    ui_model_alias: "MOA"
+    router_model_id: "moa-router"
+    single_instance: true
+    takeover_existing: true
+    takeover_foreign: true
+    takeover_timeout_s: 5.0
+
+# Launcher orchestration defaults (used by launch_stack.py).
+launcher:
+  router_host: "0.0.0.0"
+  ready_timeout_s: 22
+  auto_clean_before_start: true
+
+# llama-server router-mode preset generation.
+# This drives startup-time generation of the models-preset INI consumed by llama-server.
+llama_server:
+  models_preset:
+    enabled: true
+    defaults:
+      c: 8192
+    models:
+      Qwen3VL-4B-Instruct-Q4_K_M:
+        mmproj: "./models/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf"
 
 # Model role mapping (router passes `role=`; call_model resolves to these model IDs).
 roles:
-  thinker: "Qwen-3-4B Hivemind"
-  critic: "Phi-4-mini"
-  vision: "qwen-3-4B_VISUAL"
-  coder: "Qwen-3-4B Hivemind"
-  second_op: "Nanbeige 3B"
+  thinker: "Qwen3-4B-Hivemind-Inst-Q4_K_M-imat"
+  critic: "Phi-4-mini-instruct-Q4_K_M"
+  vision: "Qwen3VL-4B-Instruct-Q4_K_M"
+  coder: "Qwen3-4B-Hivemind-Inst-Q4_K_M-imat"
+  second_op: "Nanbeige4-3B-Thinking-2511-Q4_K_M"
+  clinical: "qwen2.5-1.5b-instruct-q4_0"
 
 # Vault is Qdrant-only; Mentats uses this kb label when searching Qdrant.
 vault_kb_name: "vault"
@@ -73,6 +141,7 @@ vault:
   chunk_words: 250        # Smaller chunks = better semantic matching for queries
   chunk_overlap_words: 50  # Overlap prevents losing context at chunk boundaries
 
+# Mentats diagnostics (off by default; payload logging opt-in).
 mentats:
   debug: false
   debug_payload: false
@@ -86,4 +155,3 @@ scratchpad:
   max_chars: 1200          # max chars contributed to facts block
   max_age_minutes: 60      # hard expiry; pruned on scratchpad access
   exhaustive_response_mode: "raw"  # raw|llm; raw bypasses LLM for "all facts/everything" intents
-

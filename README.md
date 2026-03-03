@@ -192,12 +192,13 @@ Result:
 
 ### Required stack
 
-1. llama-swap (model routing)
-2. llama.cpp or another model runner
-3. OpenAI-compatible frontend (Open WebUI, Chatbox, LibreChat, etc.)
-4. Qdrant (required for grounded `##mentats`)
+1. Backend OpenAI-compatible endpoint (`llama_cpp`, `vllm`, `ollama`, or `custom`)
+2. Frontend (llama.cpp WebUI + shim, OWUI, SillyTavern, or direct API client)
+3. Qdrant (required for grounded `##mentats`)
 
-Minimum: (1) + (2) + (3) 
+Recommended default: llama.cpp + Qdrant.
+
+Kick-the-tires mode: llama.cpp alone for core routing/chat (Mentats/Vault paths unavailable).
 
 ### Install
 
@@ -211,7 +212,9 @@ pip install git+https://codeberg.org/BobbyLLM/llama-conductor.git
 llama-conductor serve --host 0.0.0.0 --port 9000
 ```
 
-Recommended start order: Qdrant -> llama-swap -> router -> frontend
+Recommended start order:
+1. Qdrant
+2. `python -m llama_conductor.launch_stack up --config llama_conductor/router_config.yaml`
 
 ---
 

@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Tuple
 # Message Parsing
 # ---------------------------------------------------------------------------
 
-_IMAGE_BLOCK_TYPES = {"image_url", "input_image"}
+_IMAGE_BLOCK_TYPES = {"image", "image_url", "input_image"}
 
 
 def _extract_text_from_blocks(blocks: List[Dict[str, Any]]) -> str:
@@ -24,9 +24,52 @@ def _extract_text_from_blocks(blocks: List[Dict[str, Any]]) -> str:
     return "\n".join(parts).strip()
 
 
+def has_image_signal(value: Any) -> bool:
+    """Best-effort detector for image-bearing payloads in OpenAI/WebUI-like shapes."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().lower().startswith("data:image/")
+    if isinstance(value, list):
+        return any(has_image_signal(v) for v in value)
+    if not isinstance(value, dict):
+        return False
+
+    typ = str(value.get("type", "")).strip().lower()
+    if typ in _IMAGE_BLOCK_TYPES:
+        return True
+
+    mime = str(
+        value.get("mime_type")
+        or value.get("content_type")
+        or value.get("mimetype")
+        or ""
+    ).strip().lower()
+    if mime.startswith("image/"):
+        return True
+
+    image_url = value.get("image_url")
+    if isinstance(image_url, str) and image_url.strip().lower().startswith("data:image/"):
+        return True
+    if isinstance(image_url, dict):
+        url = str(image_url.get("url") or "").strip().lower()
+        if url.startswith("data:image/"):
+            return True
+
+    for key in ("url", "uri", "src"):
+        v = value.get(key)
+        if isinstance(v, str) and v.strip().lower().startswith("data:image/"):
+            return True
+
+    for key in ("image", "images", "image_url", "file", "files", "attachments", "content", "parts", "data"):
+        if key in value and has_image_signal(value.get(key)):
+            return True
+    return False
+
+
 def _has_image_blocks(blocks: List[Dict[str, Any]]) -> bool:
     for b in blocks:
-        if isinstance(b, dict) and b.get("type") in _IMAGE_BLOCK_TYPES:
+        if has_image_signal(b):
             return True
     return False
 
@@ -34,8 +77,12 @@ def _has_image_blocks(blocks: List[Dict[str, Any]]) -> bool:
 def has_images_in_messages(messages: List[Dict[str, Any]]) -> bool:
     """Check if any message in the list contains images."""
     for m in messages or []:
+        if not isinstance(m, dict):
+            continue
         c = m.get("content", "")
-        if isinstance(c, list) and _has_image_blocks(c):
+        if has_image_signal(c):
+            return True
+        if has_image_signal(m.get("files")) or has_image_signal(m.get("attachments")):
             return True
     return False
 

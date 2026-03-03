@@ -1,4 +1,4 @@
-﻿# Router Command Cheat Sheet
+# Router Command Cheat Sheet
 
 ## Core command prefixes
 - `>>` router/system commands
@@ -12,30 +12,28 @@ Tips:
 ## Default operators (start here)
 - `>>help` compact command list
 - `>>status` inspect session state
-- `>>status full` expanded human-readable diagnostics
-- `>>status raw` machine-readable key/value diagnostics
 - `>>attach <kb>` then `>>list_files`
 - `>>lock SUMM_<name>.md` to force deterministic grounding
 - ask your question normally
-- `>>memory status|show|clear` inspect/manage memory pipeline
+- `>>memory status|show|clear` inspect/manage session memory
 - `>>preset fast|balanced|max-recall` quick runtime preset switch
 
 Minimal examples:
 - `>>preset fast`
 - `>>memory status`
-- `>>memory show`
 - `>>profile casual`
 
 ## Quick utilities (`>>`)
 - `>>help` show compact core help
-- `>>help full` alias for full sheet (`>>help advanced`)
+- `>>help advanced` show full sheet
+- `>>help full` alias for full sheet
 - `>>faq` show FAQ navigator with numbered top-section TOC
 - `>>faq <n>` print FAQ section `n` directly in chat
-- `>>status` compact status view
-- `>>status full` expanded human-readable status view
-- `>>status raw` machine-readable key/value status view
+- `>>status` show session state
+- `>>status full` show detailed human-readable state
+- `>>status raw` show machine-readable key/value state
 - `>>memory status` show memory pipeline diagnostics
-- `>>memory show` preview retained memory units
+- `>>memory show` preview current session memory units
 - `>>memory clear` clear current session memory units
 - `>>profile show` show interaction profile (session-ephemeral)
 - `>>profile set <field>=<value>` set profile field
@@ -53,18 +51,18 @@ Minimal examples:
 - `>>preset set <fast|balanced|max-recall>` set runtime preset for this session
 - `>>preset reset` clear runtime override and use config default
 - `>>calc <expression>` calculator (`+ - * / %`, `**` = power), parentheses, functions (`sqrt/log/sin/cos`)
-- >>wiki <topic> Wikipedia summary fetch
-- >>define <word> Etymonline first-entry etymology summary (deterministic HTML cleanup)
-- `>>exchange <query>` currency conversion (via Frankfurter API, real-time rates)
-- `>>weather <location>` current weather (via Open-Meteo API; use single word or "City Country")
+- `>>wiki <topic>` encyclopedia summary lookup (Wikipedia)
+- `>>define <word>` word-origin/etymology lookup (deterministic Etymonline sidecar)
+- `>>exchange <query>` live currency conversion (Frankfurter API)
+- `>>weather <location>` live weather lookup (Open-Meteo API)
 - `>>find <query>` search attached KB files
 - `>>peek <query>` preview KB retrieval chunks for the query
 - `>>flush` clear CTC history cache, reset session profile/style identity, and delete session-memory JSONL files (does not detach KBs)
 Tips:
 - Use these when you want a direct tool result rather than a free-form chat answer.
-- API-backed commands (`wiki`, `exchange`, `weather`) can fail if upstream services are unavailable.
+- API-backed commands (`wiki`, `define`, `exchange`, `weather`) can fail if upstream services are unavailable.
 - Soft aliases are supported: `profile show|set|reset|on|off`.
-- Soft aliases are supported: `preset show|set|reset`, `preset fast|balanced|max-recall`, `memory status|show|clear`.
+- Soft aliases are supported: `preset show|set|reset`, `preset fast|balanced|max-recall`, `memory status`.
 - Manual `>>profile set` values are pinned and take precedence over inferred updates until changed again or reset.
 
 ## KB attachment (`>>`)
@@ -123,12 +121,6 @@ Tips:
 - `>>list` may show more records than a normal follow-up reasoning turn uses; to query against all contents (eg: "compare xyz to abc"), run `>>scratchpad show all` first, then ask the question.
 - Raw captures are stored at `total_recall/session_kb/<session_id>.jsonl`.
 
-Two-step workflow:
-
-Other:
-Tips:
-- Deterministic scaffold first, then optional stochastic polish.
-
 ## Sticky modes (`>>`)
 - `>>fun` / `>>f` / `>>F` enable Fun mode
 - `>>fun off` / `>>f off` / `>>F off` disable Fun mode
@@ -159,7 +151,7 @@ Tips:
 
 ## Vodka memory (`!!` / `??`) [Advanced operators]
 Write/manage:
-- `!! <text>` store memory
+- `!! <text>` store memory (deterministic ack + strict next-turn commentary opt-in)
 - `!! forget <query>` delete matching memories
 - `!! nuke` delete all Vodka memories
 
@@ -168,6 +160,9 @@ Query:
 - `?? list` list Vodka memories (TTL, touch count, creation date)
 Tips:
 - `!!` writes/manages memory; `??` reads/rewrites with memory context.
+- After `!! <text>`, router returns deterministic storage ack with `ctx_id` + TTL/touches.
+- Commentary lane is strict opt-in on the immediate next turn: reply exactly `yes` (or `y`).
+- Any other next-turn input clears the pending commentary lane and normal routing continues.
 - `!! nuke` clears Vodka memory only; `>>flush` clears CTC cache and resets profile/style runtime state.
 
 ## One-turn selectors (`##`) [Advanced operators]
@@ -207,6 +202,9 @@ Tips:
 - Use `>>vision`/`>>ocr` (or `##vision`/`##ocr`) when you want to force a specific image-processing path.
 
 ## Status fields (`>>status`) [Advanced operators]
+- `>>status` compact operator view
+- `>>status full` expanded human-readable diagnostics
+- `>>status raw` legacy key/value diagnostics
 - `session_id` current chat/session identifier used by the router
 - `attached_kbs` KBs currently attached for retrieval grounding
 - `locked_summ_file` currently locked SUMM filename (empty = no lock)
@@ -238,7 +236,8 @@ Tips:
   - `last_inject_units` number of units injected/retrieved last turn
   - `last_candidate_count` shortlist size before final pick
   - `last_query` last query that hit memory retrieval
+  - `>>memory show` displays top retained units (turn range, tags, preview)
+  - `>>memory clear` resets session memory units only (does not detach KBs)
 Tips:
 - If an answer is weak and hits are `0`, the issue is likely missing retrieval; if hits are non-zero, the issue is more likely synthesis/interpretation quality.
 - Hit counts are a quick clue, not a quality grade.
-

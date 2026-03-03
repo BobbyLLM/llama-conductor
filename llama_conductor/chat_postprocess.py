@@ -155,8 +155,13 @@ def apply_deterministic_footer(
         if deterministic_state_solver:
             t = (text or "").strip()
             if t:
-                # Preserve deterministic provenance on mode-wrapped answers.
-                if "Source: Contextual" not in t:
+                # Tag deterministic solver path so source footer does not degrade to Model
+                # when fun/fr wrappers add headers without docs facts block.
+                has_canonical_contextual_source = any(
+                    (ln or "").strip().lower() == "source: contextual"
+                    for ln in t.splitlines()
+                )
+                if not has_canonical_contextual_source:
                     t = t + "\nSource: Contextual"
             else:
                 t = "Source: Contextual"
@@ -201,6 +206,44 @@ def strip_profile_footer_lines(text: str) -> str:
             blank = 0
         collapsed.append(ln)
     return "\n".join(collapsed).strip()
+
+
+def apply_image_footer(text: str) -> str:
+    base = strip_profile_footer_lines(text or "")
+    lines: List[str] = []
+    for ln in base.splitlines():
+        s = (ln or "").strip()
+        if not s:
+            lines.append("")
+            continue
+        low = s.lower()
+        if low.startswith("confidence:") or low.startswith("source:") or low.startswith("sources:"):
+            continue
+        s = re.sub(
+            r"\s*Confidence:\s*[^|\n]{1,40}\|\s*Source:\s*[^|\n]{1,40}\s*",
+            "",
+            s,
+            flags=re.IGNORECASE,
+        ).strip()
+        if s:
+            lines.append(s)
+
+    collapsed: List[str] = []
+    blank = 0
+    for ln in lines:
+        if not (ln or "").strip():
+            blank += 1
+            if blank > 1:
+                continue
+        else:
+            blank = 0
+        collapsed.append(ln)
+
+    body = "\n".join(collapsed).strip()
+    footer = "Confidence: OCR | Source: Image"
+    if not body:
+        return footer
+    return f"{body}\n\n{footer}"
 
 
 def append_profile_footer(

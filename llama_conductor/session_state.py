@@ -26,6 +26,8 @@ class SessionState:
     locked_last_fact_lines: int = 0
     pending_lock_candidate: str = ""
     pending_sensitive_confirm_query: str = ""
+    pending_vodka_comment_ctx_id: str = ""
+    pending_vodka_comment_text: str = ""
 
     # One Vodka per session (reduces noise + preserves stateful debug counters)
     vodka: Optional[Any] = None  # VodkaFilter

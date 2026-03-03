@@ -1,6 +1,30 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+
+_PROMPT_EXFIL_PATTERNS = (
+    re.compile(
+        r"\b(?:reveal|show|print|display|leak|expose|dump|repeat|tell me)\b.{0,80}\b(?:system prompt|developer prompt|hidden prompt|hidden instructions?|internal instructions?)\b",
+        flags=re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\bwhat(?:'s| is)\s+your\s+(?:system|developer)\s+prompt\b",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bignore\b.{0,80}\b(?:rules|instructions?|policy)\b.{0,120}\b(?:reveal|show|print|display|leak|expose)\b",
+        flags=re.IGNORECASE | re.DOTALL,
+    ),
+)
+
+
+def _looks_like_prompt_exfiltration(user_text_raw: str) -> bool:
+    txt = (user_text_raw or "").strip()
+    if not txt:
+        return False
+    return any(p.search(txt) is not None for p in _PROMPT_EXFIL_PATTERNS)
 
 
 def handle_preflight(
@@ -90,6 +114,17 @@ def handle_preflight(
                     except Exception:
                         pass
                 return True, make_stream_response(text) if stream else make_json_response(text), selector, user_text, user_text_raw, raw_messages, sensitive_override_once
+
+    if (
+        not sensitive_override_once
+        and not is_command(user_text_raw)
+        and _looks_like_prompt_exfiltration(user_text_raw)
+    ):
+        text = (
+            "[router] Request blocked: prompt-exfiltration intent detected.\n"
+            "I cannot reveal hidden system/developer instructions."
+        )
+        return True, make_stream_response(text) if stream else make_json_response(text), selector, user_text, user_text_raw, raw_messages, sensitive_override_once
 
     if (
         not sensitive_override_once

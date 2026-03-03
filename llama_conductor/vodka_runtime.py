@@ -64,7 +64,7 @@ def apply_vodka_runtime(
     preset_for_session: Callable[[Any, Dict[str, Any]], str],
     preset_map: Dict[str, Dict[str, Any]],
     debug_fn: Callable[[str], None],
-) -> Tuple[Any, List[Dict[str, Any]], str]:
+) -> Tuple[Any, List[Dict[str, Any]], Any, Dict[str, Any]]:
     """Initialize/configure vodka, apply inlet/outlet once, return noop wrapper."""
     if state.vodka is None:
         state.vodka = VodkaFilter()
@@ -125,10 +125,14 @@ def apply_vodka_runtime(
         pass
 
     vodka_body = {"messages": raw_messages, "session_id": session_id}
+    vodka_meta: Dict[str, Any] = {}
     try:
         vodka_body = vodka.inlet(vodka_body)
         vodka_body = vodka.outlet(vodka_body)
         raw_messages = vodka_body.get("messages", raw_messages)
+        for k in ("_vodka_added_ctx_id", "_vodka_added_text", "_vodka_added_ttl_days"):
+            if k in vodka_body:
+                vodka_meta[k] = vodka_body.get(k)
     except Exception as e:
         debug_fn(f"[DEBUG] Vodka fail-open: {e.__class__.__name__}: {e}")
 
@@ -139,4 +143,4 @@ def apply_vodka_runtime(
         def outlet(self, body: dict, user: dict | None = None) -> dict:
             return body
 
-    return vodka, raw_messages, _NoOpVodka
+    return vodka, raw_messages, _NoOpVodka, vodka_meta

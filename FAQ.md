@@ -6,18 +6,26 @@
 
 ### Required stack
 
-llama-conductor is the **router/harness**. It does **not** ship a model, and it does **not** replace your UI.
+`llama-conductor` is the router/harness. It does not ship models.
 
-You need these parts working together:
+For a normal install, you need:
 
-1) **llama-swap**  https://github.com/mostlygeek/llama-swap
-2) **llama.cpp (or other runner)**  https://github.com/ggml-org/llama.cpp
-3) **Frontend UI (example: Open WebUI / OWUI)**  https://github.com/open-webui/open-webui
-4) **Qdrant (Vault / RAG)**  https://github.com/qdrant/qdrant
+1. A backend **OpenAI-compatible endpoint**  
+   (`llama_cpp`, `vllm`, `ollama`, or `custom`)
+2. A frontend  
+   (llama.cpp WebUI + shim, OWUI, SillyTavern, or direct API client)
+3. **Qdrant** for Vault/RAG features  
+   https://github.com/qdrant/qdrant
 
-**Minimum:** (1) + (2) + (3).
+**Recommended default:**
 
-**Core `##mentats` workflows:** require (4) Qdrant. The router can start without Qdrant, but `##mentats` will generally fail closed/refuse due missing Vault facts.
+- llama.cpp - https://github.com/ggml-org/llama.cpp
+- Qdrant - https://github.com/qdrant/qdrant
+
+That's it.
+
+**Kick-the-tires mode:**  
+`llama.cpp` alone works for core routing/chat (but `##mentats` and related features will be unavailable).
 
 ### Install
 
@@ -31,7 +39,7 @@ pip install git+https://codeberg.org/BobbyLLM/llama-conductor.git
 llama-conductor serve --host 0.0.0.0 --port 9000
 ```
 
-> This starts **only** the router. You still need to start llama-swap, your model runner(s), and your frontend separately. Start Qdrant if you want Vault / `##mentats`.
+> This starts **only** the router. You still need a running backend provider and frontend. Start Qdrant if you want Vault / `##mentats`.
 
 ## Table of contents
 
@@ -62,6 +70,8 @@ llama-conductor serve --host 0.0.0.0 --port 9000
   - [What is the Vault?](#what-is-the-vault)
     - [How it works:](#how-it-works-1)
     - [Why Vault vs filesystem KBs?](#why-vault-vs-filesystem-kbs)
+    - [Does Mentats combine older and newer Vault knowledge?](#does-mentats-combine-older-and-newer-vault-knowledge)
+    - [`>>move to vault`](#move-to-vault)
   - [How do I verify answers are not bullshit?](#how-do-i-verify-answers-are-not-bullshit)
     - [Verify SHA manually:](#verify-sha-manually)
   - [Why is this awesome on potato PCs?](#why-is-this-awesome-on-potato-pcs)
@@ -90,23 +100,19 @@ llama-conductor serve --host 0.0.0.0 --port 9000
     - [Recalling facts later:](#recalling-facts-later)
   - [Technical Setup](#technical-setup)
     - [Architecture Overview](#architecture-overview)
-    - [Model Backend: llama-swap](#model-backend-llama-swap)
+    - [Model Backend: provider-driven](#model-backend-provider-driven)
     - [RAG Backend: Qdrant](#rag-backend-qdrant)
 - [Docker (recommended)](#docker-recommended)
 - [Or install from binaries and run bare-metal like I do](#or-install-from-binaries-and-run-bare-metal-like-i-do)
     - [Embeddings & Reranking](#embeddings-reranking)
     - [Launch Script: The Easy Way](#launch-script-the-easy-way)
-- [Launch Qdrant](#launch-qdrant)
-- [Launch llama-swap](#launch-llama-swap)
-- [Launch MoA router](#launch-moa-router)
-- [Launch frontend](#launch-frontend)
     - [Non-Local LLMs (API Keys)](#non-local-llms-api-keys)
   - [Troubleshooting 101](#troubleshooting-101)
     - [Mentats refuses to answer your question](#mentats-refuses-to-answer-your-question)
     - [Mentats gives weird answers](#mentats-gives-weird-answers)
     - [Context too long errors](#context-too-long-errors)
     - [Qdrant connection failed](#qdrant-connection-failed)
-    - [Models not loading (llama-swap)](#models-not-loading-llama-swap)
+    - [Models not loading (backend provider)](#models-not-loading-backend-provider)
   - [Config knobs (router_config.yaml) with examples](#config-knobs-routerconfigyaml-with-examples)
     - [Vodka (memory + context):](#vodka-memory-context)
     - [RAG (Vault retrieval):](#rag-vault-retrieval)
@@ -498,6 +504,39 @@ Research direction for this design pattern (verifier/critic pass improving relia
 
 **Workflow:** Filesystem KBs > SUMM > Vault > Mentats
 
+#### Does Mentats combine older and newer Vault knowledge?
+
+Short answer: yes, usually.
+
+Human version:
+- `##mentats` does not only read your latest promoted file.
+- It queries the full Vault collection in Qdrant and pulls the best-matching chunks.
+- So if knowledge pile A and knowledge pile B were both promoted, one Mentats answer can combine A + B.
+
+Example:
+1. Promote first batch:
+   - `>>attach kb_a`
+   - `>>summ new`
+   - `>>move to vault`
+2. Later promote second batch:
+   - `>>attach kb_b`
+   - `>>summ new`
+   - `>>move to vault`
+3. Ask a cross-topic question:
+   - `##mentats How do findings in A change the interpretation of B?`
+
+Expected behavior:
+- Mentats can pull relevant chunks from both promoted sets and synthesize one answer.
+
+Important caveat:
+- Retrieval is still top-k + rerank. If the query wording is vague, you might only get one side.
+- If that happens, ask again with explicit anchors from both domains (names, terms, dates, entities).
+
+#### `>>move to vault`
+
+- `>>move to vault`:
+  - promotes SUMM knowledge into Qdrant (used by `##mentats`).
+
 ---
 
 ### How do I verify answers are not bullshit?
@@ -555,14 +594,14 @@ sha256sum /docs/c64/original/c64_facts.pdf
 Dealer's choice, really.
 
 #### Minimum (potato mode):
-- **Thinker:** Qwen-3-4B 2507 instruct or similar (punches way above its weight). Recommend Heretic version.
-- **Critic:** Phi-4-mini or similar (fast, good at spotting errors)
+- **Thinker:** Qwen-3-4B 2507 Instruct (or similar). Recommend Heretic/Hivemind-style builds for strong small-model reasoning.
+- **Critic:** Phi-4-mini (or similar), kept DIFFERENT from thinker for better error-checking.
 - **Vision:** Qwen3-VL-4B + mmproj (fast, accurate, good for both OCR and "what is this?" image dumps)
 - **2nd Opinion:** Feature TBC. Strongly suggest keeping eye on Nanbeige 2511 thinking; it's abnormally good. See benchmarks.
 
 #### Mid-range recommendations:
 - **Thinker:** Qwen-3-8B or Llama-3.1-8B (better reasoning)
-- **Critic:** Same as thinker (consistency)
+- **Critic:** Keep it a different model family (for example Phi-4-mini) instead of reusing thinker.
 - **Vision:** Qwen-3-VL
 
 #### Those model reccs are GARBAGE, dude
@@ -692,7 +731,7 @@ Use `>>list_kb` to see what exists, then `>>attach <your kb name>`.
 What it does:
 - classify your query deterministically
 - suggest ranked command routes (A/B/C/...)
-- suggest the best command route (including sidecars)
+- suggest sidecars when they are the best route
 - keep execution in your control
 
 <a id="sidecars"></a>
@@ -700,8 +739,8 @@ What it does:
 
 These are deterministic utility tools for common retrieval/conversion tasks:
 
-- `>>wiki <topic>`: quick Wikipedia summary (about 500 characters)
-- `>>define <word>`: quick word-origin/etymology lookup (Etymonline)
+- `>>wiki <topic>`: encyclopedia summary lookup (Wikipedia)
+- `>>define <word>`: word-origin/etymology lookup (deterministic Etymonline sidecar)
 - `>>exchange <query>`: live currency conversion (Frankfurter API)
 - `>>weather <location>`: live weather lookup (Open-Meteo API)
 
@@ -885,23 +924,30 @@ NB:
 
 **The stack:**
 ```
-Backend [llama.cpp + llama-swap] + llama-conductor + Frontend [OWUI/SillyTavern/LibreChat]
+Backend [provider-driven: llama.cpp/vLLM/Ollama/custom] + llama-conductor + Frontend [llama.cpp WebUI (direct or shimmed) / other OpenAI-compatible clients]
 ```
 
 **How it flows:**
-1. **llama-swap** runs locally (default: `http://127.0.0.1:8011`)
-2. Loads models dynamically via **llama.cpp** (or other backend)
-3. **Router** sends OpenAI-style requests to llama-swap
-4. llama-swap returns responses
-5. Responses displayed in your frontend (OWUI, SillyTavern, LibreChat, etc)
+1. `router_config.yaml` declares `backend.provider`.
+2. If provider is `llama_cpp`, launcher starts local `llama-server` and uses configured local port.
+3. If provider is `vllm`, `ollama`, or `custom`, launcher skips local llama-server and routes to configured upstream URL(s).
+4. Router sends OpenAI-style requests to configured upstream chat endpoint.
+5. Frontend displays results via direct router path or shimmed WebUI path.
 
-#### Model Backend: llama-swap
+#### Model Backend: provider-driven
 
-Router communicates with models via **llama-swap** (https://github.com/mostlygeek/llama-swap), which provides an OpenAI-compatible API endpoint.
+Router communicates with models via the configured upstream endpoint. `llama-swap` is now legacy/fallback only, not required.
 
 **Config:**
 ```yaml
-llama_swap_url: "http://127.0.0.1:8011/v1/chat/completions"
+backend:
+  provider: "llama_cpp"  # llama_cpp|vllm|ollama|custom
+  local_llama_port: 8010
+  upstream_base_url: "http://127.0.0.1:8010"
+  upstream_chat_url: "http://127.0.0.1:8010/v1/chat/completions"
+
+# Legacy compatibility fallback only
+llama_swap_url: "http://127.0.0.1:8010/v1/chat/completions"
 ```
 
 **Can I use other backends?**
@@ -913,7 +959,7 @@ llama_swap_url: "http://127.0.0.1:8011/v1/chat/completions"
 - **LMStudio** (with API server mode)
 - **Text Generation WebUI** (OpenAI extension)
 
-Just point `llama_swap_url` to your endpoint.
+Set `backend.upstream_chat_url` (and ideally `backend.upstream_base_url`) to your endpoint.
 
 #### RAG Backend: Qdrant
 
@@ -973,85 +1019,110 @@ rag:
 
 **This is *a lot* of moving parts. What's the ABSOLUTE MINIMUM STACK to use as proof of concept?**
 
-Fine, you're lazy / overwhelmed. I get it :) 
+Totally fair. Keep it simple:
 
-Here's the MVP. 
+- Run *one* local model in llama.cpp
+- Use llama.cpp WebUI + shim
+- In `router_config.yaml`, for ULTRA bare-bones proof of concept, point `thinker`/`critic`/`coder`/`second_op` to one model ID (and keep `vision` as a real VL model ID if you want VL capabilities)
+- Launch via your normal `.bat` flow (or however you do you)
 
-- Something to launch your LLM / GGUF (eg: llama.cpp)
-- A front end (sadly, llama-server alone is model backend, not a chat front end for router output, so you need *something* minimal. GPTChat? LibreChat? Your choice. You could even get it to work via CMD or Powershell, but if you're reading this section, I don't imagine that's your vibe)
-- Configure the router-config.yaml so that EVERYTHING runs against ONE declared llm name (eg: thinker, critic etc are ALL the same and point to whatever you've called your GGUF).
-- Launch everything per the .bat file example below
-
-This will give you about...60% of the experience. You'll be missing a LOT (mentats, OCR etc) but for playing around with...ok, try.
+This is *ULTRA* bare bones mode: core chat/routing works, but Vault/RAG paths (`##mentats`), OCR-linked flows, multiple model calling etc are NOT available until you apply (at the least) "kick-the-tires" set up per the [Quickstart](#quickstart).
 
 #### Launch Script: The Easy Way
 
-**Bro, that sounds complicated AF...**
+Use this as the beginner-friendly llama.cpp + Qdrant flow.
 
-Well, I told you I was Autistic. 
-
-But nah, it's not too bad. Set once, forget it. Here's a Windows batch file that launches everything:
-
+**Minimal Windows `.bat` example:**
 ```batch
 @echo off
 setlocal
+cd /d "C:\path\to\your\launch\folder"
 
-REM ---------------------------------------------------------
-REM LAUNCH QDRANT
-REM ---------------------------------------------------------
-cd /d "C:\qdrant"
-start "" /min cmd /c "qdrant.exe"
+REM Start Qdrant (reuse existing container if present)
+docker start qdrant >nul 2>&1 || docker run --name qdrant -p 6333:6333 -d qdrant/qdrant
 
-REM ---------------------------------------------------------
-REM LAUNCH LLAMA-SWAP
-REM ---------------------------------------------------------
-cd /d "C:\llama-swap"
-start "" /min cmd /c "llama-swap.exe -config config.yaml -listen 0.0.0.0:8011"
+REM Show computed launch plan (sanity check)
+python -m llama_conductor.launch_stack doctor --config llama_conductor/router_config.yaml
 
-REM ---------------------------------------------------------
-REM LAUNCH MoA ROUTER
-REM ---------------------------------------------------------
-cd /d "C:\llama-conductor"
-start "" cmd /k "python -m uvicorn router_fastapi:app --host 0.0.0.0 --port 9000"
-
-REM ---------------------------------------------------------
-REM LAUNCH OWUI (or your preferred frontend)
-REM ---------------------------------------------------------
-set VECTOR_DB=qdrant
-set QDRANT_URI=http://localhost:6333
-set QDRANT_API_KEY=
-set DATA_DIR=C:\open-webui\data
-cd /d "C:\open-webui"
-start "" cmd /k "C:\Users\YourUsername\AppData\Local\Programs\Python\Python311\Scripts\open-webui.exe" serve
+REM Start llama.cpp + router + shim stack
+python -m llama_conductor.launch_stack up --config llama_conductor/router_config.yaml
 ```
-nb: adjust filepaths to your actual.
 
-
-**What this does:**
-- Launches Qdrant (minimized)
-- Launches llama-swap (minimized)
-- Launches MoA router (visible CLI for debugging)
-- Launches Open WebUI frontend (visible CLI for debugging)
-
-**Two bonuses:**
-1. **Debug-friendly:** Router and frontend CLIs are visible, so you can see errors in real-time
-2. **Can go invisible:** Wrap the `.bat` into a `.py` script to make it a true background process (if you want)
-
-**Linux/Mac equivalent:**
+**Linux/macOS equivalent:**
 ```bash
-#!/bin/bash
-## Launch Qdrant
-cd ~/qdrant && ./qdrant &
+cd /path/to/your/launch/folder
 
-## Launch llama-swap
-cd ~/llama-swap && ./llama-swap -config config.yaml -listen 0.0.0.0:8011 &
+# Start Qdrant (reuse existing container if present)
+docker start qdrant >/dev/null 2>&1 || docker run --name qdrant -p 6333:6333 -d qdrant/qdrant
 
-## Launch MoA router
-cd ~/llama-conductor && python -m uvicorn router_fastapi:app --host 0.0.0.0 --port 9000 &
+# Show computed launch plan (sanity check)
+python -m llama_conductor.launch_stack doctor --config llama_conductor/router_config.yaml
 
-## Launch frontend
-cd ~/open-webui && open-webui serve &
+# Start llama.cpp + router + shim stack
+python -m llama_conductor.launch_stack up --config llama_conductor/router_config.yaml
 ```
+
+**Required `router_config.yaml` example settings for this flow:**
+```yaml
+backend:
+  provider: "llama_cpp"
+  local_llama_port: 8010
+  upstream_base_url: "http://127.0.0.1:8010"
+  upstream_chat_url: "http://127.0.0.1:8010/v1/chat/completions"
+  llama_cpp:
+    exe_path: "C:/path/to/llama-server.exe"
+    models_dir: "C:/path/to/LLMs"
+    models_preset_path: "C:/path/to/LLMs/llama-router-models.ini"
+    host: "0.0.0.0"
+    port: 8010
+    ctx_size: 8192
+    threads: 12
+    threads_batch: 12
+    keep: 96
+    batch_size: 512
+    ubatch_size: 256
+
+frontend:
+  shim:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8088
+    inject_ui: true
+    force_vision: true
+    ui_model_alias: "MOA"
+    router_model_id: "moa-router"
+
+rag:
+  qdrant_host: "localhost"
+  qdrant_port: 6333
+
+launcher:
+  router_host: "0.0.0.0"
+  ready_timeout_s: 22
+  auto_clean_before_start: true
+```
+
+**Model naming in `roles`:**
+- `roles.*` values must match the model ID your backend exposes in `/v1/models`.
+- Define the main roles:
+```yaml
+roles:
+  thinker: "your-model-id"
+  critic: "your-model-id"
+  coder: "your-model-id"
+  second_op: "your-model-id"
+  vision: "your-vl-model-id"
+```
+- nb: for best results, thinker and critic should be TWO DIFFERENT models (eg: Qwen3-4B and Phi-4-mini). See below for suggestions.
+
+**VL gotcha (important):**
+- Most vision models in llama.cpp need `mmproj` configured in `llama_server.models_preset.models`.
+- If `vision` points to a VL model but `mmproj` is missing/wrong, image/OCR behavior will fail.
+- Make sure you have both! 
+
+**Alias note:**
+- Router role mapping does not use a separate alias field; it uses the actual model ID string.
+- UI aliases (for display/picker) can exist in shim/frontend layers, but `roles.*` should still target a valid backend model ID.
 
 #### Non-Local LLMs (API Keys)
 
@@ -1061,7 +1132,10 @@ cd ~/open-webui && open-webui serve &
 
 **Example: OpenRouter**
 ```yaml
-llama_swap_url: "https://openrouter.ai/api/v1/chat/completions"
+backend:
+  provider: "custom"
+  upstream_base_url: "https://openrouter.ai/api/v1"
+  upstream_chat_url: "https://openrouter.ai/api/v1/chat/completions"
 
 roles:
   thinker: "anthropic/claude-3-sonnet"
@@ -1084,12 +1158,12 @@ headers = {
     "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
     "Content-Type": "application/json"
 }
-resp = requests.post(LLAMA_SWAP_URL, json=payload, headers=headers)
+resp = requests.post(UPSTREAM_CHAT_URL, json=payload, headers=headers)
 ```
 
 **Option 2: Config file** (requires minor code change)
 ```yaml
-llama_swap_headers:
+upstream_headers:
   Authorization: "Bearer sk-or-..."
 ```
 
@@ -1123,14 +1197,19 @@ llama_swap_headers:
 - Or use smaller prompts
 
 #### Qdrant connection failed
-- Check Qdrant is running: `docker ps | grep qdrant`
+- Check Qdrant is running:
+  - Windows PowerShell: `docker ps --format "{{.Names}}" | Select-String qdrant`
+  - Linux/macOS: `docker ps | grep qdrant`
 - Verify port: `curl http://localhost:6333/health`
 - Check firewall isn't blocking port 6333
 
-#### Models not loading (llama-swap)
-- Check llama-swap is running and accessible
-- Verify model names in config match llama-swap models. **THIS IS CRITICAL. MUST HAVE IDENTICAL MODEL NAMES IN BOTH YAML FILES.**
-- Check llama-swap logs for errors
+#### Models not loading (backend provider)
+- Check provider startup:
+  - `llama_cpp`: confirm `llama-server` is listening on `backend.local_llama_port`
+  - `vllm` / `ollama` / `custom`: confirm upstream endpoint is reachable
+- Verify `backend.upstream_chat_url` is correct for your provider
+- Verify `roles.*` model IDs match what `/v1/models` actually returns
+- Check provider logs for model-load failures or OOM
 
 ---
 
@@ -1178,7 +1257,32 @@ kb_paths:
 
 #### Models (backend endpoints):
 ```yaml
-llama_swap_url: "http://127.0.0.1:8011/v1/chat/completions"
+backend:
+  provider: "llama_cpp"  # llama_cpp|vllm|ollama|custom
+  local_llama_port: 8010
+  upstream_base_url: "http://127.0.0.1:8010"
+  upstream_chat_url: "http://127.0.0.1:8010/v1/chat/completions"
+  llama_cpp:
+    exe_path: "C:/path/to/llama-server.exe"
+    models_dir: "C:/path/to/LLMs"
+    models_preset_path: "C:/path/to/LLMs/llama-router-models.ini"
+    host: "0.0.0.0"
+    port: 8010
+
+# Legacy fallback only (deprecated)
+llama_swap_url: "http://127.0.0.1:8010/v1/chat/completions"
+
+frontend:
+  shim:
+    enabled: true
+    inject_ui: true
+    force_vision: true
+    ui_model_alias: "MOA"
+    router_model_id: "moa-router"
+
+launcher:
+  router_host: "0.0.0.0"
+  ready_timeout_s: 22
 
 roles:
   thinker: "Qwen-3-4B Hivemind"
@@ -1246,6 +1350,7 @@ Answer -> Vault chunk -> SUMM file -> source metadata header
 
 - Always check `NEW.md` for most recent update 
 
+- NEW: Completely refactored / simplified so that only llama.cpp is needed (add shim to bypass llama.cpp WebUI lock out).
 - NEW: Core router internals were decomposed into focused modules (`chat_*`, `state_*`, `router_*`) to reduce monolith risk and make behavior easier to maintain.
 - IMPROVED: Correction/follow-up handling is more stable on tricky "I meant X not Y" turns, with cleaner pass-through when a query falls outside deterministic scope.
 - IMPROVED: Consistency guardrail now catches obvious state/constraint contradictions before final output.
@@ -1396,6 +1501,7 @@ Sorry - real life commitments :(
 
 ## License
 AGPL-3.0-or-later. See `LICENSE`
+
 
 
 

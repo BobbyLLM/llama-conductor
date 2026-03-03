@@ -23,9 +23,10 @@ def make_openai_response(text: str) -> Dict[str, Any]:
     }
 
 
-def stream_sse(text: str, keepalive_interval: float = 15.0) -> Iterable[str]:
+def wrap_text_as_sse(text: str, keepalive_interval: float = 15.0) -> Iterable[str]:
     """
-    Stream text as SSE with periodic keepalive pings.
+    Wrap fully-generated text as SSE chunks with periodic keepalive pings.
+    Note: this is pseudo-streaming; model generation is already complete.
     
     Args:
         text: Text to stream
@@ -75,3 +76,8 @@ def stream_sse(text: str, keepalive_interval: float = 15.0) -> Iterable[str]:
     }
     yield f"data: {json.dumps(final_chunk)}\n\n"
     yield "data: [DONE]\n\n"
+
+
+def stream_sse(text: str, keepalive_interval: float = 15.0) -> Iterable[str]:
+    """Backward-compatible alias for pseudo-stream wrapper."""
+    return wrap_text_as_sse(text=text, keepalive_interval=keepalive_interval)
