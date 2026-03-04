@@ -190,7 +190,7 @@ Result:
 
 ## Quickstart (First-Time, Recommended)
 
-### Prerequisites
+### [Step 0] Prerequisites
 
 - Python 3.10+ (recommended: 3.10-3.12 for first-time stability):
   - https://www.python.org/downloads/
@@ -204,13 +204,13 @@ Result:
   - Qdrant (REQUIRED for Vault/`##mentats` and full stack; OPTIONAL for kick-the-tires mode)
   - https://github.com/qdrant/qdrant
 
-### Install llama-conductor
+### [Step 1] Install llama-conductor
 
 ```bash
 pip install git+https://codeberg.org/BobbyLLM/llama-conductor.git
 ```
 
-### Configure `llama_conductor/router_config.yaml`
+### [Step 2] Configure `llama_conductor/router_config.yaml`
 
 - Set `backend.provider: "llama_cpp"`
 - Set:
@@ -236,7 +236,7 @@ More config detail:
 - [FAQ: Launch Script: The Easy Way](FAQ.md#launch-script-the-easy-way)
 - [FAQ: Config knobs (router_config.yaml) with examples](FAQ.md#config-knobs-router_configyaml-with-examples)
 
-### Start stack
+### [Step 3] Start stack
 
 Launch core stack:
 
@@ -259,7 +259,7 @@ docker start qdrant >/dev/null 2>&1 || docker run --name qdrant -p 6333:6333 -d 
 
 Need more launch variants? See [FAQ: Launch Script: The Easy Way](FAQ.md#launch-script-the-easy-way).
 
-### Open
+### [Step 4] Open and enjoy
 
 - http://127.0.0.1:8088
 
