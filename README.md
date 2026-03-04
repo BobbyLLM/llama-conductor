@@ -188,33 +188,81 @@ Result:
 - You have a deep store vault of information you can reference / update.
 ---
 
-## 🚀 Quickstart
+## Quickstart (First-Time, Recommended)
 
-### Required stack
+### Prerequisites
 
-1. Backend OpenAI-compatible endpoint (`llama_cpp`, `vllm`, `ollama`, or `custom`)
-2. Frontend (llama.cpp WebUI + shim, OWUI, SillyTavern, or direct API client)
-3. Qdrant (required for grounded `##mentats`)
+- Python 3.10+ (recommended: 3.10-3.12 for first-time stability):
+  - https://www.python.org/downloads/
+- llama.cpp (`llama-server`) + at least one GGUF model (for example Qwen3-4B; TWO OR MORE is better - see [What is Mentats?](FAQ.md#what-is-mentats) for why):
+  - https://github.com/ggml-org/llama.cpp
+  - https://huggingface.co/unsloth
+- Frontend:
+  - llama.cpp WebUI + shim (recommended; WebUI ships with llama.cpp)
+  - or any OpenAI-compatible client (OWUI, LibreChat, etc.)
+- Optional for full stack:
+  - Qdrant (REQUIRED for Vault/`##mentats` and full stack; OPTIONAL for kick-the-tires mode)
+  - https://github.com/qdrant/qdrant
 
-Recommended default: llama.cpp + Qdrant. Yes, really. 
-
-ULTRA bare bones, kick-the-tires mode: llama.cpp alone for core routing/chat (but Mentats/Vault paths unavailable).
-
-### Install
+### Install llama-conductor
 
 ```bash
 pip install git+https://codeberg.org/BobbyLLM/llama-conductor.git
 ```
 
-### Run router
+### Configure `llama_conductor/router_config.yaml`
+
+- Set `backend.provider: "llama_cpp"`
+- Set:
+  - `backend.llama_cpp.exe_path`
+  - `backend.llama_cpp.models_dir`
+- Set `roles.*` to valid model IDs from backend `/v1/models`
+- If using vision/OCR:
+  - set `roles.vision` to a real VL model ID
+  - configure matching `mmproj` in `llama_server.models_preset.models`
+
+More config detail:
+- [FAQ: Launch Script: The Easy Way](FAQ.md#launch-script-the-easy-way)
+- [FAQ: Config knobs (router_config.yaml) with examples](FAQ.md#config-knobs-routerconfigyaml-with-examples)
+
+### Start stack
+
+Launch core stack:
 
 ```bash
-llama-conductor serve --host 0.0.0.0 --port 9000
+python -m llama_conductor.launch_stack up --config llama_conductor/router_config.yaml
 ```
 
-Recommended start order:
-1. Qdrant
-2. `python -m llama_conductor.launch_stack up --config llama_conductor/router_config.yaml`
+For full stack (Vault/`##mentats`), start Qdrant (pick one):
+
+- Docker (Windows):
+```bat
+docker start qdrant >nul 2>&1 || docker run --name qdrant -p 6333:6333 -d qdrant/qdrant
+```
+- Docker (Linux/macOS):
+```bash
+docker start qdrant >/dev/null 2>&1 || docker run --name qdrant -p 6333:6333 -d qdrant/qdrant
+```
+- Bare-metal:
+  - start your local Qdrant service/binary (for example your own `C:\Qdrant` setup)
+
+Need more launch variants? See [FAQ: Launch Script: The Easy Way](FAQ.md#launch-script-the-easy-way).
+
+### Open
+
+- http://127.0.0.1:8088
+
+- Enjoy :)
+
+### Kick-the-tires mode
+
+- Skip Qdrant and run llama.cpp + web-ui (with shim) only.
+- Nb: core chat/routing works; Vault/`##mentats` does not.
+
+### NB (troubleshooting only)
+
+- Router models: http://127.0.0.1:9000/v1/models
+- Shim health: http://127.0.0.1:8088/shim/healthz
 
 ---
 
