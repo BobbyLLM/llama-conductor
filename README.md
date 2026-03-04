@@ -214,16 +214,27 @@ pip install git+https://codeberg.org/BobbyLLM/llama-conductor.git
 
 - Set `backend.provider: "llama_cpp"`
 - Set:
-  - `backend.llama_cpp.exe_path`
-  - `backend.llama_cpp.models_dir`
-- Set `roles.*` to valid model IDs from backend `/v1/models`
-- If using vision/OCR:
-  - set `roles.vision` to a real VL model ID
-  - configure matching `mmproj` in `llama_server.models_preset.models`
+  - `backend.llama_cpp.exe_path` = full filesystem path to your `llama-server` executable (where you installed llama.cpp)
+  - `backend.llama_cpp.models_dir` = full filesystem path to your GGUF models folder
+- Path examples:
+  - Windows:
+    - `backend.llama_cpp.exe_path: "C:/path/to/llama.cpp/llama-server.exe"` (edit to match your own)
+    - `backend.llama_cpp.models_dir: "C:/path/to/LLMs"` (edit to match your own)
+  - Linux/macOS:
+    - `backend.llama_cpp.exe_path: "/path/to/llama.cpp/llama-server"` (edit to match your own)
+    - `backend.llama_cpp.models_dir: "/path/to/models"` (edit to match your own)
+- Set `roles.*` to model IDs from backend `/v1/models`.
+  - Use different model IDs for `thinker`, `critic`, and `coder` for better results.
+  - For minimal kick-the-tires mode only (not recommended), you can temporarily use the same model ID across roles.
+- Vision/OCR setup (optional):
+  - Set `roles.vision` to a real vision-language model ID (not a text-only model).
+  - Add matching `mmproj` for that same model in `llama_server.models_preset.models`.
+  - If you skip this, text chat still works, but image/OCR will not be reliable.
+- Tip: open backend `/v1/models` in a browser and copy `id` values exactly.
 
 More config detail:
 - [FAQ: Launch Script: The Easy Way](FAQ.md#launch-script-the-easy-way)
-- [FAQ: Config knobs (router_config.yaml) with examples](FAQ.md#config-knobs-routerconfigyaml-with-examples)
+- [FAQ: Config knobs (router_config.yaml) with examples](FAQ.md#config-knobs-router_configyaml-with-examples)
 
 ### Start stack
 
