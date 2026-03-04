@@ -43,6 +43,7 @@ llama-conductor serve --host 0.0.0.0 --port 9000
 
 ## Table of contents
 
+- [README Quickstart](README.md#quickstart-first-time-recommended)
 - [Frequently Asked Questions (FAQ)](#frequently-asked-questions-faq)
   - [What the hell is this thing and why did you build it?](#what-the-hell-is-this-thing-and-why-did-you-build-it)
   - [What problems does this solve?](#what-problems-does-this-solve)
