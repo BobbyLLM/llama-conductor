@@ -26,6 +26,7 @@ def maybe_handle_state_solver_early(
     classify_constraint_turn: Optional[Callable[..., str]],
     classify_query_family: Callable[[str], str],
     solve_state_transition_query: Callable[[str], Any],
+    solve_state_transition_followup: Optional[Callable[..., Any]],
     solve_constraint_followup: Optional[Callable[..., Any]],
     semantic_pick_clarifier_option: Callable[..., str],
     semantic_refine_constraint_choice: Callable[..., str],
@@ -63,6 +64,40 @@ def maybe_handle_state_solver_early(
             state.deterministic_last_family = ""
             state.deterministic_last_reason = "constraint_asset_shift_reset"
             state.deterministic_last_answer = ""
+
+        if (
+            solve_state_transition_followup is not None
+            and str(getattr(state, "deterministic_last_family", "") or "") == "state_transition"
+            and isinstance(getattr(state, "deterministic_last_frame", None), dict)
+            and bool(getattr(state, "deterministic_last_frame", {}))
+        ):
+            try:
+                frs = solve_state_transition_followup(
+                    frame=dict(getattr(state, "deterministic_last_frame", {}) or {}),
+                    query=user_text,
+                )
+                if bool(getattr(frs, "handled", False)):
+                    srtxt = str(getattr(frs, "answer", "") or "").strip()
+                    if srtxt:
+                        state.deterministic_last_family = str(getattr(frs, "family", "") or "state_transition")
+                        state.deterministic_last_reason = str(getattr(frs, "reason", "") or "")
+                        state.deterministic_last_answer = srtxt
+                        state.deterministic_last_frame = dict(getattr(frs, "frame", {}) or {})
+                        return finalize_chat_response(
+                            text=srtxt,
+                            user_text=user_text,
+                            state=state,
+                            lock_active=lock_active_now,
+                            scratchpad_grounded=False,
+                            scratchpad_quotes=[],
+                            has_facts_block=False,
+                            stream=stream,
+                            mode="state_solver",
+                            sensitive_override_once=sensitive_override_once,
+                            bypass_serious_anti_loop=True,
+                        )
+            except Exception:
+                pass
 
         if (
             solve_constraint_followup is not None
@@ -184,6 +219,7 @@ def resolve_state_solver_for_turn(
     classify_constraint_turn: Optional[Callable[..., str]],
     classify_query_family: Optional[Callable[[str], str]],
     solve_state_transition_query: Optional[Callable[[str], Any]],
+    solve_state_transition_followup: Optional[Callable[..., Any]],
     solve_constraint_followup: Optional[Callable[..., Any]],
     norm_query_text: Callable[[str], str],
     extract_replay_base_answer: Callable[[str], str],
@@ -286,6 +322,38 @@ def resolve_state_solver_for_turn(
         query_family = "constraint_decision"
 
     # Pass 1: follow-up deterministic decision handling.
+    if (
+        (not state_solver_used)
+        and solve_state_transition_followup is not None
+        and str(getattr(state, "deterministic_last_family", "") or "") == "state_transition"
+        and isinstance(getattr(state, "deterministic_last_frame", None), dict)
+        and bool(getattr(state, "deterministic_last_frame", {}))
+        and bool(cfg_get("state_solver.enabled", True))
+        and bool(cfg_get("state_solver.auto_route", True))
+        and not lock_active
+    ):
+        try:
+            apply_in_raw = bool(cfg_get("state_solver.apply_in_raw", False))
+            if (not state.raw_sticky) or apply_in_raw:
+                frs0 = solve_state_transition_followup(
+                    frame=dict(getattr(state, "deterministic_last_frame", {}) or {}),
+                    query=user_text,
+                )
+                frs0_frame = dict(getattr(frs0, "frame", {}) or {})
+                if frs0_frame:
+                    state.deterministic_last_frame = dict(frs0_frame)
+                if bool(getattr(frs0, "handled", False)):
+                    state_solver_used = True
+                    state_solver_fail_loud = bool(getattr(frs0, "fail_loud", False))
+                    _frs_reason = str(getattr(frs0, "reason", "") or "").strip()
+                    state_solver_reason = f"followup_state_pass1:{_frs_reason}" if _frs_reason else "followup_state_pass1"
+                    state_solver_answer = str(getattr(frs0, "answer", "") or "").strip()
+                    state_solver_frame = frs0_frame
+                    query_family = "state_transition"
+        except Exception:
+            pass
+
+    # Pass 1b: constraint follow-up deterministic decision handling.
     if (
         (not state_solver_used)
         and solve_constraint_followup is not None
