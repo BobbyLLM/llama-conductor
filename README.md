@@ -255,7 +255,7 @@ docker start qdrant >nul 2>&1 || docker run --name qdrant -p 6333:6333 -d qdrant
 docker start qdrant >/dev/null 2>&1 || docker run --name qdrant -p 6333:6333 -d qdrant/qdrant
 ```
 - Bare-metal:
-  - start your local Qdrant service/binary (for example your own `C:\Qdrant` setup)
+  - start your local Qdrant service/binary (for example from `C:\Qdrant`)
 
 Need more launch variants? See [FAQ: Launch Script: The Easy Way](FAQ.md#launch-script-the-easy-way).
 
