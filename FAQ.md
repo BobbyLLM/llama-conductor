@@ -10,11 +10,11 @@
 
 For a normal install, you need:
 
-1. A backend **OpenAI-compatible endpoint**  
+1. A backend **OpenAI-compatible endpoint**
    (`llama_cpp`, `vllm`, `ollama`, or `custom`)
-2. A frontend  
+2. A frontend
    (llama.cpp WebUI + shim, OWUI, SillyTavern, or direct API client)
-3. **Qdrant** for Vault/RAG features  
+3. Qdrant for Vault/RAG features
    https://github.com/qdrant/qdrant
 
 **Recommended default:**
@@ -24,22 +24,7 @@ For a normal install, you need:
 
 That's it.
 
-**Kick-the-tires mode:**  
-`llama.cpp` alone works for core routing/chat (but `##mentats` and related features will be unavailable).
-
-### Install
-
-```bash
-pip install git+https://codeberg.org/BobbyLLM/llama-conductor.git
-```
-
-### Run the router
-
-```bash
-llama-conductor serve --host 0.0.0.0 --port 9000
-```
-
-> This starts **only** the router. You still need a running backend provider and frontend. Start Qdrant if you want Vault / `##mentats`.
+For install details, see [README Quickstart](README.md#quickstart-first-time-recommended).
 
 ## Table of contents
 
