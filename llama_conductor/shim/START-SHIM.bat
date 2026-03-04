@@ -4,7 +4,6 @@ setlocal
 cd /d "%~dp0"
 
 set "MOA_CHAT_AUTH_USER=moa"
-set "MOA_CHAT_PASSWORD="
 set "MOA_CHAT_FORCE_VISION=1"
 set "MOA_CHAT_RENDER_MODE=buffered"
 set "MOA_CHAT_INJECT_UI=1"

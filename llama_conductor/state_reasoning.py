@@ -33,6 +33,15 @@ _STATE_VERB_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 _ASK_OVERFLOW_RE = re.compile(r"\b(over capacity|overflow|spill(?:ed|s|ing)?)\b", re.IGNORECASE)
+_SCHEMA_MARKER_RE = re.compile(
+    r"\b(start|cap|ops|unit|ask)\s*=",
+    re.IGNORECASE,
+)
+_SCHEMA_START_RE = re.compile(r"\bstart\s*=\s*(?P<v>[^,;\]\n]+)", re.IGNORECASE)
+_SCHEMA_CAP_RE = re.compile(r"\bcap\s*=\s*(?P<v>[^,;\]\n]+)", re.IGNORECASE)
+_SCHEMA_UNIT_RE = re.compile(r"\bunit\s*=\s*(?P<v>[a-zA-Z]+)", re.IGNORECASE)
+_SCHEMA_ASK_RE = re.compile(r"\bask\s*=\s*(?P<v>[a-zA-Z_]+)", re.IGNORECASE)
+_SCHEMA_OPS_RE = re.compile(r"\bops\s*=\s*\[(?P<v>[^\]]*)\]", re.IGNORECASE)
 
 _FIRST_ADD_RE = re.compile(
     r"""
@@ -81,6 +90,52 @@ _CONTAINER_OZ_CONTEXT_RE = re.compile(
 )
 _CONTAINER_CAP_OZ_RE = re.compile(
     r"(?P<cap>\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces|fluid\s*ounces?)\s*cup",
+    re.IGNORECASE,
+)
+_CONTAINER_CAPACITY_RE = re.compile(
+    r"(?P<cap>\d+(?:\.\d+)?)\s*(?P<cap_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)\s*(?:cup|container|bucket|bottle)",
+    re.IGNORECASE,
+)
+_CONTAINER_START_RE = re.compile(
+    r"(?:with|already\s+has|currently\s+has|holding)\s*"
+    r"(?P<start>\d+(?:\.\d+)?)\s*(?P<start_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)",
+    re.IGNORECASE,
+)
+_SINGLE_CONTAINER_TRANSFER_RE = re.compile(
+    r"\b(?:add|added|adding|pour|poured|pouring|put|putting)\s*"
+    r"(?P<delta>\d+(?:\.\d+)?)\s*(?:more\s*)?(?P<delta_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)"
+    r"(?:\s*of\s+[a-z]+)?\s*(?:into|in)\s*"
+    r"(?:it|the\s*(?:cup|container|bucket|bottle)|this\s*(?:cup|container|bucket|bottle)|that\s*(?:cup|container|bucket|bottle))\b",
+    re.IGNORECASE,
+)
+_SPLIT_EQUAL_NL_RE = re.compile(
+    r"""
+    (?:
+        (?:remaining|have|with|holding)\s*(?P<total1>\d+(?:\.\d+)?)\s*(?P<unit1>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)?
+        [^.!?\n]{0,180}?
+        (?:divide|split)\s*(?:it|that|the\s+\w+)?\s*(?:equally|evenly)?
+        [^.!?\n]{0,120}?
+        (?:among|between|across|into)\s*(?P<n1>\d+(?:\.\d+)?)\s*(?:cups?|containers?|buckets?|bottles?)
+    )
+    |
+    (?:
+        (?:divide|split)\s*(?P<total2>\d+(?:\.\d+)?)\s*(?P<unit2>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)?
+        [^.!?\n]{0,120}?
+        (?:equally|evenly)?
+        [^.!?\n]{0,80}?
+        (?:among|between|across|into)\s*(?P<n2>\d+(?:\.\d+)?)\s*(?:cups?|containers?|buckets?|bottles?)
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_ASK_CAPACITY_PER_CUP_RE = re.compile(
+    r"\b(capacity\s+of\s+each\s+cup|each\s+cup\s+capacity|capacity\s+per\s+cup)\b",
+    re.IGNORECASE,
+)
+_INTO_CONTAINER_RE = re.compile(
+    r"\binto\s*(?:a\s*)?(?P<cap>\d+(?:\.\d+)?)\s*"
+    r"(?P<unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)\s*"
+    r"(?:cup|container|bucket|bottle)\b",
     re.IGNORECASE,
 )
 
@@ -277,6 +332,8 @@ def classify_query_family(query: str) -> str:
     t = " ".join(str(query or "").split())
     if not t:
         return "other"
+    if _SCHEMA_MARKER_RE.search(t):
+        return "state_transition"
     if (
         _STATE_INTENT_RE.search(t)
         and len(_NUM_RE.findall(t)) >= 2
@@ -316,6 +373,11 @@ def solve_state_transition_query(query: str) -> StateReasoningResult:
     if not t:
         return StateReasoningResult()
 
+    # Case 0: explicit normalized schema lane (strictly marker-gated).
+    schema = _solve_normalized_state_schema(t)
+    if schema.handled:
+        return schema
+
     fam = classify_query_family(t)
     if fam == "constraint_decision":
         return _solve_constraint_decision_query(t)
@@ -349,7 +411,13 @@ def solve_state_transition_query(query: str) -> StateReasoningResult:
                 f" and {_fmt(overflow)} oz overflows."
                 f"\nSource: Contextual"
             )
-        return StateReasoningResult(handled=True, family=fam, answer=ans, reason="capacity_add")
+        return StateReasoningResult(
+            handled=True,
+            family=fam,
+            answer=ans,
+            reason="capacity_add",
+            frame=_mk_container_state_frame(contained, cap, "oz"),
+        )
 
     # Case A2: direct stated total vs cup capacity.
     m_direct = _DIRECT_TOTAL_CAP_RE.search(t)
@@ -372,7 +440,24 @@ def solve_state_transition_query(query: str) -> StateReasoningResult:
                 f"The cup can physically contain {_fmt(contained)} oz; {_fmt(overflow)} oz is overflow."
                 f"\nSource: Contextual"
             )
-        return StateReasoningResult(handled=True, family=fam, answer=ans, reason="direct_total_capacity")
+        return StateReasoningResult(
+            handled=True,
+            family=fam,
+            answer=ans,
+            reason="direct_total_capacity",
+            frame=_mk_container_state_frame(contained, cap, "oz"),
+        )
+
+    # Case A3: deterministic single-container transfer/update with pronoun/explicit cup target.
+    # Example: "I have a 16 ounce cup. I pour 20 ounces of water into it."
+    simple_container = _solve_single_container_transfer(t)
+    if simple_container.handled:
+        return simple_container
+
+    # Case A4: natural-language equal split/divide among N containers.
+    split_nl = _solve_nl_split_equal(t)
+    if split_nl.handled:
+        return split_nl
 
     # Case B: pour-then-pour-everything chain
     m1 = _FIRST_POUR_RE.search(t)
@@ -415,7 +500,13 @@ def solve_state_transition_query(query: str) -> StateReasoningResult:
                 f"{_fmt(second_overflow)} oz overflow at step 2."
                 f"\nSource: Contextual"
             )
-        return StateReasoningResult(handled=True, family=fam, answer=ans, reason="capacity_transfer_chain")
+        return StateReasoningResult(
+            handled=True,
+            family=fam,
+            answer=ans,
+            reason="capacity_transfer_chain",
+            frame=_mk_container_state_frame(second_contained, cap2, "oz"),
+        )
 
     # Case C: generic bounded/unbounded balance updates (inventory/queue/account-like).
     generic = _solve_generic_balance_update(t)
@@ -436,8 +527,8 @@ def solve_state_transition_query(query: str) -> StateReasoningResult:
 
 def _fail_loud(msg: str) -> StateReasoningResult:
     template = (
-        "Use normalized format: start=<n>, cap=<n|none>, "
-        "ops=[+n,-n,transfer A->B,...]."
+        "Supported deterministic forms include explicit state/capacity phrasing "
+        "or normalized schema like: start=0, cap=16, unit=oz, ops=[+20], ask=overflow."
     )
     return StateReasoningResult(
         handled=True,
@@ -455,6 +546,435 @@ def _as_float(v: Optional[str]) -> Optional[float]:
         return float(v)
     except Exception:
         return None
+
+
+def _solve_single_container_transfer(text: str) -> StateReasoningResult:
+    m_cap = _CONTAINER_CAPACITY_RE.search(text)
+    if not m_cap:
+        return StateReasoningResult()
+    cap = _as_float(m_cap.group("cap"))
+    cap_unit = str(m_cap.group("cap_unit") or "")
+    if cap is None:
+        return StateReasoningResult()
+    cap_ml = _volume_to_ml(cap, cap_unit)
+    if cap_ml is None:
+        return StateReasoningResult()
+
+    ops = list(_SINGLE_CONTAINER_TRANSFER_RE.finditer(text))
+    if not ops:
+        return StateReasoningResult()
+    if len(ops) > 1:
+        return _fail_loud(
+            "Detected multiple single-container operations; provide explicit normalized steps."
+        )
+    op = ops[0]
+    delta = _as_float(op.group("delta"))
+    delta_unit = str(op.group("delta_unit") or "")
+    if delta is None:
+        return _fail_loud("Missing transfer amount for single-container parse.")
+    delta_ml = _volume_to_ml(delta, delta_unit)
+    if delta_ml is None:
+        return _fail_loud("Transfer amount unit is unsupported for single-container parse.")
+
+    start_ml = 0.0
+    m_start = _CONTAINER_START_RE.search(text)
+    if m_start:
+        sv = _as_float(m_start.group("start"))
+        su = str(m_start.group("start_unit") or "")
+        if sv is not None:
+            start_conv = _volume_to_ml(sv, su)
+            if start_conv is not None:
+                start_ml = start_conv
+
+    if _has_unparsed_operation_fragment(
+        text, covered_spans=[(m_cap.start(), m_cap.end()), (op.start(), op.end())]
+    ):
+        return _fail_loud(
+            "Detected additional operation(s) outside the supported single-container transfer parse."
+        )
+
+    total_ml = start_ml + delta_ml
+    contained_ml = min(cap_ml, max(0.0, total_ml))
+    overflow_ml = max(0.0, total_ml - cap_ml)
+    contained = _volume_from_ml(contained_ml, cap_unit)
+    overflow = _volume_from_ml(overflow_ml, cap_unit)
+    total = _volume_from_ml(total_ml, cap_unit)
+    cap_disp = _volume_from_ml(cap_ml, cap_unit)
+    unit_disp = _volume_unit_display(cap_unit)
+    if _ASK_OVERFLOW_RE.search(text):
+        ans = f"The cup is over capacity by {_fmt(overflow)} {unit_disp}.\nSource: Contextual"
+    else:
+        ans = (
+            f"Total directed volume is {_fmt(total)} {unit_disp}. "
+            f"The cup capacity is {_fmt(cap_disp)} {unit_disp}, so the cup contains {_fmt(contained)} {unit_disp}"
+            f" and {_fmt(overflow)} {unit_disp} overflows."
+            f"\nSource: Contextual"
+        )
+    return StateReasoningResult(
+        handled=True,
+        family="state_transition",
+        answer=ans,
+        reason="single_container_transfer",
+        frame={
+            "kind": "container_transfer_state",
+            "amount_ml": float(contained_ml),
+            "container_cap_ml": float(cap_ml),
+            "unit_hint": unit_disp,
+        },
+    )
+
+
+def _volume_to_ml(value: float, unit: str) -> Optional[float]:
+    u = re.sub(r"\s+", " ", (unit or "").strip().lower())
+    if u in {"ml", "milliliter", "milliliters", "millilitre", "millilitres"}:
+        return float(value)
+    if u in {"l", "liter", "liters", "litre", "litres"}:
+        return float(value) * 1000.0
+    if u in {"oz", "ounce", "ounces", "fluid ounce", "fluid ounces"}:
+        return float(value) * 29.5735295625
+    return None
+
+
+def _volume_from_ml(value_ml: float, unit: str) -> float:
+    u = re.sub(r"\s+", " ", (unit or "").strip().lower())
+    if u in {"ml", "milliliter", "milliliters", "millilitre", "millilitres"}:
+        return value_ml
+    if u in {"l", "liter", "liters", "litre", "litres"}:
+        return value_ml / 1000.0
+    if u in {"oz", "ounce", "ounces", "fluid ounce", "fluid ounces"}:
+        return value_ml / 29.5735295625
+    return value_ml
+
+
+def _volume_unit_display(unit: str) -> str:
+    u = re.sub(r"\s+", " ", (unit or "").strip().lower())
+    if u in {"ml", "milliliter", "milliliters", "millilitre", "millilitres"}:
+        return "ml"
+    if u in {"l", "liter", "liters", "litre", "litres"}:
+        return "L"
+    return "oz"
+
+
+def _is_volume_unit(unit: str) -> bool:
+    u = re.sub(r"\s+", " ", (unit or "").strip().lower())
+    return u in {
+        "ml", "milliliter", "milliliters", "millilitre", "millilitres",
+        "l", "liter", "liters", "litre", "litres",
+        "oz", "ounce", "ounces", "fluid ounce", "fluid ounces",
+    }
+
+
+def _parse_schema_scalar(token: str, *, default_unit: str = "") -> tuple[Optional[float], str]:
+    s = str(token or "").strip()
+    if not s:
+        return None, default_unit
+    if s.lower() == "none":
+        return None, default_unit
+    m = re.match(r"^\s*(?P<num>-?\d+(?:\.\d+)?)\s*(?P<unit>[A-Za-z]+)?\s*$", s)
+    if not m:
+        return None, default_unit
+    n = _as_float(m.group("num"))
+    if n is None:
+        return None, default_unit
+    u = str(m.group("unit") or default_unit or "").strip()
+    return n, u
+
+
+def _split_schema_ops(raw: str) -> list[str]:
+    s = str(raw or "").strip()
+    if not s:
+        return []
+    return [x.strip() for x in re.split(r"\s*,\s*", s) if x.strip()]
+
+
+def _solve_normalized_state_schema(text: str) -> StateReasoningResult:
+    if not _SCHEMA_MARKER_RE.search(text):
+        return StateReasoningResult()
+
+    m_start = _SCHEMA_START_RE.search(text)
+    m_ops = _SCHEMA_OPS_RE.search(text)
+    if (not m_start) or (not m_ops):
+        return _fail_loud("Schema markers detected but required keys are missing (need start and ops).")
+
+    unit = ""
+    m_unit = _SCHEMA_UNIT_RE.search(text)
+    if m_unit:
+        unit = str(m_unit.group("v") or "").strip()
+
+    start_val, start_unit = _parse_schema_scalar(m_start.group("v"), default_unit=unit)
+    if start_val is None:
+        return _fail_loud("Schema start value is invalid.")
+    unit = start_unit or unit
+
+    cap = None
+    m_cap = _SCHEMA_CAP_RE.search(text)
+    if m_cap:
+        cap_val, cap_unit = _parse_schema_scalar(m_cap.group("v"), default_unit=unit)
+        if m_cap.group("v").strip().lower() == "none":
+            cap = None
+        elif cap_val is None:
+            return _fail_loud("Schema cap value is invalid.")
+        else:
+            cap = cap_val
+            if cap_unit:
+                unit = cap_unit
+
+    ask = ""
+    m_ask = _SCHEMA_ASK_RE.search(text)
+    if m_ask:
+        ask = str(m_ask.group("v") or "").strip().lower()
+
+    # Normalize to ml for volume units; otherwise keep scalar.
+    is_vol = _is_volume_unit(unit)
+    if is_vol:
+        amount = _volume_to_ml(start_val, unit)
+        if amount is None:
+            return _fail_loud("Schema start unit is unsupported.")
+        if cap is not None:
+            cap_ml = _volume_to_ml(cap, unit)
+            if cap_ml is None:
+                return _fail_loud("Schema cap unit is unsupported.")
+            cap = cap_ml
+    else:
+        amount = start_val
+
+    ops = _split_schema_ops(m_ops.group("v"))
+    if not ops:
+        return _fail_loud("Schema ops list is empty.")
+
+    per_bucket = None
+    pieces: list[str] = []
+    for op in ops:
+        s = op.strip().lower()
+        if re.match(r"^[+-]\s*\d", s):
+            sign = -1.0 if s.startswith("-") else 1.0
+            qty_text = s[1:].strip()
+            qv, qu = _parse_schema_scalar(qty_text, default_unit=unit)
+            if qv is None:
+                return _fail_loud("Schema add/remove op has invalid numeric value.")
+            if is_vol:
+                q_ml = _volume_to_ml(qv, qu or unit)
+                if q_ml is None:
+                    return _fail_loud("Schema add/remove op unit is unsupported.")
+                amount += (sign * q_ml)
+                pieces.append(f"{'+' if sign > 0 else '-'}{_fmt(_volume_from_ml(q_ml, unit))}{_volume_unit_display(unit)}")
+            else:
+                amount += (sign * qv)
+                pieces.append(f"{'+' if sign > 0 else '-'}{_fmt(qv)}")
+            continue
+
+        m_split = re.match(r"^(split_equal|divide)\s*(?:[:=]|\s)\s*(\d+(?:\.\d+)?)$", s)
+        if m_split:
+            n = _as_float(m_split.group(2))
+            if n is None or n <= 0:
+                return _fail_loud("Schema split/divide op requires n > 0.")
+            per_bucket = amount / n
+            amount = per_bucket
+            pieces.append(f"{m_split.group(1)} {int(n) if abs(n-int(n))<1e-9 else _fmt(n)}")
+            continue
+
+        return _fail_loud("Unsupported schema operation. Supported: +n, -n, split_equal n, divide n.")
+
+    overflow = 0.0
+    contained = amount
+    if cap is not None:
+        contained = min(cap, max(0.0, amount))
+        overflow = max(0.0, amount - cap)
+
+    if is_vol:
+        unit_disp = _volume_unit_display(unit)
+        contained_disp = _volume_from_ml(contained, unit)
+        overflow_disp = _volume_from_ml(overflow, unit)
+        amount_disp = _volume_from_ml(amount, unit)
+        cap_disp = _volume_from_ml(cap, unit) if cap is not None else None
+        per_bucket_disp = _volume_from_ml(per_bucket, unit) if per_bucket is not None else None
+    else:
+        unit_disp = "units"
+        contained_disp = contained
+        overflow_disp = overflow
+        amount_disp = amount
+        cap_disp = cap
+        per_bucket_disp = per_bucket
+
+    if ask in {"overflow"}:
+        ans = f"Overflow is {_fmt(overflow_disp)} {unit_disp}.\nSource: Contextual"
+    elif ask in {"per_container", "per_cup", "each"} and per_bucket_disp is not None:
+        ans = (
+            f"Equal split amount is {_fmt(per_bucket_disp)} {unit_disp} per container."
+            f"\nSource: Contextual"
+        )
+    else:
+        if cap is None:
+            ans = (
+                f"Start processed with ops [{', '.join(pieces)}] -> final {_fmt(amount_disp)} {unit_disp}."
+                f"\nSource: Contextual"
+            )
+        else:
+            ans = (
+                f"Start processed with ops [{', '.join(pieces)}] -> raw {_fmt(amount_disp)} {unit_disp}. "
+                f"With capacity {_fmt(cap_disp)} {unit_disp}, contained is {_fmt(contained_disp)} {unit_disp} "
+                f"and overflow is {_fmt(overflow_disp)} {unit_disp}."
+                f"\nSource: Contextual"
+            )
+
+    frame: Dict[str, Any] = {}
+    if is_vol and cap is not None:
+        frame = {
+            "kind": "container_transfer_state",
+            "amount_ml": float(contained),
+            "container_cap_ml": float(cap),
+            "unit_hint": unit_disp,
+        }
+    return StateReasoningResult(
+        handled=True,
+        fail_loud=False,
+        family="state_transition",
+        answer=ans,
+        reason="normalized_schema_state_ops",
+        frame=frame,
+    )
+
+
+def _solve_nl_split_equal(text: str) -> StateReasoningResult:
+    m = _SPLIT_EQUAL_NL_RE.search(text)
+    if not m:
+        return StateReasoningResult()
+    total_raw = m.group("total1") or m.group("total2")
+    unit_raw = m.group("unit1") or m.group("unit2") or ""
+    n_raw = m.group("n1") or m.group("n2")
+    total_v = _as_float(total_raw)
+    n_v = _as_float(n_raw)
+    if total_v is None or n_v is None or n_v <= 0:
+        return _fail_loud("Split/divide operation requires valid total amount and container count.")
+
+    unit = str(unit_raw or "").strip()
+    if unit:
+        if not _is_volume_unit(unit):
+            return _fail_loud("Split/divide unit is unsupported.")
+        total_ml = _volume_to_ml(total_v, unit)
+        if total_ml is None:
+            return _fail_loud("Split/divide amount unit is unsupported.")
+        each_ml = total_ml / n_v
+        each_disp = _volume_from_ml(each_ml, unit)
+        udisp = _volume_unit_display(unit)
+        if _ASK_CAPACITY_PER_CUP_RE.search(text):
+            ans = (
+                f"Equal split amount is {_fmt(each_disp)} {udisp} per cup. "
+                f"So each cup must have at least {_fmt(each_disp)} {udisp} capacity to hold its share."
+                f"\nSource: Contextual"
+            )
+        else:
+            ans = f"Equal split amount is {_fmt(each_disp)} {udisp} per cup.\nSource: Contextual"
+    else:
+        each = total_v / n_v
+        if _ASK_CAPACITY_PER_CUP_RE.search(text):
+            ans = (
+                f"Equal split amount is {_fmt(each)} per cup. "
+                f"So each cup needs at least {_fmt(each)} capacity units for an exact fit."
+                f"\nSource: Contextual"
+            )
+        else:
+            ans = f"Equal split amount is {_fmt(each)} per cup.\nSource: Contextual"
+
+    return StateReasoningResult(
+        handled=True,
+        fail_loud=False,
+        family="state_transition",
+        answer=ans,
+        reason="natural_language_split_equal",
+    )
+
+
+def _mk_container_state_frame(amount: float, cap: float, unit: str) -> Dict[str, Any]:
+    amount_ml = _volume_to_ml(float(amount), unit)
+    cap_ml = _volume_to_ml(float(cap), unit)
+    return {
+        "kind": "container_transfer_state",
+        "amount_ml": float(amount_ml if amount_ml is not None else amount),
+        "container_cap_ml": float(cap_ml if cap_ml is not None else cap),
+        "unit_hint": _volume_unit_display(unit),
+    }
+
+
+def _is_state_transition_followup_candidate(query: str) -> bool:
+    t = " ".join((query or "").split()).lower()
+    if not t:
+        return False
+    if not re.search(r"\b(pour|transfer)\b", t):
+        return False
+    if not re.search(r"\b(contents|everything|that|it)\b", t):
+        return False
+    return bool(_INTO_CONTAINER_RE.search(t))
+
+
+def solve_state_transition_followup(*, frame: Dict[str, Any], query: str) -> StateReasoningResult:
+    t = " ".join((query or "").split())
+    if not t or not isinstance(frame, dict):
+        return StateReasoningResult(family="state_transition")
+    if str(frame.get("kind") or "") != "container_transfer_state":
+        return StateReasoningResult(family="state_transition")
+    if not _is_state_transition_followup_candidate(t):
+        return StateReasoningResult(family="state_transition")
+    try:
+        carried_ml = float(frame.get("amount_ml"))
+    except Exception:
+        return StateReasoningResult(family="state_transition")
+    if carried_ml < 0:
+        return StateReasoningResult(family="state_transition")
+
+    into_matches = list(_INTO_CONTAINER_RE.finditer(t))
+    if not into_matches:
+        return _fail_loud("Follow-up transfer detected but no target container capacities were parsed.")
+
+    curr_ml = carried_ml
+    total_overflow_ml = 0.0
+    step_lines: list[str] = []
+    last_cap_ml = None
+    last_unit = "ml"
+    for idx, m in enumerate(into_matches, start=1):
+        cap_v = _as_float(m.group("cap"))
+        cap_u = str(m.group("unit") or "")
+        if cap_v is None:
+            return _fail_loud("Missing capacity value in follow-up transfer step.")
+        cap_ml = _volume_to_ml(cap_v, cap_u)
+        if cap_ml is None:
+            return _fail_loud("Unsupported capacity unit in follow-up transfer step.")
+        before_ml = curr_ml
+        curr_ml = min(cap_ml, max(0.0, before_ml))
+        step_overflow_ml = max(0.0, before_ml - cap_ml)
+        total_overflow_ml += step_overflow_ml
+        step_lines.append(
+            f"Step {idx}: into {_fmt(cap_v)} {_volume_unit_display(cap_u)} cup -> "
+            f"{_fmt(_volume_from_ml(curr_ml, cap_u))} {_volume_unit_display(cap_u)} contained, "
+            f"{_fmt(_volume_from_ml(step_overflow_ml, cap_u))} {_volume_unit_display(cap_u)} overflow."
+        )
+        last_cap_ml = cap_ml
+        last_unit = cap_u
+
+    final_val = _volume_from_ml(curr_ml, last_unit)
+    total_overflow_val = _volume_from_ml(total_overflow_ml, last_unit)
+    unit_disp = _volume_unit_display(last_unit)
+    answer = (
+        f"Starting from carried volume {_fmt(_volume_from_ml(carried_ml, last_unit))} {unit_disp}. "
+        + " ".join(step_lines)
+        + f" Final cup contains {_fmt(final_val)} {unit_disp}. "
+        + f"Total overflow across follow-up steps is {_fmt(total_overflow_val)} {unit_disp}."
+        + "\nSource: Contextual"
+    )
+    out_frame = {
+        "kind": "container_transfer_state",
+        "amount_ml": float(curr_ml),
+        "container_cap_ml": float(last_cap_ml if last_cap_ml is not None else frame.get("container_cap_ml", 0.0)),
+        "unit_hint": _volume_unit_display(last_unit),
+    }
+    return StateReasoningResult(
+        handled=True,
+        fail_loud=False,
+        family="state_transition",
+        answer=answer,
+        reason="state_transition_followup_transfer_chain",
+        frame=out_frame,
+    )
 
 
 def _distance_km(text: str) -> Optional[float]:

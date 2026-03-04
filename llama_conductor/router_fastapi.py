@@ -192,6 +192,7 @@ try:
         classify_constraint_turn,
         classify_query_family,
         solve_state_transition_query,
+        solve_state_transition_followup,
         is_followup_consistency_query,
         solve_constraint_followup,
     )
@@ -199,6 +200,7 @@ except Exception:
     classify_constraint_turn = None  # type: ignore
     classify_query_family = None  # type: ignore
     solve_state_transition_query = None  # type: ignore
+    solve_state_transition_followup = None  # type: ignore
     is_followup_consistency_query = None  # type: ignore
     solve_constraint_followup = None  # type: ignore
 
@@ -431,13 +433,18 @@ async def _chat_exception_guard(request: Request, call_next):
 
 
 @app.on_event("startup")
-async def _startup_init() -> None:
+async def _startup_router() -> None:
     try:
         base = str(cfg_get("vodka.storage_dir", "") or "").strip()
         purged = purge_session_memory_jsonl(base)
         _dbg(f"[DEBUG] startup session-memory purge deleted={purged}")
     except Exception:
         pass
+
+
+@app.on_event("shutdown")
+async def _shutdown_router() -> None:
+    return None
 
 
 @app.get("/healthz")
@@ -511,11 +518,14 @@ def _stage_openwebui_title_bypass(*, user_text_raw: str) -> Optional[str]:
         t_l = t.lower()
         if "router" in t_l or "fastapi" in t_l:
             return "Router Debugging"
+        if "clinical" in t_l:
+            return "Clinical Pipeline"
         return "Chat Summary"
 
     if not _is_openwebui_title_task(user_text_raw):
         return None
-    _dbg("[DEBUG] openwebui title task bypass")
+    if ROUTER_DEBUG:
+        _dbg("[DEBUG] openwebui title task bypass")
     return json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
 
 
@@ -1205,6 +1215,7 @@ async def v1_chat_completions(req: Request):
         classify_constraint_turn=classify_constraint_turn,
         classify_query_family=classify_query_family,
         solve_state_transition_query=solve_state_transition_query,
+        solve_state_transition_followup=solve_state_transition_followup,
         solve_constraint_followup=solve_constraint_followup,
         semantic_pick_clarifier_option=(
             lambda **kw: _semantic_pick_clarifier_option(
@@ -1309,6 +1320,7 @@ async def v1_chat_completions(req: Request):
         classify_constraint_turn=classify_constraint_turn,
         classify_query_family=classify_query_family,
         solve_state_transition_query=solve_state_transition_query,
+        solve_state_transition_followup=solve_state_transition_followup,
         solve_constraint_followup=solve_constraint_followup,
         norm_query_text=_norm_query_text,
         extract_replay_base_answer=_extract_replay_base_answer,
