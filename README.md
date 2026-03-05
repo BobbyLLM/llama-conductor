@@ -14,7 +14,7 @@ TL;DR: "In God we trust. All others bring data." - Deming
 - [What's New](NEW.md) - Latest fixes and what I borked along the way
 - [FAQ](FAQ.md) - Deep dives on how this actually works
 - [Command Cheat Sheet](llama_conductor/command_cheat_sheet.md) - All the incantations
-- [Quickstart](#quickstart) - Get it running in 5 minutes
+- [Quickstart](#quickstart-first-time-recommended) - Get it running in 5 minutes
 - [Y U DO DIS?](DESIGN.md) - Design fool-osophy and Q&A
 - [BULLSHIT. PROVE IT](prepub/PAPER.md) - Ok, I will (Prepub draft + evidence bundle)
 - [Mom, can we get ChatGPT? Mom: we have ChatGPT at home](meme-test.md) - A fun meme test that shows the effect of deterministic grounding
