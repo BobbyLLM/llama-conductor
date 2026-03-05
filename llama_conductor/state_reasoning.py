@@ -104,7 +104,7 @@ _CONTAINER_START_RE = re.compile(
 _SINGLE_CONTAINER_TRANSFER_RE = re.compile(
     r"\b(?:add|added|adding|pour|poured|pouring|put|putting)\s*"
     r"(?P<delta>\d+(?:\.\d+)?)\s*(?:more\s*)?(?P<delta_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)"
-    r"(?:\s*of\s+[a-z]+)?\s*(?:into|in)\s*"
+    r"(?:\s+(?:of\s+)?[a-z]+(?:\s+[a-z]+){0,2})?\s*(?:into|in)\s*"
     r"(?:it|the\s*(?:cup|container|bucket|bottle)|this\s*(?:cup|container|bucket|bottle)|that\s*(?:cup|container|bucket|bottle))\b",
     re.IGNORECASE,
 )
@@ -125,6 +125,26 @@ _SPLIT_EQUAL_NL_RE = re.compile(
         [^.!?\n]{0,80}?
         (?:among|between|across|into)\s*(?P<n2>\d+(?:\.\d+)?)\s*(?:cups?|containers?|buckets?|bottles?)
     )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_SPLIT_REMAINING_AFTER_OP_RE = re.compile(
+    r"""
+    (?:have|with|holding|contains?|currently\s+has|starts?\s+with|starting\s+with)\s*
+    (?P<start>\d+(?:\.\d+)?)\s*
+    (?P<start_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)?
+    [^.!?\n]{0,180}?
+    (?P<verb>drink|drank|consume|consumed|remove|removed|use|used|spend|spent|withdraw|withdrew|take\s+out|took\s+out)\s*
+    (?P<delta>\d+(?:\.\d+)?)\s*
+    (?P<delta_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)?
+    [^.!?\n]{0,220}?
+    (?:divide|split)
+    [^.!?\n]{0,120}?
+    (?:remaining|rest)
+    [^.!?\n]{0,120}?
+    (?:among|between|across|into)\s*
+    (?P<n>\d+(?:\.\d+)?)\s*
+    (?:new\s*)?(?:cups?|containers?|buckets?|bottles?)
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -196,6 +216,8 @@ _NEG_VERBS = (
     "ship", "shipped", "ships",
     "use", "used", "uses",
     "offload", "offloaded", "offloads",
+    "drink", "drank", "drinks",
+    "consume", "consumed", "consumes",
 )
 _POS_VERB_RE = "|".join(re.escape(v) for v in _POS_VERBS)
 _NEG_VERB_RE = "|".join(re.escape(v) for v in _NEG_VERBS)
@@ -838,7 +860,79 @@ def _solve_normalized_state_schema(text: str) -> StateReasoningResult:
 def _solve_nl_split_equal(text: str) -> StateReasoningResult:
     m = _SPLIT_EQUAL_NL_RE.search(text)
     if not m:
-        return StateReasoningResult()
+        # Case B: derive "remaining" total from explicit start-minus-consumption phrasing.
+        # Example: "I have 150ml ... I drink 50ml ... divide the remaining ... into 4 cups."
+        has_split_remaining = bool(
+            re.search(r"\b(?:divide|split)\b", text, re.IGNORECASE)
+            and re.search(r"\b(?:remaining|rest)\b", text, re.IGNORECASE)
+        )
+        m_n = re.search(
+            r"(?:among|between|across|into)\s*(?P<n>\d+(?:\.\d+)?)\s*(?:new\s*)?(?:cups?|containers?|buckets?|bottles?)",
+            text,
+            re.IGNORECASE,
+        )
+        m_start = re.search(
+            r"(?:have|with|holding|contains?|currently\s+has|starts?\s+with|starting\s+with)\s*"
+            r"(?P<start>\d+(?:\.\d+)?)\s*"
+            r"(?P<start_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)?",
+            text,
+            re.IGNORECASE,
+        )
+        m_reduce = re.search(
+            r"(?:drink|drank|consume|consumed|remove|removed|use|used|spend|spent|withdraw|withdrew|take\s+out|took\s+out)\s*"
+            r"(?P<delta>\d+(?:\.\d+)?)\s*"
+            r"(?P<delta_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)?",
+            text,
+            re.IGNORECASE,
+        )
+        if not (has_split_remaining and m_n and m_start and m_reduce):
+            return StateReasoningResult()
+
+        start_v = _as_float(m_start.group("start"))
+        delta_v = _as_float(m_reduce.group("delta"))
+        n_v = _as_float(m_n.group("n"))
+        if start_v is None or delta_v is None or n_v is None or n_v <= 0:
+            return _fail_loud("Split/divide operation requires valid start, reduction, and container count.")
+
+        start_unit = str(m_start.group("start_unit") or "").strip()
+        delta_unit = str(m_reduce.group("delta_unit") or "").strip()
+        if start_unit and (not _is_volume_unit(start_unit)):
+            return _fail_loud("Split/divide start unit is unsupported.")
+        if delta_unit and (not _is_volume_unit(delta_unit)):
+            return _fail_loud("Split/divide reduction unit is unsupported.")
+        if start_unit and delta_unit and (_volume_unit_display(start_unit) != _volume_unit_display(delta_unit)):
+            # Mixed but convertible volume units are allowed; convert via ml.
+            pass
+
+        # Infer common unit from explicit mentions; default to ml if omitted.
+        unit = start_unit or delta_unit or "ml"
+        start_ml = _volume_to_ml(start_v, unit)
+        delta_ml = _volume_to_ml(delta_v, delta_unit or unit)
+        if start_ml is None or delta_ml is None:
+            return _fail_loud("Split/divide amount unit is unsupported.")
+
+        remaining_ml = start_ml - delta_ml
+        if remaining_ml < 0:
+            return _fail_loud("Split/divide remaining amount is negative after reductions.")
+
+        each_ml = remaining_ml / n_v
+        each_disp = _volume_from_ml(each_ml, unit)
+        udisp = _volume_unit_display(unit)
+        if _ASK_CAPACITY_PER_CUP_RE.search(text):
+            ans = (
+                f"Equal split amount is {_fmt(each_disp)} {udisp} per cup. "
+                f"So each cup must have at least {_fmt(each_disp)} {udisp} capacity to hold its share."
+                f"\nSource: Contextual"
+            )
+        else:
+            ans = f"Equal split amount is {_fmt(each_disp)} {udisp} per cup.\nSource: Contextual"
+        return StateReasoningResult(
+            handled=True,
+            fail_loud=False,
+            family="state_transition",
+            answer=ans,
+            reason="natural_language_split_equal_remaining_after_reduction",
+        )
     total_raw = m.group("total1") or m.group("total2")
     unit_raw = m.group("unit1") or m.group("unit2") or ""
     n_raw = m.group("n1") or m.group("n2")
