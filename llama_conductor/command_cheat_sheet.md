@@ -96,15 +96,22 @@ Full commands:
 - `>>scratchpad list`
 - `>>scratchpad show [query]`
 - `>>scratchpad show all` (full dump of all stored scratchpad records for this session)
+- `>>scratchpad find <query>` (targeted scratch lookup; quote/dump helper)
 - `>>scratchpad clear` (alias: `>>scratchpad flush`)
 - `>>scratchpad add <text>`
 - `>>scratchpad delete <index|query>`
+- `>>scratch lock <index|index,index,...>` (scope reasoning to selected records)
+- `>>scratch unlock` (clear scoped lock)
 
 Aliases:
 - `>>scratch` attaches scratchpad
 - `>>scratch ...` is an alias root for all `>>scratchpad ...` commands
 - `>>attach scratch` / `>>detach scratch` map to `scratchpad`
 - `>>list scratchpad` -> `>>scratchpad list`
+- when scratchpad is attached:
+  - `lock <n>` / `lock [n,m]` -> `>>scratchpad lock <n[,m]>`
+  - `unlock <n>` / `unlock [n,m]` -> `>>scratchpad unlock`
+  - `unlock` (bare) remains KB unlock (`>>unlock`) in filesystem-KB scope
 - bare `scratchpad show <query>` -> `>>scratchpad show <query>` (only when scratchpad is attached)
 - bare `scratch show <query>` -> `>>scratchpad show <query>` (only when scratchpad is attached)
 - When scratchpad is attached:
@@ -119,6 +126,10 @@ Tips:
 - `>>detach all` also deletes scratchpad data when scratchpad is attached.
 - `>>list` is context-sensitive: scratchpad list when attached, KB list when not attached.
 - `>>list` may show more records than a normal follow-up reasoning turn uses; to query against all contents (eg: "compare xyz to abc"), run `>>scratchpad show all` first, then ask the question.
+- Scratch-grounded answers are labelled as `[Scratch]`.
+- If a locked scratch selection has no supporting evidence, router emits:
+  - `[Not found in locked scratch entries [..]. Model supplement below.]`
+  - `Source: Model (not in locked scratch)`
 - Raw captures are stored at `total_recall/session_kb/<session_id>.jsonl`.
 
 ## Sticky modes (`>>`)
