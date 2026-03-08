@@ -788,6 +788,13 @@ It prevents:
 
 Think of it as temporary working memory, not permanent truth storage. However, as the user copy pastes content into scratchpad (or invokes it via `>>wiki` or other pipelines) it is a 1:1 lossless representation. This allows you to do some *very* interesting tricks, outlined below.
 
+Scratch lock/unlock quick controls:
+- Canonical: `>>scratch lock <index|index,index,...>` and `>>scratch unlock`
+- Soft aliases (when scratchpad is attached):
+  - `lock <n>` / `lock [n,m]` -> scratch lock
+  - `unlock <n>` / `unlock [n,m]` -> scratch unlock
+- `unlock` (without index) remains the KB unlock command (`>>unlock`).
+
 ---
 
 ### Deep Example

@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 
@@ -59,6 +60,36 @@ def soft_alias_command(
         if low == "list files" and fs_attached:
             return ">>list_files"
 
+    # Always allow explicit scratch listing aliases, even if scratchpad
+    # has not been attached in this turn/session yet.
+    if low in ("list scratchpad", "list contents"):
+        return ">>scratchpad list"
+    if low.startswith("lock scratchpad "):
+        idx = t[len("lock scratchpad ") :].strip()
+        if idx:
+            return f">>scratchpad lock {idx}"
+    if low.startswith("lock scratch "):
+        idx = t[len("lock scratch ") :].strip()
+        if idx:
+            return f">>scratchpad lock {idx}"
+
+    # Soft alias: when scratchpad is attached, numeric lock forms target
+    # scratch records instead of KB SUMM locks.
+    if "scratchpad" in attached and low.startswith("lock "):
+        raw = t[5:].strip()
+        m = re.fullmatch(r"\[?\s*(\d+(?:\s*,\s*\d+)*)\s*\]?", raw)
+        if m:
+            idxs = re.sub(r"\s+", "", m.group(1))
+            return f">>scratchpad lock {idxs}"
+    # Parity alias: when scratchpad is attached, numeric unlock forms
+    # (e.g., "unlock 1" / "unlock [1,2]") route to scratch unlock.
+    # Current scratch unlock clears scratch lock scope globally.
+    if "scratchpad" in attached and low.startswith("unlock "):
+        raw = t[7:].strip()
+        m = re.fullmatch(r"\[?\s*(\d+(?:\s*,\s*\d+)*)\s*\]?", raw)
+        if m:
+            return ">>scratchpad unlock"
+
     if "scratchpad" not in attached:
         return None
 
@@ -70,7 +101,7 @@ def soft_alias_command(
         q = t[len("scratch show ") :].strip()
         if q:
             return f">>scratchpad show {q}"
-    if low in ("list", "list scratchpad"):
+    if low in ("list",):
         return ">>scratchpad list"
     if low.startswith("delete "):
         q = t[7:].strip()
