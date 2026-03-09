@@ -1,4 +1,4 @@
-# Preprint Draft: Reliability Evaluation of a Local 4B LLM using deterministic router grounding 
+# Preprint Draft: Reliability Evaluation of a Local 4B LLM using deterministic router grounding
 
 Status: pre-publication draft for peer-review preparation. Updated 2026-03-10 (WIP)
 
@@ -14,24 +14,24 @@ Across two matched batteries:
 - baseline: `120 prompts x 2 conditions = 240` runs
 - replication: `500 prompts x 2 conditions = 1000` runs
 
-grounded mode (`plus_scratch`) consistently reduced hallucination flags versus no-scratch in both batteries:
+Grounded mode (`plus_scratch`) reduced hallucination flags versus no-scratch in both batteries:
 
 - 240 battery: `4/120 (3.3%) -> 0/120 (0.0%)`
 - 1000 battery: `7/500 (1.4%) -> 1/500 (0.2%)`
 
-Negative-control refusal also remained stronger under grounded mode:
+Refusal correctness also strengthened under grounded mode:
 
 - 240 battery: `1.60 -> 2.00`
 - 1000 battery: `1.83 -> 2.00`
 
-Tradeoffs were also observed and remain non-zero (notably in contradiction metrics in the 1000 battery).
+Tradeoff: contradiction handling regressed in the 1000 battery (source prioritization `2.00 -> 1.00`, uncertainty appropriateness `1.98 -> 1.00`). Evidence classification improved (`0.92 -> 2.34`). This indicates grounding reduced hallucination exposure while introducing a measurable contradiction-handling cost in this benchmark.
 
 Claims are explicitly bounded to this benchmark design, runtime settings, and scoring rubric.
 
 Blinded-rating note:
 - A two-rater blinded adjudication protocol exists in project docs, but it was not included for the results in this evidence pack.
 - Therefore, claims here remain bounded to the automated rubric/scoring outputs and published artifacts.
-- This will be updated prior to submitting for publication. 
+- This will be updated prior to submitting for publication.
 
 ## 1. Evidence Pack Included in This Repo (`/prepub`)
 
@@ -47,7 +47,6 @@ Blinded-rating note:
 - `prepub/_STRESS-CLINIKO-REVIEW-v1.md`
 - `prepub/GPT-AUTO-TEST-v3.md`
 - `prepub/cliniko_stress_replay_expanded_20260308T194459Z.json`
-- `prepub/cliniko_stress_replay_expanded_20260308T194459Z.md`
 - `prepub/cliniko_live_sweep_20260226T110651Z.json`
 - `prepub/cliniko_live_ankle_random_battery_20260228T141106Z.json`
 
@@ -86,63 +85,58 @@ From `VALIDATION_BATTERY_REPORT2_v2_1000_20260309T130027Z.md` and `validation_ba
 
 ### 3.1 Run Integrity + Latency
 
+240 battery:
 - total runs: `240`
 - errors: `0`
 - format retries: `40`
 
-Latency:
+1000 battery:
+- total runs: `1000`
+- errors: `0`
+- format retries: `220`
+
+Latency (240 battery):
 
 - no_scratch: `p50=7.81s`, `p95=13.46s`, `p99=14.95s`, `mean=8.02s`
 - plus_scratch: `p50=7.66s`, `p95=12.70s`, `p99=14.19s`, `mean=8.15s`
 
 Interpretation: reliability constraints did not produce a large latency penalty in this setup.
 
-### 3.2 Hallucination/Refusal Signals
+### 3.2 Hallucination/Refusal Signals (Both Batteries)
 
+240 battery:
 - hallucination flags:
   - no_scratch: `4/120 (3.3%)`
   - plus_scratch: `0/120 (0.0%)`
 - refusal correctness (negative controls):
   - `1.60 -> 2.00` (delta `+0.40`, 95% CI `[+0.10, +0.80]`)
 
-### 3.3 Tradeoffs Observed
-
-- reversal hedging: `0.15 -> 0.70` (worse)
-- contradiction uncertainty appropriateness: `1.90 -> 1.15` (worse)
-- evidence classification accuracy: `3.60/6 -> 3.45/6` (small negative shift)
-
-This is the key message: better bounded reliability on hallucination/refusal dimensions, with measurable calibration tradeoffs on some adversarial dimensions.
-
-### 3.4 Larger Replication Battery (1000 runs)
-
-From `VALIDATION_BATTERY_REPORT2_v2_1000_20260309T130027Z.md`:
-
-- total runs: `1000`
-- errors: `0`
-- format retries: `220`
-
-Hallucination/refusal signal:
-
+1000 battery (replication):
 - hallucination flags:
   - no_scratch: `7/500 (1.4%)`
   - plus_scratch: `1/500 (0.2%)`
 - refusal correctness (negative controls):
   - `1.83 -> 2.00` (delta `+0.17`)
 
-Category deltas (selected):
+Interpretation: hallucination reduction was observed in both batteries. Grounded mode consistently reduced observed hallucination flags and improved refusal behavior under this benchmark setup.
 
-- evidence classification accuracy (`/6`): `0.92 -> 2.34` (improved under plus_scratch)
-- reversal hedging: `0.24 -> 0.26` (near-flat)
-- contradiction detection: `2.00 -> 0.00` (worse under plus_scratch in this run)
+### 3.3 Tradeoffs Observed (Regression Signal)
+
+240 battery tradeoffs:
+- reversal hedging: `0.15 -> 0.70` (worse)
+- contradiction uncertainty appropriateness: `1.90 -> 1.15` (worse)
+- evidence classification accuracy: `3.60/6 -> 3.45/6` (small negative shift)
+
+1000 battery tradeoffs:
+- contradiction detection: `2.00 -> 0.00` (worse under plus_scratch)
 - contradiction source prioritization: `2.00 -> 1.00` (worse)
 - contradiction uncertainty appropriateness: `1.98 -> 1.00` (worse)
+- evidence classification improved: `0.92 -> 2.34` (better under plus_scratch)
+- reversal hedging: `0.24 -> 0.26` (near-flat)
 
-Interpretation:
+Interpretation: grounded mode achieved hallucination suppression with weaker contradiction handling in this battery. This may be acceptable for some safety-prioritized workflows, but it is not a universal improvement across all reasoning dimensions.
 
-- larger-N replication supports a stable hallucination/refusal advantage for grounded mode
-- calibration tradeoffs remain and include a contradiction-handling regression in this replication
-
-## 4. Statistical Bound (zero-event caveat)
+## 4. Statistical Bound (Zero-Event Caveat)
 
 For the 240 battery `0/120` hallucination observation in grounded mode, the Rule-of-Three 95% upper bound is approximately:
 
@@ -150,7 +144,7 @@ For the 240 battery `0/120` hallucination observation in grounded mode, the Rule
 
 For the 1000 battery grounded condition (`1/500`), observed rate is `0.2%` (non-zero).
 
-So this is **not** a universal zero-hallucination claim. It is a bounded observation under tested conditions.
+So this is not a universal zero-hallucination claim. It is a bounded observation under tested conditions.
 
 ## 5. Mechanism Hypothesis
 
@@ -161,7 +155,7 @@ Observed behavior is consistent with a constrained-generation mechanism:
 - low-temperature decoding reduces sampling variance
 - explicit refusal paths avoid forced completion when support is weak
 
-This likely explains the gains in hallucination/refusal metrics and part of the calibration tradeoff profile.
+This likely explains gains in hallucination/refusal metrics and may also contribute to the contradiction calibration tradeoff.
 
 ## 6. Clinical Workflow Validation (Test-Case Evidence)
 
@@ -218,15 +212,17 @@ Rule-of-Three notes for zero-event stress observations:
 
 ### Supported by current data pack
 
-1. In this benchmark, grounded path reduced observed hallucination flags.
-2. In this benchmark, grounded path improved refusal correctness.
-3. Tradeoffs in hedging/calibration are measurable non zero, including contradiction regressions in the larger replication battery.
+1. In this benchmark, grounded path reduced observed hallucination flags (replicated in both batteries).
+2. In this benchmark, grounded path improved refusal correctness (replicated in both batteries).
+3. Grounded path traded weaker contradiction handling for hallucination suppression in the larger replication battery.
+4. Clinical workflow test cases showed full repeatability across expanded case set (`165/165`) for the tested protocol.
 
 ### Not established by this pack alone
 
 1. Universal behavior outside this benchmark shape.
 2. Open-domain long-horizon reliability guarantees.
 3. Cross-model invariance ("model-agnostic guarantee") without dedicated multi-model replications.
+4. Real-world impact of contradiction regressions without domain-specific adjudication.
 
 ## 8. Reproducibility Notes
 
@@ -237,14 +233,15 @@ This repository contains:
 - replication raw/scored/meta/prompts (`validation_battery_*_v2_1000_20260309T130027Z.*`)
 - summary reports and CIs
 
-Next peer-review step is to publish the benchmark runner + rubric scripts as a turnkey reproduction package.
+Next peer-review step is to publish the benchmark runner and rubric scripts as a turnkey reproduction package.
 Next validation step is to include the two-rater blinded adjudication path and publish inter-rater agreement outputs.
-Include both prior to publication. 
 
 ## 9. Conclusion
 
-Under bounded grounding constraints, via python router, this local 4B setup demonstrates following reliability-oriented shift:
+Under bounded grounding constraints via Python router, this local 4B setup demonstrates the following reliability-oriented shift:
 
-- fewer observed hallucination flags in the tested battery
-- stronger refusal behavior on insufficient-evidence prompts
-- explicit tradeoffs in adversarial calibration dimensions (including contradiction handling in larger replication)
+- hallucination suppression: fewer observed hallucination flags in the tested battery (`3.3% -> 0.0%` at `n=120`; `1.4% -> 0.2%` at `n=500`)
+- refusal strength: stronger refusal behavior on insufficient-evidence prompts (`1.60 -> 2.00`; `1.83 -> 2.00`)
+- measured tradeoff: weaker contradiction detection/source prioritization under grounding in the larger replication battery
+
+The hallucination reduction signal replicated at larger sample size in this bounded benchmark. Contradiction regression was also observed and should be treated as an explicit deployment tradeoff requiring use-case-specific review.
