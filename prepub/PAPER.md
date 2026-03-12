@@ -1,39 +1,51 @@
-# Preprint Draft: Reliability Evaluation of a Local 4B LLM using deterministic router grounding
+# Preprint Draft v2: Reliability Evaluation of a Local 4B LLM with Attribution Extension
 
-Status: pre-publication draft for peer-review preparation. Updated 2026-03-10 (WIP)
+Status: pre-publication draft for peer-review preparation. Updated 2026-03-12 (WIP)
 
 ## Abstract
 
-This preprint evaluates a local 4B configuration (`Qwen3-4B-Hivemind`) under two matched conditions:
+This draft extends prior reliability results for a local 4B setup by adding a model-vs-harness attribution series.
 
-1. `hivemind_no_scratch` (prompt-only evidence)
-2. `hivemind_plus_scratch` (scratch-grounded evidence path)
+Prior matched batteries (same runtime contract, routed conditions) using `Qwen3-4B-Hivemind` showed:
 
-Across two matched batteries:
+- 240 runs (`120 x 2`): hallucination flags `3.3% -> 0.0%` (`no_scratch -> plus_scratch`)
+- 1000 runs (`500 x 2`): hallucination flags `1.4% -> 0.2%`
 
-- baseline: `120 prompts x 2 conditions = 240` runs
-- replication: `500 prompts x 2 conditions = 1000` runs
+with consistent tradeoffs in contradiction handling under `plus_scratch`.
 
-Grounded mode (`plus_scratch`) reduced hallucination flags versus no-scratch in both batteries:
+New attribution series (2026-03-10) added:
 
-- 240 battery: `4/120 (3.3%) -> 0/120 (0.0%)`
-- 1000 battery: `7/500 (1.4%) -> 1/500 (0.2%)`
+1. `Qwen3-4B-Instruct-2507` raw (`500`)
+2. `Qwen3-4B-Hivemind` raw (`500`)
+3. `Qwen3-4B-Instruct-2507` routed (`500 no_scratch + 500 plus_scratch`)
 
-Refusal correctness also strengthened under grounded mode:
+Key findings:
 
-- 240 battery: `1.60 -> 2.00`
-- 1000 battery: `1.83 -> 2.00`
+- Raw baseline favored `Qwen3-4B-Instruct-2507` on hallucination flags (`0.8%` vs `1.8%`).
+- In routed `Qwen3-4B-Instruct-2507`, `plus_scratch` did not improve hallucination flags (`0.2% no_scratch`, `0.4% plus_scratch`).
+- Contradiction handling under `plus_scratch` remained weak (`detection 2.00 -> 0.00`) in routed batteries.
 
-Tradeoff: contradiction handling regressed in the 1000 battery (source prioritization `2.00 -> 1.00`, uncertainty appropriateness `1.98 -> 1.00`). Evidence classification improved (`0.92 -> 2.34`). This indicates grounding reduced hallucination exposure while introducing a measurable contradiction-handling cost in this benchmark.
+Interpretation: grounding uplift is real in some model/mode combinations, but not model-agnostic. Model selection materially affects baseline and routed outcomes.
 
-Claims are explicitly bounded to this benchmark design, runtime settings, and scoring rubric.
+Claims are explicitly bounded to this benchmark design and scoring rubric.
 
 Blinded-rating note:
-- A two-rater blinded adjudication protocol exists in project docs, but it was not included for the results in this evidence pack.
-- Therefore, claims here remain bounded to the automated rubric/scoring outputs and published artifacts.
-- This will be updated prior to submitting for publication.
 
-## 1. Evidence Pack Included in This Repo (`/prepub`)
+- A two-rater blinded adjudication protocol has been created but it was not executed for these reported runs.
+- Claims in this draft therefore remain bounded to automated rubric/scoring artifacts.
+
+## 1. Context and Scope
+
+This project positions reliability as constrained truthfulness/faithfulness under grounded tasks, not universal open-domain intelligence.
+
+This draft keeps that scope and adds attribution analysis:
+
+- How much comes from base model choice?
+- How much comes from routing + scratch grounding policy?
+
+## 2. Evidence Pack Used
+
+### 2.1 Prior routed batteries (Hivemind track)
 
 - `prepub/VALIDATION_BATTERY_REPORT.md`
 - `prepub/VALIDATION_BATTERY_REPORT2.md`
@@ -44,122 +56,168 @@ Blinded-rating note:
 - `prepub/validation_battery_scored2_v2_1000_20260309T130027Z.jsonl`
 - `prepub/validation_battery_meta_v2_1000_20260309T130027Z.json`
 - `prepub/prompts_manifest2_v2_1000_20260309T130027Z.jsonl`
+
+### 2.2 Attribution extension (2026-03-10 campaign)
+
+- `TEST_ARTIFACTS_VALIDATION/INTERIM-REPORT.md`
+- `TEST_ARTIFACTS_VALIDATION/validation_raw_qwen2507_raw_1000_20260309T175805Z.jsonl` (500 runs)
+- `TEST_ARTIFACTS_VALIDATION/validation_scored_qwen2507_raw_1000_20260309T175805Z.jsonl` (500 runs)
+- `TEST_ARTIFACTS_VALIDATION/validation_raw_hivemind_raw_1000_20260309T191228Z.jsonl` (500 runs)
+- `TEST_ARTIFACTS_VALIDATION/validation_scored_hivemind_raw_1000_20260309T191228Z.jsonl` (500 runs)
+- `TEST_ARTIFACTS_VALIDATION/validation_battery_raw2_qwen2507_routed_1000_20260309T232905Z.jsonl` (1000 runs)
+- `TEST_ARTIFACTS_VALIDATION/validation_battery_scored2_qwen2507_routed_1000_20260309T232905Z.jsonl` (1000 runs)
+- `TEST_ARTIFACTS_VALIDATION/VALIDATION_BATTERY_REPORT2_qwen2507_routed_1000_20260309T232905Z.md`
 - `prepub/_STRESS-CLINIKO-REVIEW-v1.md`
 - `prepub/GPT-AUTO-TEST-v3.md`
 - `prepub/cliniko_stress_replay_expanded_20260308T194459Z.json`
 - `prepub/cliniko_live_sweep_20260226T110651Z.json`
 - `prepub/cliniko_live_ankle_random_battery_20260228T141106Z.json`
 
-These files are the basis for all numeric claims below.
+## 3. Experimental Setup
 
-## 2. Experimental Setup (frozen per battery)
+Common generation settings for all compared runs:
 
-From `VALIDATION_BATTERY_REPORT2.md`:
-
-- model: `Qwen3-4B-Hivemind`
 - temperature: `0.2`
 - top_p: `0.9`
 - max_tokens: `768`
 - context target: `8192`
-- runs: `120 prompts x 2 conditions = 240`
 
-From `VALIDATION_BATTERY_REPORT2_v2_1000_20260309T130027Z.md` and `validation_battery_meta_v2_1000_20260309T130027Z.json`:
+Additional run controls in attribution campaign:
 
-- model: `Qwen3-4B-Hivemind`
-- temperature: `0.2`
-- top_p: `0.9`
-- max_tokens: `768`
-- context target: `8192`
-- runs: `500 prompts x 2 conditions = 1000`
+- thermal guard: trigger `86C`, hard-stop `87C`, resume `82C`
+- 10-minute cooldown between major blocks
+- sequential execution (no parallel model servers)
 
-### 2.1 Benchmark dimensions (what was actually tested)
+## 4. Benchmark Dimensions
 
-- `reversal`: tests whether the model can re-adjudicate when frame assumptions invert, instead of sticking to the first answer by inertia.
-- `tom`: tests perspective separation (who knows what, who believes what) without collapsing roles into one blended view.
-- `evidence`: tests claim-label discipline (`VERIFIED`/`SUPPORTED`/`ASSERTED`) and suppression of unsupported upgrades.
-- `retraction`: tests whether correction is incorporated cleanly when new information invalidates an earlier answer.
-- `contradiction`: tests conflict handling when sources disagree: detect conflict, prioritize source, and express uncertainty appropriately.
-- `negative_control`: tests refusal floor behavior when evidence is insufficient, to reduce fabricated completions.
+- `reversal`: re-adjudication under frame inversion.
+- `tom`: perspective separation under role-conditioned prompts.
+- `evidence`: label discipline (`VERIFIED`/`SUPPORTED`/`ASSERTED`) and over-upgrade suppression.
+- `retraction`: correction handling after invalidating updates.
+- `contradiction`: conflict detection + source priority + calibrated uncertainty.
+- `negative_control`: refusal behavior under insufficient evidence.
 
-## 3. Core Results
+## 5. Results
 
-### 3.1 Run Integrity + Latency
+### 5.1 Prior routed results (Hivemind track)
 
-240 battery:
-- total runs: `240`
-- errors: `0`
-- format retries: `40`
+Hallucination flags:
 
-1000 battery:
-- total runs: `1000`
-- errors: `0`
-- format retries: `220`
+- 240 battery: `3.3% -> 0.0%` (`no_scratch -> plus_scratch`)
+- 1000 battery: `1.4% -> 0.2%`
 
-Latency (240 battery):
+Refusal correctness:
 
-- no_scratch: `p50=7.81s`, `p95=13.46s`, `p99=14.95s`, `mean=8.02s`
-- plus_scratch: `p50=7.66s`, `p95=12.70s`, `p99=14.19s`, `mean=8.15s`
+- 240 battery: `1.60 -> 2.00`
+- 1000 battery: `1.83 -> 2.00`
 
-Interpretation: reliability constraints did not produce a large latency penalty in this setup.
+Tradeoff pattern:
 
-### 3.2 Hallucination/Refusal Signals (Both Batteries)
+- 240 battery: reversal hedging `0.15 -> 0.70`; contradiction uncertainty `1.90 -> 1.15`
+- 1000 battery: contradiction detection `2.00 -> 0.00`; source prioritization `2.00 -> 1.00`; uncertainty `1.98 -> 1.00`
+- evidence classification shifted from slight negative in 240 (`3.60 -> 3.45`) to positive in 1000 (`0.92 -> 2.34`)
 
-240 battery:
-- hallucination flags:
-  - no_scratch: `4/120 (3.3%)`
-  - plus_scratch: `0/120 (0.0%)`
-- refusal correctness (negative controls):
-  - `1.60 -> 2.00` (delta `+0.40`, 95% CI `[+0.10, +0.80]`)
+Interpretation:
 
-1000 battery (replication):
-- hallucination flags:
-  - no_scratch: `7/500 (1.4%)`
-  - plus_scratch: `1/500 (0.2%)`
-- refusal correctness (negative controls):
-  - `1.83 -> 2.00` (delta `+0.17`)
+- routed grounding yielded strong hallucination suppression in this model track.
+- gains were accompanied by measurable contradiction regressions.
 
-Interpretation: hallucination reduction was observed in both batteries. Grounded mode consistently reduced observed hallucination flags and improved refusal behavior under this benchmark setup.
+### 5.2 Attribution extension (model-vs-harness)
 
-### 3.3 Tradeoffs Observed (Regression Signal)
+Raw baselines:
 
-240 battery tradeoffs:
-- reversal hedging: `0.15 -> 0.70` (worse)
-- contradiction uncertainty appropriateness: `1.90 -> 1.15` (worse)
-- evidence classification accuracy: `3.60/6 -> 3.45/6` (small negative shift)
+- `Qwen3-4B-Instruct-2507` raw: `4/500` hallucination flags (`0.8%`)
+- `Qwen3-4B-Hivemind` raw: `9/500` hallucination flags (`1.8%`)
 
-1000 battery tradeoffs:
-- contradiction detection: `2.00 -> 0.00` (worse under plus_scratch)
-- contradiction source prioritization: `2.00 -> 1.00` (worse)
-- contradiction uncertainty appropriateness: `1.98 -> 1.00` (worse)
-- evidence classification improved: `0.92 -> 2.34` (better under plus_scratch)
-- reversal hedging: `0.24 -> 0.26` (near-flat)
+Routed `Qwen3-4B-Instruct-2507` (1000 paired runs):
 
-Interpretation: grounded mode achieved hallucination suppression with weaker contradiction handling in this battery. This may be acceptable for some safety-prioritized workflows, but it is not a universal improvement across all reasoning dimensions.
+- `no_scratch`: `1/500` (`0.2%`)
+- `plus_scratch`: `2/500` (`0.4%`)
 
-## 4. Statistical Bound (Zero-Event Caveat)
+Category-level note in routed Qwen2507 run:
 
-For the 240 battery `0/120` hallucination observation in grounded mode, the Rule-of-Three 95% upper bound is approximately:
+- contradiction under `plus_scratch`: `detection 2.00 -> 0.00`
+
+Interpretation:
+
+- model choice materially shifts raw baseline reliability.
+- scratch uplift was not reproduced in routed Qwen2507 run.
+- contradiction regression under plus_scratch appears robust across routed tracks.
+
+### 5.3 Operational profile (attribution extension)
+
+From `INTERIM-REPORT.md`:
+
+- Raw Qwen2507 block thermal p50/p95/max: `81/82/83 C`
+- Raw Hivemind block thermal p50/p95/max: `81/82/83 C`
+- Routed Qwen2507 block thermal p50/p95/max: `74/76/77 C`
+
+Latency (routed report):
+
+- no_scratch mean: `12.65s`
+- plus_scratch mean: `10.61s`
+
+Format retries:
+
+- Raw blocks: `0`
+- Routed Qwen2507 block: `249/1000` (`24.9%`)
+
+Interpretation:
+
+- no thermal penalty observed for routing in this run set.
+- format-retry burden is a non-trivial routed-path operational cost.
+
+## 6. Relation to arXiv:2603.08274
+
+Reference: `https://arxiv.org/html/2603.08274`
+
+Alignment with observed outcomes in this study:
+
+1. Model selection matters:
+   - Raw baselines differ by model (`0.8%` vs `1.8%` hallucination flags).
+2. Grounding and fabrication are distinct:
+   - Lower hallucination can coexist with weaker contradiction handling.
+3. Claims must remain bounded:
+   - Behavior is setup- and policy-dependent, not universal across all modes/models.
+
+Non-equivalence caveat:
+
+- The cited arXiv work emphasizes long-context fabrication regimes.
+- This battery is constrained, rubric-scored, and mostly fixed-context task design.
+- All reported runs in this draft were executed at `--ctx 8192`; external validity to `32K+` contexts is not established by this evidence pack.
+- Qwen overlap does not remove this boundary: `Qwen3-4B-Instruct-2507` appears in both programs, but context regime and evaluation protocol differ.
+- Therefore, the relationship is conceptual alignment, not direct benchmark comparability.
+
+Decoupling interpretation for routed Qwen2507:
+
+- The routed Qwen2507 run showed low hallucination rates but elevated format retries (`24.9%`) and weaker contradiction handling under `plus_scratch`.
+- This is consistent with capability decoupling: grounding/refusal behavior can remain strong while contradiction adjudication and schema-conformant conflict reasoning degrade under strict policy constraints.
+- In this framing, retry spikes are treated as a symptom of decoupled capability under constraint pressure, not random instability.
+- This directly motivates contradiction-aware gating and dual-pass adjudication as principled mitigations rather than ad-hoc patching.
+
+## 7. Statistical Bound (Zero-Event Caveat)
+
+For the prior Hivemind 240 battery, grounded `0/120` implies a Rule-of-Three 95% upper bound of approximately:
 
 - `3 / 120 ~= 2.5%`
 
-For the 1000 battery grounded condition (`1/500`), observed rate is `0.2%` (non-zero).
+For the prior Hivemind 1000 battery grounded result (`1/500`), observed rate is:
 
-So this is not a universal zero-hallucination claim. It is a bounded observation under tested conditions.
+- `0.2%` (non-zero)
 
-## 5. Mechanism Hypothesis
+For the attribution extension raw blocks:
 
-Observed behavior is consistent with a constrained-generation mechanism:
+- Qwen2507 raw (`4/500`) and Hivemind raw (`9/500`) are low-rate observations, but not zero-event guarantees.
 
-- evidence-bounded context reduces open recall pressure
-- structured output constraints reduce free-form drift
-- low-temperature decoding reduces sampling variance
-- explicit refusal paths avoid forced completion when support is weak
+For expanded cliniko stress replay:
 
-This likely explains gains in hallucination/refusal metrics and may also contribute to the contradiction calibration tradeoff.
+- `0/165` implies a Rule-of-Three upper bound of approximately `1.8%`.
 
-## 6. Clinical Workflow Validation (Test-Case Evidence)
+These are bounded observations under this benchmark family, not universal guarantees.
 
-This repository also includes a separate workflow-stability battery using clinical-style test cases.
+## 8. Clinical Workflow Validation (Test-Case Evidence)
+
+Separate from the contradiction/reversal battery, workflow-stability artifacts show:
 
 From `prepub/_STRESS-CLINIKO-REVIEW-v1.md`:
 
@@ -178,7 +236,7 @@ Per-case repeatability (15 repeats each):
 
 Expanded replay (same command-path contract, larger case set) from `prepub/cliniko_stress_replay_expanded_20260308T194459Z.json`:
 
-- protocol: `>>cliniko auto` with pasted `TEST-*.txt` case -> `>>cliniko review` -> `>>flush` -> guard check (`>>cliniko review` should fail-loud with no scaffold)
+- protocol: `>>cliniko auto` with pasted `TEST-*.txt` case -> `>>cliniko review` -> `>>flush` -> guard check (`>>cliniko review` fails loud with no scaffold)
 - case set: `11` core test files (`TEST-CASE-*.txt`)
 - repeats: `15` per case
 - total runs: `165`
@@ -195,53 +253,76 @@ From `prepub/GPT-AUTO-TEST-v3.md`:
 - overall average (successful runs): `85.82`
 - previous-cohort average shift: `78.83 -> 85.33` (`+6.50`)
 - review validation pass count: `11/11 -> 11/11`
-- auto-header duplication: fixed (`avg 2.0 -> 1.0`)
+- auto-header duplication fix: `avg 2.0 -> 1.0`
 - stress-run review pass rate: `45/45` (`100.0%`)
 
 Interpretation boundary:
 
 - these are workflow consistency and structural validity signals
-- they are not prospective clinical efficacy outcomes
+- these are not prospective clinical efficacy outcomes
 
 Rule-of-Three notes for zero-event stress observations:
 
-- legacy stress subset (`0/45`): 95% upper bound ~`6.7%`
-- expanded replay (`0/165`): 95% upper bound ~`1.8%`
+- legacy stress subset (`0/45`): 95% upper bound approximately `6.7%`
+- expanded replay (`0/165`): 95% upper bound approximately `1.8%`
 
-## 7. What This Does and Does Not Establish
+## 9. What This Does and Does Not Establish
 
-### Supported by current data pack
+Supported:
 
-1. In this benchmark, grounded path reduced observed hallucination flags (replicated in both batteries).
-2. In this benchmark, grounded path improved refusal correctness (replicated in both batteries).
-3. Grounded path traded weaker contradiction handling for hallucination suppression in the larger replication battery.
-4. Clinical workflow test cases showed full repeatability across expanded case set (`165/165`) for the tested protocol.
+1. In this benchmark family, routed grounding can reduce hallucination flags in specific model/mode tracks.
+2. Model choice is a first-order factor in raw and routed outcomes.
+3. Contradiction-handling degradation under strict grounding is measurable and should be treated as an explicit tradeoff.
+4. Clinical workflow stress tests remain structurally stable in the included protocol artifacts (`165/165` expanded replay).
 
-### Not established by this pack alone
+Not established:
 
-1. Universal behavior outside this benchmark shape.
-2. Open-domain long-horizon reliability guarantees.
-3. Cross-model invariance ("model-agnostic guarantee") without dedicated multi-model replications.
-4. Real-world impact of contradiction regressions without domain-specific adjudication.
+1. Universal scratch uplift across all compatible 4B models.
+2. Universal contradiction robustness under strict grounding.
+3. Open-domain or long-horizon guarantees.
 
-## 8. Reproducibility Notes
+## 10. Reproducibility Notes
 
-This repository contains:
+This draft references raw, scored, report, and interim artifacts for:
 
-- raw run outputs (`validation_battery_raw2.jsonl`)
-- scored outputs (`validation_battery_scored2.jsonl`)
-- replication raw/scored/meta/prompts (`validation_battery_*_v2_1000_20260309T130027Z.*`)
-- summary reports and CIs
+- prior Hivemind routed batteries
+- attribution raw baselines
+- attribution routed Qwen2507 battery
+- clinical workflow stress and replay artifacts
 
-Next peer-review step is to publish the benchmark runner and rubric scripts as a turnkey reproduction package.
-Next validation step is to include the two-rater blinded adjudication path and publish inter-rater agreement outputs.
+Next reproducibility step:
 
-## 9. Conclusion
+- publish a turnkey benchmark runner + rubric package for independent reruns with fixed settings and explicit model swaps.
+- execute the two-rater blinded adjudication path and publish inter-rater agreement outputs before final publication.
 
-Under bounded grounding constraints via Python router, this local 4B setup demonstrates the following reliability-oriented shift:
+## 11. Mechanism Hypothesis (Revised)
 
-- hallucination suppression: fewer observed hallucination flags in the tested battery (`3.3% -> 0.0%` at `n=120`; `1.4% -> 0.2%` at `n=500`)
-- refusal strength: stronger refusal behavior on insufficient-evidence prompts (`1.60 -> 2.00`; `1.83 -> 2.00`)
-- measured tradeoff: weaker contradiction detection/source prioritization under grounding in the larger replication battery
+Observed behavior is consistent with interaction effects:
 
-The hallucination reduction signal replicated at larger sample size in this bounded benchmark. Contradiction regression was also observed and should be treated as an explicit deployment tradeoff requiring use-case-specific review.
+- Base model prior behavior sets the raw reliability floor.
+- Grounding contracts reduce unconstrained generation pressure.
+- The same constraints can reduce contradiction adjudication flexibility.
+- Net effect depends on model-policy fit (not just policy design alone).
+
+This reframes prior claims from "general grounding uplift" to "conditional uplift with model-dependent interaction."
+
+## 12. Practical Next Steps
+
+1. Add contradiction-aware policy gating:
+   - route contradiction tasks to `no_scratch` or dual-pass adjudication by default.
+2. Keep scratch default for evidence/refusal-heavy tasks where gains are consistent.
+3. Track format-retry rate as a required operational KPI in all routed benchmarks.
+4. Add long-context stress extension to align more directly with long-context fabrication literature.
+5. Execute two-rater blinded adjudication and inter-rater agreement before final publication.
+
+## 13. Conclusion
+
+- evidence now shows more clearly that model choice and grounding policy interact.
+- Prior Hivemind routed gains remain valid as bounded observations.
+- New Qwen2507 routed evidence shows those gains do not automatically transfer.
+
+The strongest defensible position is:
+
+- reliability gains are real in specific constrained settings,
+- tradeoffs are explicit and measurable,
+- and cross-model generalization must be demonstrated, not assumed.
