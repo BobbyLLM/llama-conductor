@@ -14,6 +14,8 @@ The benchmark evidence in this draft includes `3240` runs:
 4. Attribution block: `Qwen3-4B-Hivemind` raw (`500`)
 5. Attribution block: routed `Qwen3-4B-Instruct-2507` (`500 no_scratch + 500 plus_scratch = 1000`)
 
+Separate workflow-stability evidence adds `210` additional runs (`45 + 165`) under the clinical command-path protocol, reported as a distinct validation stream rather than part of the benchmark battery.
+
 Main routed Hivemind signal:
 
 - hallucination flags dropped from `3.3% -> 0.0%` (240 battery) and `1.4% -> 0.2%` (1000 battery)
