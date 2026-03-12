@@ -180,6 +180,24 @@ Interpretation:
 - no thermal penalty observed for routing in this run set.
 - format-retry burden is a non-trivial routed-path operational cost.
 
+### 5.4 Format-Retry Decomposition (Qwen2507 Routed 1000)
+
+In the routed Qwen2507 block, format retries occurred in `249/1000` runs (`24.9%`).
+
+Distribution:
+
+- `evidence`: `166` retries (`83` no_scratch, `83` plus_scratch)
+- `contradiction`: `83` retries (all `plus_scratch`)
+
+All retry events were single-pass retries (`retry_count=1`), indicating first-pass contract misses rather than crash loops.
+
+Interpretation:
+
+- `evidence` retries are predominantly schema/enum conformance misses (format-sensitive labeling behavior).
+- `contradiction` retries under `plus_scratch` are not purely cosmetic format drift; this pattern is consistent with policy-task interaction in which required contradiction-structure sections are often not produced on first pass.
+- operationally, `24.9%` means `249` additional inference calls per `1000` planned calls for this block.
+- retry overhead is therefore both an operational cost and a diagnostic signal for policy-task mismatch.
+
 ## 6. Relation to arXiv:2603.08274
 
 Reference: `https://arxiv.org/html/2603.08274`
@@ -206,6 +224,7 @@ Decoupling interpretation for routed Qwen2507:
 - The routed Qwen2507 run showed low hallucination rates but elevated format retries (`24.9%`) and weaker contradiction handling under `plus_scratch`.
 - This is consistent with capability decoupling: grounding/refusal behavior can remain strong while contradiction adjudication and schema-conformant conflict reasoning degrade under strict policy constraints.
 - In this framing, retry spikes are treated as a symptom of decoupled capability under constraint pressure, not random instability.
+- Evidence and contradiction should not be treated as one failure class: evidence misses are mostly schema/label conformance; contradiction misses under `plus_scratch` indicate a stronger policy-task interaction signal.
 - This directly motivates contradiction-aware gating and dual-pass adjudication as principled mitigations rather than ad-hoc patching.
 
 ## 7. Statistical Bound (Zero-Event Caveat)
@@ -312,6 +331,12 @@ This draft references raw, scored, report, and interim artifacts for:
 - attribution raw baselines
 - attribution routed Qwen2507 battery
 - clinical workflow stress and replay artifacts
+
+Format-retry caveat:
+
+- `format_retry` in this harness is a first-pass noncompliance flag that triggers one additional generation call.
+- It is not an unrecoverable error counter.
+- Current runner behavior applies one retry and then scores the returned output (no second validation-gated retry loop).
 
 Next reproducibility step:
 
