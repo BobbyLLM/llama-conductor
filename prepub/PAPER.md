@@ -279,6 +279,14 @@ Rule-of-Three notes for zero-event stress observations:
 - legacy stress subset (`0/45`): 95% upper bound approximately `6.7%`
 - expanded replay (`0/165`): 95% upper bound approximately `1.8%`
 
+Supplemental analysis (combined workflow stream):
+
+- Combined zero-event bound across both workflow sets: `0/210` implies a Rule-of-Three 95% upper bound of approximately `1.43%` (`3/210`).
+- Operational invariants across the combined stream: off-target term runs `0/210`.
+- Expanded replay operational guard behavior: flush-guard failures `0/165` (metric captured in expanded replay artifact).
+- Diagnostic output strings are not perfectly canonicalized across all cases; some cases pass with lexical/format variants of the same diagnosis label.
+- Therefore, this stream should be interpreted as command-path and structural reliability evidence, not semantic canonicalization evidence.
+
 ## 9. What This Does and Does Not Establish
 
 Supported:
