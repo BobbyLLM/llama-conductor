@@ -1,0 +1,2149 @@
+{
+  "timestamp_utc": "2026-03-08T20:54:45Z",
+  "repeats_per_case": 15,
+  "case_count": 11,
+  "cases_completed": 11,
+  "cases": {
+    "TEST-ACL.txt": {
+      "status_counts": {
+        "passed": 15
+      },
+      "auto_header_count_values": [
+        1
+      ],
+      "off_target_hits_count": 0,
+      "degenerative_tail_count": 0,
+      "sensitive_restore_note_count": 0,
+      "flush_guard_fail_count": 0,
+      "unique_diagnoses": 3,
+      "top_diagnoses": [
+        [
+          "Left knee complete ACL rupture with functional instability, post-acute phase.",
+          6
+        ],
+        [
+          "Left knee complete ACL rupture with functional instability, post-acute phase",
+          6
+        ],
+        [
+          "Left knee complete ACL rupture with functional instability",
+          3
+        ]
+      ],
+      "runs": [
+        {
+          "iteration": 1,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability, post-acute phase.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 2,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 3,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability, post-acute phase.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 4,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability, post-acute phase",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 5,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 6,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability, post-acute phase.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 7,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 8,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability, post-acute phase",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 9,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability, post-acute phase.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 10,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability, post-acute phase",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 11,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability, post-acute phase",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 12,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability, post-acute phase",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 13,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability, post-acute phase",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 14,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability, post-acute phase.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 15,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Left knee complete ACL rupture with functional instability, post-acute phase.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        }
+      ]
+    },
+    "TEST-CASE-ankle-achilles-tendinopathy.txt": {
+      "status_counts": {
+        "passed": 15
+      },
+      "auto_header_count_values": [
+        1
+      ],
+      "off_target_hits_count": 0,
+      "degenerative_tail_count": 0,
+      "sensitive_restore_note_count": 0,
+      "flush_guard_fail_count": 0,
+      "unique_diagnoses": 3,
+      "top_diagnoses": [
+        [
+          "Achilles tendinopathy (clinical)",
+          9
+        ],
+        [
+          "Midportion Achilles tendinopathy, left ankle",
+          4
+        ],
+        [
+          "Achilles tendinopathy, midportion, left ankle",
+          2
+        ]
+      ],
+      "runs": [
+        {
+          "iteration": 1,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Achilles tendinopathy, midportion, left ankle",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 2,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Achilles tendinopathy (clinical)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 3,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Achilles tendinopathy, midportion, left ankle",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 4,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Midportion Achilles tendinopathy, left ankle",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 5,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Midportion Achilles tendinopathy, left ankle",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 6,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Midportion Achilles tendinopathy, left ankle",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 7,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Achilles tendinopathy (clinical)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 8,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Achilles tendinopathy (clinical)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 9,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Achilles tendinopathy (clinical)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 10,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Achilles tendinopathy (clinical)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 11,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Midportion Achilles tendinopathy, left ankle",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 12,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Achilles tendinopathy (clinical)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 13,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Achilles tendinopathy (clinical)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 14,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Achilles tendinopathy (clinical)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 15,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Achilles tendinopathy (clinical)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        }
+      ]
+    },
+    "TEST-CASE-cervical.txt": {
+      "status_counts": {
+        "passed": 15
+      },
+      "auto_header_count_values": [
+        1
+      ],
+      "off_target_hits_count": 0,
+      "degenerative_tail_count": 15,
+      "sensitive_restore_note_count": 0,
+      "flush_guard_fail_count": 0,
+      "unique_diagnoses": 2,
+      "top_diagnoses": [
+        [
+          "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          13
+        ],
+        [
+          "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis",
+          2
+        ]
+      ],
+      "runs": [
+        {
+          "iteration": 1,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 2,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 3,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 4,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 5,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 6,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 7,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 8,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 9,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 10,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 11,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 12,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 13,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 14,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 15,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical neck pain with cervicogenic headache, secondary to chronic postural stress and cervical facet joint dysfunction C4-C6, likely related to degenerative disc disease and facet joint arthrosis.",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": true,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        }
+      ]
+    },
+    "TEST-CASE-elbow-lateral-epicondylitis.txt": {
+      "status_counts": {
+        "passed": 15
+      },
+      "auto_header_count_values": [
+        1
+      ],
+      "off_target_hits_count": 0,
+      "degenerative_tail_count": 0,
+      "sensitive_restore_note_count": 0,
+      "flush_guard_fail_count": 0,
+      "unique_diagnoses": 3,
+      "top_diagnoses": [
+        [
+          "Lateral epicondylalgia",
+          12
+        ],
+        [
+          "Lateral epicondylalgia (tennis elbow), right elbow",
+          2
+        ],
+        [
+          "Lateral epicondylalgia (tennis elbow)",
+          1
+        ]
+      ],
+      "runs": [
+        {
+          "iteration": 1,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 2,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia (tennis elbow), right elbow",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 3,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 4,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 5,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 6,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 7,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia (tennis elbow)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 8,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 9,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 10,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 11,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 12,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 13,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 14,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia (tennis elbow), right elbow",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 15,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Lateral epicondylalgia",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        }
+      ]
+    },
+    "TEST-CASE-GTPS-ASCII.txt": {
+      "status_counts": {
+        "passed": 15
+      },
+      "auto_header_count_values": [
+        1
+      ],
+      "off_target_hits_count": 0,
+      "degenerative_tail_count": 0,
+      "sensitive_restore_note_count": 0,
+      "flush_guard_fail_count": 0,
+      "unique_diagnoses": 3,
+      "top_diagnoses": [
+        [
+          "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          13
+        ],
+        [
+          "Greater Trochanteric Pain Syndrome (GTPS), with Kemp's sign and 30-second single-leg stance positive",
+          1
+        ],
+        [
+          "Greater trochanteric pain syndrome (GTPS) with Kemp's sign and 30-second single-leg stance positive",
+          1
+        ]
+      ],
+      "runs": [
+        {
+          "iteration": 1,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater Trochanteric Pain Syndrome (GTPS), with Kemp's sign and 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 2,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 3,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 4,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS) with Kemp's sign and 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 5,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 6,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 7,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 8,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 9,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 10,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 11,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 12,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 13,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 14,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 15,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Greater trochanteric pain syndrome (GTPS), with Kemp's, 30-second single-leg stance positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        }
+      ]
+    },
+    "TEST-CASE-knee-patellofemoral-pain.txt": {
+      "status_counts": {
+        "passed": 15
+      },
+      "auto_header_count_values": [
+        1
+      ],
+      "off_target_hits_count": 0,
+      "degenerative_tail_count": 0,
+      "sensitive_restore_note_count": 0,
+      "flush_guard_fail_count": 0,
+      "unique_diagnoses": 4,
+      "top_diagnoses": [
+        [
+          "Patellofemoral pain syndrome (PFPS)",
+          12
+        ],
+        [
+          "Patellofemoral pain syndrome (PFPS) of the right knee",
+          1
+        ],
+        [
+          "Patellofemoral pain syndrome",
+          1
+        ],
+        [
+          "Patellofemoral pain syndrome (PFPS), right knee",
+          1
+        ]
+      ],
+      "runs": [
+        {
+          "iteration": 1,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 2,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 3,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS) of the right knee",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 4,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 5,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 6,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 7,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 8,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 9,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 10,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 11,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 12,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS), right knee",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 13,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 14,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 15,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Patellofemoral pain syndrome (PFPS)",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        }
+      ]
+    },
+    "TEST-CASE-LBP.txt": {
+      "status_counts": {
+        "passed": 15
+      },
+      "auto_header_count_values": [
+        1
+      ],
+      "off_target_hits_count": 0,
+      "degenerative_tail_count": 0,
+      "sensitive_restore_note_count": 0,
+      "flush_guard_fail_count": 0,
+      "unique_diagnoses": 4,
+      "top_diagnoses": [
+        [
+          "Mechanical low back pain",
+          11
+        ],
+        [
+          "Mechanical low back pain and hip pain",
+          2
+        ],
+        [
+          "Mechanical low back pain and bilateral hip pain",
+          1
+        ],
+        [
+          "Mechanical low back pain, bilateral hip pain",
+          1
+        ]
+      ],
+      "runs": [
+        {
+          "iteration": 1,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 2,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain and bilateral hip pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 3,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 4,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain and hip pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 5,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 6,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 7,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain, bilateral hip pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 8,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain and hip pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 9,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 10,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 11,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 12,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 13,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 14,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 15,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical low back pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        }
+      ]
+    },
+    "TEST-CASE-MIDBACK.txt": {
+      "status_counts": {
+        "passed": 15
+      },
+      "auto_header_count_values": [
+        1
+      ],
+      "off_target_hits_count": 0,
+      "degenerative_tail_count": 0,
+      "sensitive_restore_note_count": 0,
+      "flush_guard_fail_count": 0,
+      "unique_diagnoses": 2,
+      "top_diagnoses": [
+        [
+          "Mechanical thoracic pain",
+          10
+        ],
+        [
+          "Mechanical thoracic spine pain",
+          5
+        ]
+      ],
+      "runs": [
+        {
+          "iteration": 1,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 2,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic spine pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 3,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic spine pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 4,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 5,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 6,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic spine pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 7,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic spine pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 8,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 9,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 10,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 11,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 12,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 13,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 14,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic spine pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 15,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Mechanical thoracic pain",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        }
+      ]
+    },
+    "TEST-CASE-Shoulder.txt": {
+      "status_counts": {
+        "passed": 15
+      },
+      "auto_header_count_values": [
+        1
+      ],
+      "off_target_hits_count": 0,
+      "degenerative_tail_count": 0,
+      "sensitive_restore_note_count": 0,
+      "flush_guard_fail_count": 0,
+      "unique_diagnoses": 1,
+      "top_diagnoses": [
+        [
+          "Rotator cuff tendinopathy",
+          15
+        ]
+      ],
+      "runs": [
+        {
+          "iteration": 1,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 2,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 3,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 4,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 5,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 6,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 7,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 8,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 9,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 10,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 11,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 12,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 13,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 14,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 15,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        }
+      ]
+    },
+    "TEST-CASE-wrist-dequervains-tenosynovitis.txt": {
+      "status_counts": {
+        "passed": 15
+      },
+      "auto_header_count_values": [
+        1
+      ],
+      "off_target_hits_count": 0,
+      "degenerative_tail_count": 0,
+      "sensitive_restore_note_count": 5,
+      "flush_guard_fail_count": 0,
+      "unique_diagnoses": 2,
+      "top_diagnoses": [
+        [
+          "De Quervain's tenosynovitis, right wrist",
+          10
+        ],
+        [
+          "De Quervain's tenosynovitis",
+          5
+        ]
+      ],
+      "runs": [
+        {
+          "iteration": 1,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis, right wrist",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 2,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis, right wrist",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 3,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis, right wrist",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 4,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": true,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 5,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis, right wrist",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 6,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": true,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 7,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": true,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 8,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis, right wrist",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 9,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis, right wrist",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 10,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis, right wrist",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 11,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": true,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 12,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": true,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 13,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis, right wrist",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 14,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis, right wrist",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 15,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "De Quervain's tenosynovitis, right wrist",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        }
+      ]
+    },
+    "TEST-RCT.txt": {
+      "status_counts": {
+        "passed": 15
+      },
+      "auto_header_count_values": [
+        1
+      ],
+      "off_target_hits_count": 0,
+      "degenerative_tail_count": 0,
+      "sensitive_restore_note_count": 0,
+      "flush_guard_fail_count": 0,
+      "unique_diagnoses": 12,
+      "top_diagnoses": [
+        [
+          "Rotator cuff tendinopathy, with partial-thickness supraspinatus: supraspinatus tear and subacromial bursitis",
+          4
+        ],
+        [
+          "Rotator cuff tendinopathy, with partial-thickness supraspinatus tear and subacromial bursitis",
+          1
+        ],
+        [
+          "Rotator cuff tendinopathy, with Hawkins-Kennedy, Neer, Empty Can (Jobe), Speed’s positive",
+          1
+        ],
+        [
+          "Rotator cuff tendinopathy with partial-thickness supraspinatus tear and subacromial bursitis: **Tendinopathy**",
+          1
+        ],
+        [
+          "Rotator cuff tendinopathy, partial-thickness supraspinatus",
+          1
+        ]
+      ],
+      "runs": [
+        {
+          "iteration": 1,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy, with partial-thickness supraspinatus tear and subacromial bursitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 2,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy, with partial-thickness supraspinatus: supraspinatus tear and subacromial bursitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 3,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy, with Hawkins-Kennedy, Neer, Empty Can (Jobe), Speed’s positive",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 4,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy with partial-thickness supraspinatus tear and subacromial bursitis: **Tendinopathy**",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 5,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy, partial-thickness supraspinatus",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 6,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy, with partial-thickness supraspinatus: tear, subacromial bursitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 7,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy with partial-thickness supraspinatus tear and subacromial bursitis: **(Note: Tendinopathy is not explicitly stated, so it is not used in the output)**",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 8,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy, with partial-thickness supraspinatus: supraspinatus tear, and subacromial bursitis I: bursitis: bursitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 9,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy with partial-thickness supraspinatus tear and subacromial bursitis: **Hawkins-Kennedy, Neer, Empty Can (Jobe), Speed’s positive**",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 10,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy, partial-thickness supraspinatus, subacromial bursitis *Note: This is a paraphrase of the diagnosis, not an upgrade.*",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 11,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy, with partial-thickness supraspinatus: supraspinatus tear and subacromial bursitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 12,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy, with partial-thickness supraspinatus: tendon tear and subacromial bursitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 13,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy, with partial-thickness supraspinatus: supraspinatus tear and subacromial bursitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 14,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Rotator cuff tendinopathy, with partial-thickness supraspinatus: supraspinatus tear and subacromial bursitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        },
+        {
+          "iteration": 15,
+          "auto_ok": true,
+          "auto_header_count": 1,
+          "review_status": "passed",
+          "diagnosis": "Right shoulder rotator cuff tendinopathy with partial-thickness supraspinatus tear and subacromial bursitis",
+          "off_target_term_hits": [],
+          "has_degenerative_tail": false,
+          "has_sensitive_restore_note": false,
+          "flush_guard_ok": true
+        }
+      ]
+    }
+  },
+  "overall": {
+    "total_runs": 165,
+    "passed": 165,
+    "failed": 0,
+    "errors": 0,
+    "unknown": 0,
+    "pass_rate_pct": 100.0,
+    "off_target_runs": 0,
+    "off_target_rate_pct": 0.0,
+    "flush_guard_fail_runs": 0
+  }
+}
