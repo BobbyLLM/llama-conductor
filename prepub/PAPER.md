@@ -195,6 +195,8 @@ Interpretation:
 
 - `evidence` retries are predominantly schema/enum conformance misses (format-sensitive labeling behavior).
 - `contradiction` retries under `plus_scratch` are not purely cosmetic format drift; this pattern is consistent with policy-task interaction in which required contradiction-structure sections are often not produced on first pass.
+- A likely contributor to the `24.9%` rate is policy-wording collision rather than invalidation of grounded routing: contradiction tasks require source-priority language, while the scratch citation shortcut is keyword-triggered by terms such as `sources` and can return a deterministic `[Scratch] References:` block on first pass.
+- Artifact review supports this interpretation: in affected contradiction rows, first-pass `plus_scratch` outputs are reference blocks, while matched `no_scratch` rows usually return structured contradiction sections.
 - operationally, `24.9%` means `249` additional inference calls per `1000` planned calls for this block.
 - retry overhead is therefore both an operational cost and a diagnostic signal for policy-task mismatch.
 
