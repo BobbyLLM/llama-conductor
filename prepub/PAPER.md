@@ -15,6 +15,7 @@ The benchmark evidence in this draft includes `3240` runs:
 5. Attribution block: routed `Qwen3-4B-Instruct-2507` (`500 no_scratch + 500 plus_scratch = 1000`)
 
 Separate workflow-stability evidence adds `210` additional runs (`45 + 165`) under the clinical command-path protocol, reported as a distinct validation stream rather than part of the benchmark battery.
+This stream is out-of-band for core attribution claims: `>>cliniko` generation is deterministic Python sidecar logic and `>>cliniko review` runs through a different model path (`Qwen2.5-1.5B`), not the Qwen3-4B benchmark path above.
 
 Main routed Hivemind signal:
 
@@ -73,6 +74,12 @@ This draft keeps that scope and adds attribution analysis:
 - `prepub/cliniko_stress_replay_expanded_20260308T194459Z.json`
 - `prepub/cliniko_live_sweep_20260226T110651Z.json`
 - `prepub/cliniko_live_ankle_random_battery_20260228T141106Z.json`
+
+### 2.3 Stream boundary note (clinical workflow artifacts)
+
+- `>>cliniko` case generation is deterministic Python sidecar workflow.
+- `>>cliniko review` uses `Qwen2.5-1.5B`.
+- These artifacts validate workflow/protocol stability, not Qwen3-4B scratch-grounding effect size.
 
 ## 3. Experimental Setup
 
@@ -246,12 +253,18 @@ For the attribution extension raw blocks:
 For expanded cliniko stress replay:
 
 - `0/165` implies a Rule-of-Three upper bound of approximately `1.8%`.
+- this bound applies to the separate clinical workflow stream (`>>cliniko` deterministic sidecar + `>>cliniko review` on Qwen2.5-1.5B), not the Qwen3-4B benchmark battery.
 
 These are bounded observations under this benchmark family, not universal guarantees.
 
-## 8. Clinical Workflow Validation (Test-Case Evidence)
+## 8. Clinical Workflow Validation Stream (Different model path)
 
 Separate from the contradiction/reversal battery, workflow-stability artifacts show:
+
+- this stream does not share the same model path as the Qwen3-4B benchmark battery
+- `>>cliniko` execution is deterministic Python sidecar logic
+- `>>cliniko review` runs through `Qwen2.5-1.5B`
+- therefore this section is operational/workflow evidence, not direct support for Qwen3-4B scratch-attribution claims
 
 From `prepub/_STRESS-CLINIKO-REVIEW-v1.md`:
 
@@ -315,7 +328,7 @@ Supported:
 1. In this benchmark family, routed grounding can reduce hallucination flags in specific model/mode tracks.
 2. Model choice is a first-order factor in raw and routed outcomes.
 3. Contradiction-handling degradation under strict grounding is measurable and should be treated as an explicit tradeoff.
-4. Clinical workflow stress tests remain structurally stable in the included protocol artifacts (`165/165` expanded replay).
+4. Clinical workflow stress tests remain structurally stable in the included protocol artifacts (`165/165` expanded replay), but this is a separate model path and does not directly validate Qwen3-4B scratch effects.
 
 Not established:
 
@@ -332,7 +345,7 @@ This draft references raw, scored, report, and interim artifacts for:
 - prior Hivemind routed batteries
 - attribution raw baselines
 - attribution routed Qwen2507 battery
-- clinical workflow stress and replay artifacts
+- clinical workflow stress and replay artifacts (separate model path)
 
 Format-retry caveat:
 
