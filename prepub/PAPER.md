@@ -4,31 +4,29 @@ Status: pre-publication draft for peer-review preparation. Updated 2026-03-12 (W
 
 ## Abstract
 
-This draft extends prior reliability results for a local 4B setup by adding a model-vs-harness attribution series.
+This preprint evaluates reliability behavior for a local 4B stack under fixed settings (`temperature=0.2`, `top_p=0.9`, `max_tokens=768`, `--ctx 8192`) using rubric-scored grounded tasks.
 
-Prior matched batteries (same runtime contract, routed conditions) using `Qwen3-4B-Hivemind` showed:
+The benchmark evidence in this draft includes `3240` runs:
 
-- 240 runs (`120 x 2`): hallucination flags `3.3% -> 0.0%` (`no_scratch -> plus_scratch`)
-- 1000 runs (`500 x 2`): hallucination flags `1.4% -> 0.2%`
-- refusal correctness improved in both batteries (`1.60 -> 2.00`, then `1.83 -> 2.00`)
+1. Routed Hivemind battery A: `120 prompts x 2 conditions = 240` (`no_scratch`, `plus_scratch`)
+2. Routed Hivemind battery B: `500 prompts x 2 conditions = 1000`
+3. Attribution block: `Qwen3-4B-Instruct-2507` raw (`500`)
+4. Attribution block: `Qwen3-4B-Hivemind` raw (`500`)
+5. Attribution block: routed `Qwen3-4B-Instruct-2507` (`500 no_scratch + 500 plus_scratch = 1000`)
 
-with consistent tradeoffs in contradiction handling under `plus_scratch`.
+Main routed Hivemind signal:
 
-New attribution series (2026-03-10) added:
+- hallucination flags dropped from `3.3% -> 0.0%` (240 battery) and `1.4% -> 0.2%` (1000 battery)
+- refusal correctness improved (`1.60 -> 2.00`, then `1.83 -> 2.00`)
+- contradiction metrics regressed under `plus_scratch` (including `detection 2.00 -> 0.00`, `source prioritization 2.00 -> 1.00`, `uncertainty 1.98 -> 1.00`)
 
-1. `Qwen3-4B-Instruct-2507` raw (`500`)
-2. `Qwen3-4B-Hivemind` raw (`500`)
-3. `Qwen3-4B-Instruct-2507` routed (`500 no_scratch + 500 plus_scratch`)
+Attribution signal:
 
-Key findings:
+- raw baseline favored base `Qwen3-4B-Instruct-2507` over Hivemind (`0.8%` vs `1.8%` hallucination flags)
+- routed `Qwen3-4B-Instruct-2507` did not reproduce scratch uplift (`0.2% no_scratch`, `0.4% plus_scratch`)
+- routed `Qwen3-4B-Instruct-2507` incurred `24.9%` format retries
 
-- Raw baseline favored `Qwen3-4B-Instruct-2507` on hallucination flags (`0.8%` vs `1.8%`).
-- In routed `Qwen3-4B-Instruct-2507`, `plus_scratch` did not improve hallucination flags (`0.2% no_scratch`, `0.4% plus_scratch`).
-- Contradiction handling under `plus_scratch` remained weak (`detection 2.00 -> 0.00`) in routed batteries.
-
-Interpretation: grounding uplift is real in some model/mode combinations, but not model-agnostic. Model selection materially affects baseline and routed outcomes.
-
-Claims are explicitly bounded to this benchmark design and scoring rubric.
+Interpretation: reliability uplift is conditional on model-policy interaction, not model-agnostic. Grounding can reduce hallucination exposure in specific tracks while degrading contradiction handling. Claims are bounded to this benchmark family and `8K` context; external validity to `32K+` remains untested in this evidence pack.
 
 Blinded-rating note:
 
