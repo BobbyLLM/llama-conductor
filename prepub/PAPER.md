@@ -10,6 +10,7 @@ Prior matched batteries (same runtime contract, routed conditions) using `Qwen3-
 
 - 240 runs (`120 x 2`): hallucination flags `3.3% -> 0.0%` (`no_scratch -> plus_scratch`)
 - 1000 runs (`500 x 2`): hallucination flags `1.4% -> 0.2%`
+- refusal correctness improved in both batteries (`1.60 -> 2.00`, then `1.83 -> 2.00`)
 
 with consistent tradeoffs in contradiction handling under `plus_scratch`.
 
@@ -82,6 +83,11 @@ Common generation settings for all compared runs:
 - max_tokens: `768`
 - context target: `8192`
 
+Prior battery-specific freeze:
+
+- `VALIDATION_BATTERY_REPORT2.md`: model `Qwen3-4B-Hivemind`, runs `120 prompts x 2 = 240`
+- `VALIDATION_BATTERY_REPORT2_v2_1000_20260309T130027Z.md`: model `Qwen3-4B-Hivemind`, runs `500 prompts x 2 = 1000`
+
 Additional run controls in attribution campaign:
 
 - thermal guard: trigger `86C`, hard-stop `87C`, resume `82C`
@@ -101,6 +107,13 @@ Additional run controls in attribution campaign:
 
 ### 5.1 Prior routed results (Hivemind track)
 
+Run integrity and latency:
+
+- 240 battery: total runs `240`, errors `0`, format retries `40`
+- 1000 battery: total runs `1000`, errors `0`, format retries `220`
+- 240 latency no_scratch: `p50=7.81s`, `p95=13.46s`, `p99=14.95s`, `mean=8.02s`
+- 240 latency plus_scratch: `p50=7.66s`, `p95=12.70s`, `p99=14.19s`, `mean=8.15s`
+
 Hallucination flags:
 
 - 240 battery: `3.3% -> 0.0%` (`no_scratch -> plus_scratch`)
@@ -108,7 +121,7 @@ Hallucination flags:
 
 Refusal correctness:
 
-- 240 battery: `1.60 -> 2.00`
+- 240 battery: `1.60 -> 2.00` (delta `+0.40`, 95% CI `[+0.10, +0.80]`)
 - 1000 battery: `1.83 -> 2.00`
 
 Tradeoff pattern:
@@ -280,6 +293,8 @@ Not established:
 1. Universal scratch uplift across all compatible 4B models.
 2. Universal contradiction robustness under strict grounding.
 3. Open-domain or long-horizon guarantees.
+4. Cross-model invariance without dedicated multi-model replications.
+5. Real-world impact of contradiction regression without domain-specific adjudication.
 
 ## 10. Reproducibility Notes
 
@@ -317,7 +332,8 @@ This reframes prior claims from "general grounding uplift" to "conditional uplif
 
 ## 13. Conclusion
 
-- evidence now shows more clearly that model choice and grounding policy interact.
+- prior routed Hivemind batteries still show bounded hallucination suppression (`3.3% -> 0.0%` at `n=120`; `1.4% -> 0.2%` at `n=500`) with stronger refusal behavior (`1.60 -> 2.00`; `1.83 -> 2.00`).
+- attribution extension shows model-policy interaction is first-order, not incidental.
 - Prior Hivemind routed gains remain valid as bounded observations.
 - New Qwen2507 routed evidence shows those gains do not automatically transfer.
 
