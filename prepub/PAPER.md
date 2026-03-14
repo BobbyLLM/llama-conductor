@@ -17,7 +17,7 @@ Separate workflow-stability evidence adds `210` runs (`45 + 165`) and is reporte
 
 Main findings:
 
-1. Early routed Hivemind batteries showed hallucination suppression under grounding (`3.3% -> 0.0%` at 240; `1.4% -> 0.2%` at 1000), with measured contradiction tradeoffs.
+1. Early routed Hivemind batteries showed hallucination-flag suppression under grounding (`3.3% -> 0.0%` at 240; `1.4% -> 0.2%` at 1000), with measured contradiction tradeoffs.
 2. Pre-policy routed Qwen2507 did not show scratch uplift (`0.2%` no_scratch vs `0.4%` plus_scratch) and incurred `24.9%` format retries.
 3. Post-policy routed Qwen2507/Hivemind reruns and missing-lane closures reached floor-level outcomes with zero retries in those slices.
 4. Cross-family expansion showed model-policy interaction effects:
@@ -26,7 +26,7 @@ Main findings:
    - SmolLM3 routed `78/1000` with strong plus-scratch concentration (`75/500` vs `3/500` no_scratch), dominated by contradiction/reversal lane-quality degradation.
 5. A sandbox surgical lane patch followed by targeted rerun (`160` runs) yielded `0/160` flags and `0/160` errors across Granite/Phi/Smol affected lanes.
 
-Interpretation: this evidence supports a bounded system-level control claim (policy/routing can dominate observed hallucination outcomes in tested tasks), while also showing nontrivial model-policy interaction in specific lanes.
+Interpretation: this evidence supports a bounded system-level control claim (policy/routing can dominate observed hallucination-flag outcomes in tested tasks under this harness), while also showing nontrivial model-policy interaction in specific lanes.
 
 Blinded adjudication note:
 
@@ -49,6 +49,18 @@ Operational controls in extension campaigns:
 - thermal guard `86C` trigger / `87C` hard / `82C` resume
 - 10-minute inter-block cooldown
 - sequential execution (single active serving path)
+
+### 1.1 Runtime vs Evaluation Responsibilities
+
+| Component | Runtime system | Evaluation harness |
+|---|---|---|
+| Lane selection | yes | no |
+| Contract/policy enforcement | yes | no |
+| Deterministic fail-loud behavior | yes | no |
+| Format retry | no (handled by lane logic, not benchmark retry loop) | yes (single bounded retry in battery runner) |
+| Rubric scoring | no | yes |
+| Hallucination-flag assignment | no | yes |
+| Taxonomy aggregation/reporting | no | yes |
 
 ## 2. Task Dimensions
 
@@ -83,6 +95,18 @@ The benchmark is not limited to single-fact lookup. It includes frame inversion,
 - `negative_control`:
   - prompt pattern: insufficient support by design.
   - expected behavior: explicit refusal/insufficient-evidence response, no fabrication.
+
+### 2.2 Worked Example (Artifact-Grounded)
+
+Example category: `negative_control` (from errata-reviewed rows).
+
+- Prompt intent: ask for causal mechanism/threshold not present in provided evidence.
+- Expected behavior: explicit insufficient-evidence refusal.
+- Observed response family (flagged rows in pre-fix runs): short scratch acknowledgement/refusal-like phrasing without strict refusal contract tokenization.
+- Rubric outcome in those rows: `hallucination_flag=1` with `refusal_correctness=0`.
+- Taxonomy classification: `lexical/contract` (not auto-promoted to confirmed fabrication without manual adjudication).
+
+Reference: [ERRATA.md](C:/moa-router1.2.1%20TESTING/prepub/ERRATA.md)
 
 ## 3. Results
 
@@ -148,8 +172,8 @@ def eval_one_item(item, condition):
 
 ### 3.1 Legacy Hivemind Routed Batteries
 
-- 240 battery hallucination flags: `3.3% -> 0.0%`
-- 1000 battery hallucination flags: `1.4% -> 0.2%`
+- 240 battery hallucination-flag rate: `3.3% -> 0.0%`
+- 1000 battery hallucination-flag rate: `1.4% -> 0.2%`
 - refusal correctness: `1.60 -> 2.00` (240), `1.83 -> 2.00` (1000)
 
 Legacy tradeoff signal under plus_scratch:
@@ -175,10 +199,10 @@ Routed Qwen2507 (`1000` paired):
 
 Completed blocks:
 
-- Qwen2507 raw `100`: `0/100` hallucination flags
-- Hivemind raw `100`: `0/100` hallucination flags
-- routed Hivemind `600`: `0/600` hallucination flags, `0` retries
-- routed Qwen2507 `600`: `0/600` hallucination flags, `0` retries
+- Qwen2507 raw `100`: `0/100` hallucination-flag count
+- Hivemind raw `100`: `0/100` hallucination-flag count
+- routed Hivemind `600`: `0/600` hallucination-flag count, `0` retries
+- routed Qwen2507 `600`: `0/600` hallucination-flag count, `0` retries
 
 Coverage note: the `600 + 600` routed slices covered `reversal/tom/evidence/retraction`; contradiction and negative_control were closed in missing-lane runs.
 
@@ -187,31 +211,31 @@ Coverage note: the `600 + 600` routed slices covered `reversal/tom/evidence/retr
 Each closure run targets only `contradiction + negative_control` with paired no_scratch/plus_scratch runs.
 
 - routed Qwen2507 closure (`332`):
-  - hallucination flags: `0/332`
+  - hallucination-flag count: `0/332`
   - format retries: `0/332`
 
 - routed Hivemind closure (`332`):
-  - hallucination flags: `0/332`
+  - hallucination-flag count: `0/332`
   - format retries: `0/332`
 
 ### 3.5 Cross-Family Expansion Campaign (`3300`)
 
 #### granite-4.0-micro-ablit
 
-- raw `100`: hallucination flags `0`, errors `0`
-- routed `1000`: hallucination flags `11`, errors `0`, format retries `1`
+- raw `100`: hallucination-flag count `0`, errors `0`
+- routed `1000`: hallucination-flag count `11`, errors `0`, format retries `1`
 - routed category split: contradiction `1`, negative_control `10`
 
 #### Phi-4-mini
 
-- raw `100`: hallucination flags `2`, errors `2` (read timeouts)
-- routed `1000`: hallucination flags `46`, errors `0`, format retries `173`
+- raw `100`: hallucination-flag count `2`, errors `2` (read timeouts)
+- routed `1000`: hallucination-flag count `46`, errors `0`, format retries `173`
 - routed category split: contradiction `2`, negative_control `44`
 
 #### SmolLM3
 
-- raw `100`: hallucination flags `0`, errors `0`
-- routed `1000`: hallucination flags `78`, errors `0`, format retries `707`
+- raw `100`: hallucination-flag count `0`, errors `0`
+- routed `1000`: hallucination-flag count `78`, errors `0`, format retries `707`
 - routed condition split: `no_scratch 3/500`, `plus_scratch 75/500`
 - routed category split: contradiction `52`, reversal `17`, negative_control `8`, evidence `1`
 
@@ -249,7 +273,7 @@ Rubric inputs (per run):
 - prompt metadata: model, condition, lane/category, run id
 - model output payload (contracted response fields)
 - parser/validator outcome (schema/header/label compliance)
-- scorer fields (category sub-scores + final hallucination flag)
+- scorer fields (category sub-scores + final `hallucination_flag`)
 
 Decision flow (validation harness):
 
@@ -266,7 +290,7 @@ Adjudication boundary:
 
 Interpretation rule:
 
-- reported `hallucination flags` are rubric outputs, not automatic proof of fabrication.
+- reported hallucination-flag rows are rubric outputs, not automatic proof of fabrication.
 - confirmed fabrication requires adjudication beyond parser/contract and rubric artifacts.
 
 ### 4.2 Why Zero Observed Hallucination Is Plausible (Bounded Regime)
@@ -284,7 +308,7 @@ Therefore, zero-observed outcomes are interpreted as bounded protocol behavior u
 
 Strongest bounded position from current evidence:
 
-1. Policy-constrained routed orchestration can suppress observed hallucination flags to floor-level in several routed slices.
+1. Policy-constrained routed orchestration can suppress observed hallucination-flag rates to floor-level in several routed slices.
 2. Outcomes are model-policy interaction effects, not universal model-family guarantees.
 3. Cross-family expansion demonstrates that plus-scratch can reveal model-policy lane brittleness (SmolLM3 contradiction/reversal) even when other families remain near floor in routed conditions.
 4. Failure modes are auditable and classifiable; they are not opaque runtime instability.
@@ -313,7 +337,7 @@ Boundary condition:
 
 This project is best represented as a bounded reliability harness with auditable failure modes and measurable policy effects.
 
-Across all benchmark campaigns in this draft (`8764` runs), evidence supports a strong system-level control claim under bounded tasks: policy/routing can drive observed hallucination risk to floor in tested slices, but behavior remains sensitive to model-policy fit by lane. The SmolLM3 routed block demonstrates that this fit can degrade sharply without lane-scoped hardening; the post-patch targeted rerun demonstrates that these degradations are actionable and correctable.
+Across all benchmark campaigns in this draft (`8764` runs), evidence supports a strong system-level control claim under bounded tasks: policy/routing can drive observed hallucination-flag rates to floor in tested slices, but behavior remains sensitive to model-policy fit by lane. The SmolLM3 routed block demonstrates that this fit can degrade sharply without lane-scoped hardening; the post-patch targeted rerun demonstrates that these degradations are actionable and correctable.
 
 ## 9. Evidence Pack (Backmatter)
 
@@ -386,9 +410,9 @@ Across all benchmark campaigns in this draft (`8764` runs), evidence supports a 
 ### 10.2 Legacy Routed Hivemind Batteries
 
 - `240` battery:
-  - hallucination flags: `3.3% -> 0.0%` (`no_scratch -> plus_scratch`)
+  - hallucination-flag rate: `3.3% -> 0.0%` (`no_scratch -> plus_scratch`)
 - `1000` battery:
-  - hallucination flags: `1.4% -> 0.2%`
+  - hallucination-flag rate: `1.4% -> 0.2%`
 - Tradeoff signal observed in legacy runs:
   - contradiction handling weakened under plus-scratch in that phase.
 
