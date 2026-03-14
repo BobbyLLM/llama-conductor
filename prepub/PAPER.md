@@ -106,7 +106,7 @@ Example category: `negative_control` (from errata-reviewed rows).
 - Rubric outcome in those rows: `hallucination_flag=1` with `refusal_correctness=0`.
 - Taxonomy classification: `lexical/contract` (not auto-promoted to confirmed fabrication without manual adjudication).
 
-Reference: [ERRATA.md](C:/moa-router1.2.1%20TESTING/prepub/ERRATA.md)
+Reference: `prepub/ERRATA.md`
 
 ## 3. Results
 
