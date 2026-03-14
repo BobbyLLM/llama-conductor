@@ -5,6 +5,7 @@ Status: pre-publication draft for peer-review preparation. Updated 2026-03-14.
 ## Abstract
 
 This draft reports bounded reliability testing of a local 4B router-grounded stack at fixed settings (`temperature=0.2`, `top_p=0.9`, `max_tokens=768`, `--ctx 8192`) across raw and routed conditions.
+The mechanism is contract-bounded generation enforced by routing policy, explicit grounding constraints, and fail-loud behavior. Benchmark-level format retry/scoring is handled by the external validation harness.
 
 Benchmark runs analyzed in this draft: `8764`.
 
@@ -60,7 +61,90 @@ The benchmark prompt set covers six categories:
 - `contradiction`
 - `negative_control`
 
+### 2.1 Task Difficulty Evidence (Representative Examples)
+
+The benchmark is not limited to single-fact lookup. It includes frame inversion, perspective separation, correction handling, contradiction adjudication, and refusal-floor checks.
+
+- `reversal`:
+  - prompt pattern: initial claim adjudication, then explicit inversion of key premise.
+  - expected behavior: revise answer and state why prior conclusion no longer holds.
+- `tom`:
+  - prompt pattern: multiple actors with different beliefs/knowledge states.
+  - expected behavior: keep role-conditioned beliefs separate without leakage.
+- `evidence`:
+  - prompt pattern: mixed support strength from provided context.
+  - expected behavior: preserve label discipline (`VERIFIED`/`SUPPORTED`/`ASSERTED`) without unsupported upgrades.
+- `retraction`:
+  - prompt pattern: follow-up correction invalidates earlier assumption.
+  - expected behavior: update answer state and retire prior invalid claim.
+- `contradiction`:
+  - prompt pattern: conflicting statements/sources within bounded context.
+  - expected behavior: detect conflict, prioritize source, express uncertainty when unresolved.
+- `negative_control`:
+  - prompt pattern: insufficient support by design.
+  - expected behavior: explicit refusal/insufficient-evidence response, no fabrication.
+
 ## 3. Results
+
+### 3.0 Runtime Router Pipeline (Mechanism Diagram)
+
+```text
+Prompt
+  ↓
+Router (lane selection)
+  ↓
+Lane contract + grounding policy
+  ↓
+Model call
+  ↓
+Post-process / contract/source/footer normalization
+  ↓
+Deterministic lane fail-loud (when applicable) or finalized response
+```
+
+### 3.0.1 Runtime Router Control (Pseudocode)
+
+```python
+def run_turn(prompt):
+    lane = select_lane(prompt)
+    contract = lane_contract(lane)
+    response = model_call(prompt, lane=lane, contract=contract)
+    response = postprocess(response, lane=lane, contract=contract)
+    if deterministic_lane_fail_loud_triggered(response, lane):
+        return fail_loud_response(response, lane)
+    return finalize_response(response, lane)
+```
+
+### 3.0.2 Benchmark Evaluation Harness (Diagram + Pseudocode)
+
+The validation battery executes an external evaluation loop over router responses.
+
+```text
+Prompt item + condition
+  ↓
+Router call
+  ↓
+Format/contract check (harness)
+  ↓
+If invalid: one bounded retry (harness)
+  ↓
+Rubric scoring (harness)
+  ↓
+Taxonomy mapping + reporting artifacts
+```
+
+```python
+def eval_one_item(item, condition):
+    resp1 = call_router(item, condition)
+    ok1 = validate_format(item.category, resp1)
+    if not ok1:
+        resp2 = call_router(item, condition)  # single bounded retry in harness
+        resp = resp2
+    else:
+        resp = resp1
+    scores = score_item(item, resp)  # includes hallucination_flag
+    return scores
+```
 
 ### 3.1 Legacy Hivemind Routed Batteries
 
@@ -158,6 +242,44 @@ Final campaign classification (see `prepub/ERRATA.md` for artifact-level detail)
 
 No row was promoted to confirmed true fabrication without manual adjudication in this audit pass.
 
+### 4.1 Hallucination Scoring Protocol (Explicit, Harness-Level)
+
+Rubric inputs (per run):
+
+- prompt metadata: model, condition, lane/category, run id
+- model output payload (contracted response fields)
+- parser/validator outcome (schema/header/label compliance)
+- scorer fields (category sub-scores + final hallucination flag)
+
+Decision flow (validation harness):
+
+1. Evaluate transport/runtime status.
+2. Validate contract compliance (required labels/headers/schema).
+3. Compute rubric category subscores from final response.
+4. Assign preliminary `hallucination_flag` from rubric output.
+5. Map flagged rows into taxonomy (`runtime/transport`, `lexical/contract`, `rubric-coupling`, `lane-quality`, or `confirmed hallucination` after adjudication).
+
+Adjudication boundary:
+
+- automated: all run-level rubric and taxonomy preclassification
+- manual: promotion to `confirmed true hallucination` and final dispute resolution
+
+Interpretation rule:
+
+- reported `hallucination flags` are rubric outputs, not automatic proof of fabrication.
+- confirmed fabrication requires adjudication beyond parser/contract and rubric artifacts.
+
+### 4.2 Why Zero Observed Hallucination Is Plausible (Bounded Regime)
+
+Zero-observed slices are plausible in this setup because generation is constrained by:
+
+- lane contracts that narrow admissible output states
+- bounded grounding policy that suppresses unsupported free generation
+- fail-loud retry logic that rejects contract-violating responses
+- narrow task scope and fixed runtime settings (`8K`, low temperature)
+
+Therefore, zero-observed outcomes are interpreted as bounded protocol behavior under this harness, not a universal claim of intrinsic model truthfulness.
+
 ## 5. Interpretation
 
 Strongest bounded position from current evidence:
@@ -167,6 +289,8 @@ Strongest bounded position from current evidence:
 3. Cross-family expansion demonstrates that plus-scratch can reveal model-policy lane brittleness (SmolLM3 contradiction/reversal) even when other families remain near floor in routed conditions.
 4. Failure modes are auditable and classifiable; they are not opaque runtime instability.
 5. Surgical lane-targeted policy changes can materially clear affected lanes in targeted revalidation.
+
+This is a control-layer reliability result under bounded tasks. It is not evidence that base model truthfulness is universally solved.
 
 ## 6. Limitations
 
