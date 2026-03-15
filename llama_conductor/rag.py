@@ -1,4 +1,4 @@
-﻿"""Qdrant RAG retrieval/rerank layer.
+"""Qdrant RAG retrieval/rerank layer.
 
 Builds compact FACTS blocks from vector search results
 for downstream reasoning pipelines.

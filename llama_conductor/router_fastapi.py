@@ -1,4 +1,4 @@
-﻿"""FastAPI orchestration layer for llama-conductor.
+"""FastAPI orchestration layer for llama-conductor.
 
 Responsibilities:
 - expose API routes

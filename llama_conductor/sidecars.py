@@ -1,4 +1,4 @@
-﻿"""Deterministic utility sidecars (non-LLM retrieval/calculation).
+"""Deterministic utility sidecars (non-LLM retrieval/calculation).
 
 Includes helpers for:
 - calculator and memory utilities

@@ -1,4 +1,4 @@
-﻿"""Fun-mode rewrite pipeline.
+"""Fun-mode rewrite pipeline.
 
 Generates a grounded base answer and rewrites tone/voice
 without changing factual content.
