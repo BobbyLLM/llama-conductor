@@ -1,6 +1,33 @@
 # What's New
 
-*** V1.7.1 (latest)
+*** V1.7.2 (latest)
+
+TL;DR:
+Judge + Trust UX pass: clearer routing text, explicit ungrounded warning, visible winner line, and `>>flush` now clears scratchpad captures too.
+
+- `>>trust` comparative output is now cleaner/scannable:
+  - compact `A/B/C` blocks
+  - plain-English `Why` lines
+  - explicit `Cmd` line
+- `>>trust` A-path paste prompt now reads:
+  - `[PASTE EVIDENCE FOR JUDGE]`
+  - `Paste source text now (or type CANCEL).`
+  - `Enter anything else to run ungrounded >>judge.`
+- `>>judge` output now includes `Winner:`:
+  - single winner: `Winner: <item>`
+  - tied top score: `Winner: TIE (<item1>, <item2>, ...)`
+- Ungrounded `>>judge` runs now prepend a 3-line risk receipt:
+  - no evidence loaded
+  - confidence reflects model priors, not verified facts
+  - recommends `>>scratch` pathway for better outcomes
+- `>>flush` parity upgrade:
+  - now clears current session scratchpad captures
+  - clears scratch lock state
+  - still clears session-memory and judge-audit artifacts
+
+---
+
+*** V1.7.1
 
 TL;DR:
 Judge is now meaningfully grounded when scratchpad is attached.
