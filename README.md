@@ -187,7 +187,7 @@ Mentats: --enable-xyz [grounded from ingested docs with provenance]
 Result:
 - You have a deep store vault of information you can reference / update.
 
-### 7) 🎲 Vibes-based ranking ("trust me bro" but make it stochastic)
+### 7) 🎲 Vibes-based ranking ("trust me bro")
 
 WITHOUT llama-conductor:
 
