@@ -186,6 +186,40 @@ Mentats: --enable-xyz [grounded from ingested docs with provenance]
 
 Result:
 - You have a deep store vault of information you can reference / update.
+
+### 7) 🎲 Vibes-based ranking ("trust me bro" but make it stochastic)
+
+WITHOUT llama-conductor:
+
+```text
+You: Which is better for my use case, X or Y?
+Model: X.
+You: You sure?
+Model: Hmmm....actually Y.
+You: Why?
+Model: Because reasons.
+```
+
+WITH llama-conductor:
+
+You: `>>judge [criterion] : X, Y --verbose`
+
+```text
+[judge] ranking
+1. X (score=2.00)
+2. Y (score=0.00)
+Judge confidence: high
+audit_jsonl: total_recall/judge/judge_audit_<timestamp>.jsonl
+```
+
+What you actually get (instead of cosplay certainty):
+
+- Pairwise both directions (A/B then B/A), so position bias gets caught, not hidden.
+- Confidence is based on agreement pattern, not how swaggery the prose sounds.
+- Want to look at why? --verbose gives you a JSONL audit trail with provenance.
+- Attach scratchpad and judge evaluates from evidence, not vibes. Locked evidence unusable? Fail-closed.
+- Read that again slowly. IT. JUDGES. FROM. EVIDENCE. NOT. VIBES.
+
 ---
 
 ## Quickstart (First-Time, Recommended)
