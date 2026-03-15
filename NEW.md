@@ -1,6 +1,22 @@
 # What's New
 
-*** V1.7.0 (latest)
+*** V1.7.1 (latest)
+
+TL;DR:
+Judge is now meaningfully grounded when scratchpad is attached.
+If you lock scratch evidence, judge uses that scope and fails closed when evidence is unusable.
+
+- `>>judge` now consumes scratchpad evidence when attached, including lock-scoped records (`>>scratch lock <n>`).
+- Added fail-closed contract for judge when locked scratch evidence does not support the criterion/options.
+- Added reason/verdict mismatch guard with single strict verdict-only retry to reduce contradictory pair outputs.
+- Judge verbose JSONL now includes evidence provenance fields:
+  - `evidence_source`
+  - `evidence_locked_indices`
+  - `evidence_chars`
+
+---
+
+*** V1.7.0
 
 TL;DR:
 Heavy stabilization + release plumbing pass.
@@ -551,3 +567,15 @@ vault:
 
 
 
+- `>>judge` now consumes scratchpad evidence when attached, including lock-scoped records (`>>scratch lock <n>`).
+- Added fail-closed contract for judge when locked scratch evidence does not support the criterion/options.
+- Added judge reason/verdict mismatch guard with single strict verdict-only retry to reduce contradictory pair outputs.
+- Judge verbose JSONL now includes evidence provenance fields (`evidence_source`, `evidence_locked_indices`, `evidence_chars`).
+
+---
+
+*** V1.7.0
+
+TL;DR:
+Heavy stabilization + release plumbing pass.
+Less hidden jank, cleaner startup/runtime behavior, and a safer public promotion path.
