@@ -1,4 +1,4 @@
-﻿# commands/handlers.py
+# commands/handlers.py
 """Main command handling logic."""
 
 import os

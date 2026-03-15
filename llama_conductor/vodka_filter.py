@@ -1,4 +1,4 @@
-﻿"""Deterministic short-term memory filter (Vodka).
+"""Deterministic short-term memory filter (Vodka).
 
 Provides:
 - memory save/recall/delete controls (`!!`, `??`, forget/nuke)

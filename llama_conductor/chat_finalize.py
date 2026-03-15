@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from difflib import SequenceMatcher
 import hashlib

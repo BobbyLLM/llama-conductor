@@ -1,4 +1,4 @@
-﻿"""Core non-Mentats reasoning pipelines.
+"""Core non-Mentats reasoning pipelines.
 
 Holds deterministic prompt assembly and mode-specific wrappers
 for raw/serious execution paths.

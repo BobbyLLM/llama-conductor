@@ -1,4 +1,4 @@
-﻿# GPT-AUTO-TEST-v3
+# GPT-AUTO-TEST-v3
 
 Date: 2026-02-13 21:15:30
 Method: Derived from retained v2 benchmark scores + pre/post structural artifacts + stress-run evidence.

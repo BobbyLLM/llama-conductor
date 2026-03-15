@@ -1,4 +1,4 @@
-﻿"""Mentats deep-reasoning pipeline (Vault-grounded).
+"""Mentats deep-reasoning pipeline (Vault-grounded).
 
 Runs multi-pass draft/critique/final synthesis with strict
 source constraints and explicit `Sources: Vault` contract.

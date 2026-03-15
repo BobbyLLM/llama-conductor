@@ -1,4 +1,4 @@
-﻿# llama-conductor
+# llama-conductor
 ![llama-conductor banner](logo/zardoz.jpg)
 
 
