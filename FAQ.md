@@ -729,7 +729,7 @@ What it does:
 
 What it does:
 - takes `2-4` comma-separated items
-- compares each pair under one criterion in both directions (`A,B` then `B,A`)
+- compares pairs under one criterion
 - forces the judge model to return strict `A|B|TIE` verdicts
 - aggregates scores into a ranked list
 - fails loud if output cannot be parsed deterministically
