@@ -87,7 +87,7 @@ roles:
   vision: "Qwen3VL-4B-Instruct-Q4_K_M"
   coder: "Qwen3-4B-Hivemind-Inst-Q4_K_M-imat"
   second_op: "Nanbeige4-3B-Thinking-2511-Q4_K_M"
-  clinical: "qwen2.5-1.5b-instruct-q4_0"
+  judge: "Phi-4-mini-instruct-Q4_K_M"
 
 # Vault is Qdrant-only; Mentats uses this kb label when searching Qdrant.
 vault_kb_name: "vault"

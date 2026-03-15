@@ -135,17 +135,6 @@ Tips:
   - `Source: Model (not in locked scratch)`
 - Raw captures are stored at `total_recall/session_kb/<session_id>.jsonl`.
 
-## Cliniko (`>>`) [Advanced operators]
-Two-step workflow:
-1. `>>cliniko` + paste raw clinical note payload
-2. `>>cliniko review` (optional LLM polish of last scaffold)
-
-Other:
-- `>>cliniko parse` parse-only diagnostics
-Tips:
-- `>>cliniko review` requires a prior successful `>>cliniko` in the same session.
-- Deterministic scaffold first, then optional stochastic polish.
-
 ## Sticky modes (`>>`)
 - `>>fun` / `>>f` / `>>F` enable Fun mode
 - `>>fun off` / `>>f off` / `>>F off` disable Fun mode
