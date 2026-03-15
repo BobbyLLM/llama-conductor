@@ -55,12 +55,15 @@ Minimal examples:
 - `>>define <word>` word-origin/etymology lookup (deterministic Etymonline sidecar)
 - `>>exchange <query>` live currency conversion (Frankfurter API)
 - `>>weather <location>` live weather lookup (Open-Meteo API)
+- `>>judge <criterion> : item1, item2, item3 [--verbose]` pairwise ranker (2-4 items)
 - `>>find <query>` search attached KB files
 - `>>peek <query>` preview KB retrieval chunks for the query
 - `>>flush` clear CTC history cache, reset session profile/style identity, and delete session-memory JSONL files (does not detach KBs)
 Tips:
 - Use these when you want a direct tool result rather than a free-form chat answer.
 - API-backed commands (`wiki`, `define`, `exchange`, `weather`) can fail if upstream services are unavailable.
+- `>>judge` is deterministic ranking orchestration over model pairwise verdicts (`A|B|TIE`) with fail-loud parse behavior.
+- Each pair is evaluated in both directions (`A,B` then `B,A`) to reduce simple positional bias toward option A.
 - Soft aliases are supported: `profile show|set|reset|on|off`.
 - Soft aliases are supported: `preset show|set|reset`, `preset fast|balanced|max-recall`, `memory status`.
 - Manual `>>profile set` values are pinned and take precedence over inferred updates until changed again or reset.
@@ -131,6 +134,17 @@ Tips:
   - `[Not found in locked scratch entries [..]. Model supplement below.]`
   - `Source: Model (not in locked scratch)`
 - Raw captures are stored at `total_recall/session_kb/<session_id>.jsonl`.
+
+## Cliniko (`>>`) [Advanced operators]
+Two-step workflow:
+1. `>>cliniko` + paste raw clinical note payload
+2. `>>cliniko review` (optional LLM polish of last scaffold)
+
+Other:
+- `>>cliniko parse` parse-only diagnostics
+Tips:
+- `>>cliniko review` requires a prior successful `>>cliniko` in the same session.
+- Deterministic scaffold first, then optional stochastic polish.
 
 ## Sticky modes (`>>`)
 - `>>fun` / `>>f` / `>>F` enable Fun mode
