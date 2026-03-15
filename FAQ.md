@@ -78,6 +78,7 @@ For install details, see [README Quickstart](README.md#quickstart-first-time-rec
     - [Fun Rewrite (>>fr):](#fun-rewrite-fr)
   - [What do these commands *actually* do?](#what-do-these-commands-actually-do)
     - [Trust (`>>trust <query>`)](#trust-router)
+    - [Judge (`>>judge ...`)](#judge-router)
     - [Sidecars (`>>wiki`/`>>define`/`>>exchange`/`>>weather`)](#sidecars)
   - [Deep Example](#deep-example)
   - [Common workflows](#common-workflows)
@@ -720,6 +721,34 @@ What it does:
 - suggest ranked command routes (A/B/C/...)
 - suggest sidecars when they are the best route
 - keep execution in your control
+
+<a id="judge-router"></a>
+#### `>>judge <criterion> : item1, item2, item3 [--verbose]` - what does it do?
+
+`>>judge` runs deterministic pairwise ranking over a short candidate list.
+
+What it does:
+- takes `2-4` comma-separated items
+- compares pairs under one criterion
+- forces the judge model to return strict `A|B|TIE` verdicts
+- aggregates scores into a ranked list
+- fails loud if output cannot be parsed deterministically
+
+How to set up role routing:
+- set `roles.judge` in `router_config.yaml` (recommended)
+- if `roles.judge` is empty, router falls back to:
+  - `roles.critic` first
+  - then `roles.thinker`
+
+Examples:
+- `>>judge speed for daily use : rust, go, python`
+- `>>judge maintainability : monolith, modular monolith, microservices`
+- `>>judge rehab adherence likelihood : plan A, plan B, plan C --verbose`
+
+Verbose mode:
+- `--verbose` writes pairwise audit rows to:
+  - `total_recall/judge/judge_audit_<UTCSTAMP>.jsonl`
+- router also returns the exact audit file path in the command output.
 
 <a id="sidecars"></a>
 #### Sidecars (`>>wiki`, `>>define`, `>>exchange`, `>>weather`) - what are they for?
