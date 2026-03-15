@@ -203,7 +203,7 @@ Model: Because reasons.
 WITH llama-conductor:
 
 ```text
-You: `>>judge [criterion] : X, Y --verbose`
+You: >>judge [criterion] : X, Y --verbose
 [judge] ranking
 1. X (score=2.00)
 2. Y (score=0.00)
