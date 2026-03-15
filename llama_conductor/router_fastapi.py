@@ -436,7 +436,8 @@ async def _chat_exception_guard(request: Request, call_next):
 async def _startup_router() -> None:
     try:
         base = str(cfg_get("vodka.storage_dir", "") or "").strip()
-        purged = purge_session_memory_jsonl(base)
+        subdir = str(cfg_get("vodka.subdir", "vodka") or "vodka").strip()
+        purged = purge_session_memory_jsonl(base, vodka_subdir=subdir)
         _dbg(f"[DEBUG] startup session-memory purge deleted={purged}")
     except Exception:
         pass

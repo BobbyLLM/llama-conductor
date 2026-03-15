@@ -161,7 +161,7 @@ def _expand_breadcrumbs_in_text(text: str, fr: "FastRecall") -> str:
     return pattern.sub(_repl, text)
 
 
-def purge_session_memory_jsonl(storage_dir: str = "") -> int:
+def purge_session_memory_jsonl(storage_dir: str = "", vodka_subdir: str = "vodka") -> int:
     """
     Delete all session-memory JSONL files.
     Intended for router startup so each reboot starts clean.
@@ -169,19 +169,25 @@ def purge_session_memory_jsonl(storage_dir: str = "") -> int:
     """
     base = storage_dir or os.getenv("DATA_DIR") or os.getcwd()
     base = os.path.abspath(base)
-    folder = os.path.join(base, "total_recall", "session_memory")
-    if not os.path.isdir(folder):
-        return 0
     deleted = 0
-    for name in os.listdir(folder):
-        if not name.lower().endswith(".jsonl"):
+    legacy_folder = os.path.join(base, "total_recall", "session_memory")
+    sub = str(vodka_subdir or "vodka").strip().strip("/\\")
+    scoped_folder = os.path.join(base, "total_recall", sub, "session_memory") if sub else legacy_folder
+    folders = [scoped_folder]
+    if os.path.normcase(legacy_folder) != os.path.normcase(scoped_folder):
+        folders.append(legacy_folder)
+    for folder in folders:
+        if not os.path.isdir(folder):
             continue
-        p = os.path.join(folder, name)
-        try:
-            os.remove(p)
-            deleted += 1
-        except Exception:
-            continue
+        for name in os.listdir(folder):
+            if not name.lower().endswith(".jsonl"):
+                continue
+            p = os.path.join(folder, name)
+            try:
+                os.remove(p)
+                deleted += 1
+            except Exception:
+                continue
     return deleted
 
 # -------------------------------

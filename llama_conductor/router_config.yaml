@@ -112,6 +112,7 @@ vodka:
   # fast|balanced|max-recall
   preset: "balanced"
   storage_dir: "."  # empty = cwd, or set explicit path
+  subdir: "vodka"   # scoped folder under total_recall for vodka artifacts
   base_ttl_days: 3
   touch_extension_days: 5
   max_touches: 2

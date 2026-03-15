@@ -1381,9 +1381,11 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         if purge_session_memory_jsonl:
             try:
                 base = ""
+                subdir = str(cfg_get("vodka.subdir", "vodka") or "vodka").strip()
                 if state.vodka is not None and hasattr(state.vodka, "valves"):
                     base = str(getattr(state.vodka.valves, "storage_dir", "") or "").strip()
-                purged = int(purge_session_memory_jsonl(base))
+                    subdir = str(getattr(state.vodka.valves, "subdir", subdir) or subdir).strip()
+                purged = int(purge_session_memory_jsonl(base, vodka_subdir=subdir))
             except Exception:
                 purged = 0
         if not flush_ctc_cache or not state.vodka:

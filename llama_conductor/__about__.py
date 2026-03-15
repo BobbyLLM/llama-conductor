@@ -1,4 +1,4 @@
 ﻿"""Project version metadata (single runtime source of truth)."""
 
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 

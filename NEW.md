@@ -1,6 +1,22 @@
 # What's New
 
-*** V1.6.0 (latest)
+*** V1.7.0 (latest)
+
+TL;DR:
+Heavy stabilization + release plumbing pass.
+Less hidden jank, cleaner startup/runtime behavior, and a safer public promotion path.
+
+- Added first-party `>>judge` v1 command path (deterministic pairwise rank worker with fail-loud parse behavior).
+- Added live campaign bank/runner artifacts to validate `>>judge` on active router path.
+- Added global startup janitor for `total_recall/session_kb` (not just lazy per-session pruning).
+- Vodka memory storage now scopes to `total_recall/vodka/` with legacy read fallback.
+- Added Vodka startup janitor pass for `facts.json` (startup + lazy runtime janitor now both active).
+- Ran three hardening campaigns end-to-end: `>>judge` live router battery, Vodka/session-memory janitor migration + regression gates, and controlled public-refactor shakedown (rename/check + strip/compile/version parity).
+- Added large-scale hallucination validation evidence (~9k run campaign) and tied release framing back to the prepub write-up: [PAPER.md](prepub/PAPER.md).
+
+---
+
+*** V1.6.0
 
 TL;DR:
 - Completed heavy stack cutover away from active llama-swap dependency.

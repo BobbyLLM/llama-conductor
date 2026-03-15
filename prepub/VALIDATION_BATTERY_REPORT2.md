@@ -77,4 +77,6 @@ Reference pattern only: 40B-like vs 70B-like grounded behavior bands.
 | Retraction surgical | 1.5-1.7 | 1.9-2.0 | 2.00 |
 | Refusal correctness | 1.0-1.4 | 1.8-2.0 | 2.00 |
 
-
+## Assessment
+- This report supports/weakens uplift claims only for this constrained grounded battery.
+- 60B-70B equivalence remains heuristic unless confirmed against actual 40B/70B model runs on the same set.
