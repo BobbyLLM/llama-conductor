@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import string
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import combinations
@@ -40,6 +41,9 @@ class JudgeRun:
     error: str = ""
     verbose: bool = False
     audit_jsonl_path: str = ""
+    evidence_source: str = "none"
+    evidence_locked_indices: List[int] = field(default_factory=list)
+    evidence_chars: int = 0
 
 
 def parse_judge_payload(payload: str, *, min_items: int = 2, max_items: int = 4) -> Tuple[str, List[str], bool, str]:
@@ -80,7 +84,23 @@ def parse_judge_payload(payload: str, *, min_items: int = 2, max_items: int = 4)
     return criterion, items, verbose, ""
 
 
-def _judge_prompt(criterion: str, item_a: str, item_b: str, *, retry: bool = False) -> str:
+def _judge_prompt(
+    criterion: str,
+    item_a: str,
+    item_b: str,
+    *,
+    retry: bool = False,
+    evidence_block: str = "",
+) -> str:
+    evidence = str(evidence_block or "").strip()
+    evidence_text = ""
+    if evidence:
+        evidence_text = (
+            "\n"
+            "Evidence (authoritative for this comparison):\n"
+            f"{evidence}\n"
+            "Use this evidence directly. If evidence is insufficient to separate A/B, return TIE.\n"
+        )
     if retry:
         return (
             "You are a strict comparator.\n"
@@ -89,6 +109,7 @@ def _judge_prompt(criterion: str, item_a: str, item_b: str, *, retry: bool = Fal
             f"Criterion: {criterion}\n"
             f"Option A: {item_a}\n"
             f"Option B: {item_b}\n"
+            f"{evidence_text}"
         )
     return (
         "You are a strict comparator.\n"
@@ -100,6 +121,7 @@ def _judge_prompt(criterion: str, item_a: str, item_b: str, *, retry: bool = Fal
         f"Criterion: {criterion}\n"
         f"Option A: {item_a}\n"
         f"Option B: {item_b}\n"
+        f"{evidence_text}"
     )
 
 
@@ -136,6 +158,37 @@ def _parse_reasoning(raw: str) -> str:
             continue
         return ln[:220]
     return ""
+
+
+def _normalize_text(s: str) -> str:
+    t = str(s or "").lower().strip()
+    if not t:
+        return ""
+    trans = str.maketrans({ch: " " for ch in string.punctuation})
+    t = t.translate(trans)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _detect_reason_preference(reason: str, left: str, right: str) -> Optional[str]:
+    """Return 'A'/'B' when reason clearly prefers one side, else None.
+
+    Low-blast heuristic:
+    - if reason mentions exactly one option label (normalized), treat that as preferred.
+    - if both/neither are present, do not infer preference.
+    """
+    r = _normalize_text(reason)
+    a = _normalize_text(left)
+    b = _normalize_text(right)
+    if not r or not a or not b:
+        return None
+    has_a = a in r
+    has_b = b in r
+    if has_a and not has_b:
+        return "A"
+    if has_b and not has_a:
+        return "B"
+    return None
 
 
 def _score_verdict(verdict: str) -> Tuple[float, float]:
@@ -178,6 +231,9 @@ def _write_audit_jsonl(*, run: JudgeRun, audit_dir: str) -> str:
                 "verdict": cmp.verdict,
                 "reasoning": cmp.reasoning,
                 "raw_output": cmp.raw_output,
+                "evidence_source": run.evidence_source,
+                "evidence_locked_indices": list(run.evidence_locked_indices),
+                "evidence_chars": int(run.evidence_chars),
             }
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
     return path
@@ -191,9 +247,14 @@ def run_judge(
     call_model_prompt_fn: Callable[..., str],
     verbose: bool = False,
     audit_dir: str = os.path.join("total_recall", "judge"),
+    evidence_block: str = "",
+    evidence_source: str = "none",
+    evidence_locked_indices: Optional[List[int]] = None,
 ) -> JudgeRun:
     scores: Dict[str, float] = {item: 0.0 for item in items}
     comparisons: List[JudgeComparison] = []
+    normalized_evidence = str(evidence_block or "").strip()
+    locked_indices = [int(i) for i in (evidence_locked_indices or []) if int(i) > 0]
 
     for idx_a, idx_b in combinations(range(len(items)), 2):
         item_a = items[idx_a]
@@ -202,7 +263,13 @@ def run_judge(
         for order, left, right in (("ab", item_a, item_b), ("ba", item_b, item_a)):
             raw = call_model_prompt_fn(
                 role=role,
-                prompt=_judge_prompt(criterion, left, right, retry=False),
+                prompt=_judge_prompt(
+                    criterion,
+                    left,
+                    right,
+                    retry=False,
+                    evidence_block=normalized_evidence,
+                ),
                 max_tokens=48,
                 temperature=0.0,
                 top_p=1.0,
@@ -212,7 +279,13 @@ def run_judge(
                 # Single strict retry path (middle-ground latency/correctness tradeoff).
                 retry_raw = call_model_prompt_fn(
                     role=role,
-                    prompt=_judge_prompt(criterion, left, right, retry=True),
+                    prompt=_judge_prompt(
+                        criterion,
+                        left,
+                        right,
+                        retry=True,
+                        evidence_block=normalized_evidence,
+                    ),
                     max_tokens=8,
                     temperature=0.0,
                     top_p=1.0,
@@ -232,9 +305,35 @@ def run_judge(
                 raw = retry_raw
 
             s_left, s_right = _score_verdict(verdict)
+            reasoning = _parse_reasoning(raw)
+            inferred = _detect_reason_preference(reasoning, left, right)
+            if inferred is not None and inferred != verdict:
+                # One strict retry when reason text and verdict conflict.
+                retry_raw = call_model_prompt_fn(
+                    role=role,
+                    prompt=_judge_prompt(
+                        criterion,
+                        left,
+                        right,
+                        retry=True,
+                        evidence_block=normalized_evidence,
+                    ),
+                    max_tokens=8,
+                    temperature=0.0,
+                    top_p=1.0,
+                )
+                retry_verdict = _parse_verdict(retry_raw)
+                if retry_verdict in {"A", "B", "TIE"}:
+                    verdict = str(retry_verdict)
+                else:
+                    verdict = "TIE"
+                retry_reason = _parse_reasoning(retry_raw)
+                reasoning = retry_reason or "[verdict-only retry applied]"
+                raw = f"{str(raw or '')}\n[retry_verdict_only]\n{str(retry_raw or '')}"
+
+            s_left, s_right = _score_verdict(verdict)
             scores[left] += s_left
             scores[right] += s_right
-            reasoning = _parse_reasoning(raw)
             comparisons.append(
                 JudgeComparison(
                     criterion=criterion,
@@ -257,6 +356,9 @@ def run_judge(
         comparison_count=len(comparisons),
         confidence=_confidence_tier(ranked),
         verbose=verbose,
+        evidence_source=(str(evidence_source or "").strip() or "none"),
+        evidence_locked_indices=locked_indices,
+        evidence_chars=len(normalized_evidence),
     )
 
     if verbose:
