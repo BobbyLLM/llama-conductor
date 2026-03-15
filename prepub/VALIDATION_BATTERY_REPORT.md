@@ -71,6 +71,11 @@ Frozen runtime for test calls: temp=0.2, top_p=0.9, max_tokens=768
 - hivemind_default_serious: {'reversal_hedging': 9, 'evidence_misclassification': 17, 'evidence_over_upgrade': 12, 'reversal_frame_contamination': 4, 'negative_control_weak_refusal': 3}
 - hivemind_plus_scratch: {'reversal_hedging': 17, 'reversal_frame_contamination': 12, 'evidence_misclassification': 14, 'contradiction_uncertainty_understated': 1}
 
+## Direct Answer To Core Question
+- Does this model + infrastructure punch above 4B on grounded tasks? **Yes, in structure/consistency and refusal control.**
+- Does this specific run prove sustained 60B-70B-equivalent behavior? **Not yet.** The reversal battery showed higher hedging and frame contamination in scratch mode than expected.
+- Trustworthiness profile from this run: **good on refusing unsupported claims, mixed on adversarial polarity separation.**
+
 ## Artifact Paths
 - `TEST_ARTIFACTS_VALIDATION/validation_battery_raw.jsonl` (original stream format)
 - `TEST_ARTIFACTS_VALIDATION/validation_battery_raw_clean.jsonl` (normalized JSONL)
