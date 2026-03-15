@@ -3,7 +3,7 @@
 *** V1.7.2 (latest)
 
 TL;DR:
-Judge + Trust UX pass: clearer routing text, explicit ungrounded warning, visible winner line, and `>>flush` now clears scratchpad captures too.
+Judge + Trust UX pass: clearer routing text, explicit ungrounded warning, visible winner line, and `>>flush` now clears scratchpad captures too. Plus a BONUS GOODY - see below.
 
 - `>>trust` comparative output is now cleaner/scannable:
   - compact `A/B/C` blocks
@@ -24,6 +24,29 @@ Judge + Trust UX pass: clearer routing text, explicit ungrounded warning, visibl
   - now clears current session scratchpad captures
   - clears scratch lock state
   - still clears session-memory and judge-audit artifacts
+
+BONUS GOODY TIME!
+
+**MoA Chat Bridge** - a Firefox extension that replaces Firefox's built-in "Ask AI Chatbot" context menu for localhost LLM providers.
+
+**Problem:** Firefox's built-in AI Chatbot sidebar sends selected text via a `?q=` URL parameter. llama.cpp WebUI doesn't clear that param after consumption, so re-renders can re-read it and trigger a second generation. That's a llama.cpp WebUI bug, not Firefox.
+
+**Solution:** A four-file extension (`manifest.json`, `background.js`, `sidebar.html`, `bridge.js`) that:
+
+- adds a "MoA Chat" right-click menu with Summarize / Translate / Analyze Sentiment / Send to Chat
+- opens llama.cpp WebUI in a sidebar iframe (`sidebar.html`)
+- uses `browser.storage.local` to pass selected text + prompt prefix to the content script (`bridge.js`)
+- injects text directly into the WebUI textarea and fires `input` so React picks it up
+- never uses `?q=`, so no double-generation path
+
+**Location:** `extras/firefox-extension/`
+
+**XPI:** [moa chat bridge.xpi](extras/firefox-extension/moa%20chat%20bridge.xpi)
+
+**Install:**
+- temporary load via `about:debugging`
+- or install signed `.xpi` via `about:addons` -> Install From File
+- self-distributed, signed by Mozilla, not listed on public AMO
 
 ---
 
