@@ -1,9 +1,9 @@
-﻿# commands/handlers.py
+# commands/handlers.py
 """Main command handling logic."""
 
 import os
 import re
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Set
 
 from ..config import (
     KB_PATHS,
@@ -23,6 +23,8 @@ from ..interaction_profile import (
 )
 from ..helpers import is_command, strip_cmd_prefix, parse_args
 from ..vault_ops import summ_new_in_kb, move_summ_to_vault
+from ..model_calls import call_model_prompt
+from .cliniko import handle_cliniko_command
 from .registry import resolve_command_key
 
 # Optional imports (feature-detected)
@@ -80,6 +82,7 @@ try:
         delete_scratchpad_by_index,
         delete_scratchpad_by_query,
         build_scratchpad_dump_text,
+        build_scratchpad_facts_block,
     )
 except Exception:
     get_session_scratchpad_path = None  # type: ignore
@@ -89,12 +92,26 @@ except Exception:
     delete_scratchpad_by_index = None  # type: ignore
     delete_scratchpad_by_query = None  # type: ignore
     build_scratchpad_dump_text = None  # type: ignore
+    build_scratchpad_facts_block = None  # type: ignore
 
 try:
     from ..vodka_filter import purge_session_memory_jsonl, VodkaFilter  # type: ignore
 except Exception:
     purge_session_memory_jsonl = None  # type: ignore
     VodkaFilter = None  # type: ignore
+
+try:
+    from ..judge_worker import (  # type: ignore
+        parse_judge_payload,
+        run_judge,
+        format_judge_run,
+        USAGE_TEXT as JUDGE_USAGE_TEXT,
+    )
+except Exception:
+    parse_judge_payload = None  # type: ignore
+    run_judge = None  # type: ignore
+    format_judge_run = None  # type: ignore
+    JUDGE_USAGE_TEXT = "[judge] unavailable"
 
 
 def _core_help_text() -> str:
@@ -106,7 +123,7 @@ def _core_help_text() -> str:
         "- `>>status` | `>>status full` | `>>status raw`\n"
         "- `>>attach <kb>` | `>>detach <kb>` | `>>detach all`\n"
         "- `>>list_kb` | `>>list_files` | `>>lock <SUMM_*.md>` | `>>unlock`\n"
-        "- `>>scratch` | `>>attach scratchpad` | `>>scratchpad status|list|show|clear|add|delete`\n"
+        "- `>>scratch` | `>>attach scratchpad` | `>>scratch status|lock|unlock|find` | `>>scratchpad status|list|show|find|clear|add|delete`\n"
         "\n"
         "## Modes\n"
         "Changes response style; does not change grounding contracts.\n"
@@ -126,6 +143,7 @@ def _core_help_text() -> str:
         "- `>>faq`\n"
         "- `>>trust <query>`\n"
         "- `>>wiki <topic>` | `>>define <word>` | `>>exchange <query>` | `>>weather <location>`\n"
+        "- `>>judge <criterion> : item1, item2, item3 [--verbose]`\n"
         "- `>>trust` recommends routes; execution remains manual.\n"
         "- Sidecars are deterministic utility lookups/conversions.\n"
         "- `!! <text>` | `!! forget <query>` | `!! nuke`\n"
@@ -417,9 +435,23 @@ def _memory_status_snapshot(session_id: str, state: SessionState) -> Dict[str, o
     return out
 
 
+def _parse_scratch_lock_indices(arg: str) -> Set[int]:
+    out: Set[int] = set()
+    for piece in re.split(r"[\s,]+", str(arg or "").strip()):
+        if not piece:
+            continue
+        if not piece.isdigit():
+            continue
+        n = int(piece)
+        if n > 0:
+            out.add(n)
+    return out
+
+
 def _render_status_raw(session_id: str, state: SessionState) -> str:
     cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip()
     effective_preset = (state.vodka_preset_override or cfg_preset or "balanced").strip()
+    scratch_lock = sorted(int(i) for i in (getattr(state, "scratchpad_locked_indices", set()) or set()) if int(i) > 0)
     return (
         "[status]\n"
         f"session_id={session_id}\n"
@@ -438,6 +470,7 @@ def _render_status_raw(session_id: str, state: SessionState) -> str:
         f"profile_last_updated_turn={state.interaction_profile.last_updated_turn}\n"
         f"serious_ack_reframe_streak={state.serious_ack_reframe_streak}\n"
         f"serious_repeat_streak={state.serious_repeat_streak}\n"
+        f"scratchpad_lock={scratch_lock!r}\n"
         f"last_query={state.rag_last_query!r}\n"
         f"last_hits={state.rag_last_hits}\n"
         f"vault_last_query={state.vault_last_query!r}\n"
@@ -468,6 +501,8 @@ def _render_status(session_id: str, state: SessionState) -> str:
     else:
         attach_label = f"{len(attached)} attached"
     memory = _memory_status_snapshot(session_id, state)
+    scratch_lock = sorted(int(i) for i in (getattr(state, "scratchpad_locked_indices", set()) or set()) if int(i) > 0)
+    scratch_lock_label = ",".join(str(i) for i in scratch_lock) if scratch_lock else "none"
     return (
         "# Router Status\n\n"
         f"- `Session`: `{session_id}`\n"
@@ -475,6 +510,7 @@ def _render_status(session_id: str, state: SessionState) -> str:
         f"- `Grounding`: attached=`{attach_label}` | lock=`{lock_label}`\n"
         f"- `Memory`: preset=`{effective_preset}` | units=`{memory.get('unit_count')}` | last_update_turn=`{memory.get('last_update_turn')}`\n"
         f"- `Retrieval`: fs_hits=`{state.rag_last_hits}` | vault_hits=`{state.vault_last_hits}`\n"
+        f"- `Scratchpad`: lock=`{scratch_lock_label}`\n"
         f"- `Profile`: enabled=`{state.profile_enabled}` | strength=`{state.profile_effective_strength:.2f}`\n"
     )
 
@@ -482,6 +518,7 @@ def _render_status(session_id: str, state: SessionState) -> str:
 def _render_status_full(session_id: str, state: SessionState) -> str:
     cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip()
     effective_preset = (state.vodka_preset_override or cfg_preset or "balanced").strip()
+    scratch_lock = sorted(int(i) for i in (getattr(state, "scratchpad_locked_indices", set()) or set()) if int(i) > 0)
     return (
         "# Router Status (Full)\n\n"
         "## Session\n"
@@ -508,6 +545,7 @@ def _render_status_full(session_id: str, state: SessionState) -> str:
         f"- `last_hits`: `{state.rag_last_hits}`\n"
         f"- `vault_last_query`: `{state.vault_last_query}`\n"
         f"- `vault_last_hits`: `{state.vault_last_hits}`\n"
+        f"- `scratchpad_lock`: `{scratch_lock}`\n"
         "\n"
         "## Runtime Control\n"
         f"- `vodka_preset`: `{effective_preset}`\n"
@@ -616,28 +654,38 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
     if len(parts) >= 2 and parts[0].lower() == "list" and parts[1].lower() == "scratchpad":
         low = "scratchpad list"
         parts = ["scratchpad", "list"]
+    # Alias: >>list contents -> >>scratchpad list (only when scratchpad attached)
+    if len(parts) >= 2 and parts[0].lower() == "list" and parts[1].lower() == "contents":
+        if "scratchpad" in (state.attached_kbs or set()):
+            low = "scratchpad list"
+            parts = ["scratchpad", "list"]
+    # Alias bridge: >>lock scratchpad <n[,m,...]> / >>lock scratch <n[,m,...]>
+    if len(parts) >= 3 and parts[0].lower() == "lock" and parts[1].lower() in {"scratchpad", "scratch"}:
+        low = "scratchpad lock " + " ".join(parts[2:])
+        parts = ["scratchpad", "lock", *parts[2:]]
 
     cmd_key = resolve_command_key(low, parts)
 
-    # Scratchpad shorthand aliases when scratchpad is attached
-    # - >>add <text>  -> >>scratchpad add <text>
+    # Scratchpad shorthand aliases
+    # - >>add <text>  -> auto-attach scratchpad + add
     # - >>list        -> >>scratchpad list (only when scratchpad attached)
-    if "scratchpad" in state.attached_kbs:
-        if parts and parts[0].lower() == "add":
-            if not capture_scratchpad_output:
-                return "[scratchpad] add unavailable"
-            payload = cmd[len(parts[0]) :].strip()
-            if not payload:
-                return "[scratchpad] usage: >>add <text>"
-            rec = capture_scratchpad_output(
-                session_id=session_id,
-                source_command=">>add",
-                text=payload,
-            )
-            if not rec:
-                return "[scratchpad] add failed"
-            return f"[scratchpad] added sha={str(rec.get('sha256', ''))[:12]}"
+    if parts and parts[0].lower() == "add":
+        if not capture_scratchpad_output:
+            return "[scratchpad] add unavailable"
+        payload = cmd[len(parts[0]) :].strip()
+        if not payload:
+            return "[scratchpad] usage: >>add <text>"
+        state.attached_kbs.add("scratchpad")
+        rec = capture_scratchpad_output(
+            session_id=session_id,
+            source_command=">>add",
+            text=payload,
+        )
+        if not rec:
+            return "[scratchpad] add failed"
+        return f"[scratchpad] added sha={str(rec.get('sha256', ''))[:12]}"
 
+    if "scratchpad" in state.attached_kbs:
         if low == "list" and list_scratchpad_records:
             recs = list_scratchpad_records(session_id, limit=20)
             if not recs:
@@ -726,6 +774,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
                     state.vodka = VodkaFilter()
                     vodka_cfg = dict(cfg_get("vodka", {}))
                     state.vodka.valves.storage_dir = str(vodka_cfg.get("storage_dir", state.vodka.valves.storage_dir) or state.vodka.valves.storage_dir)
+                    state.vodka.valves.subdir = str(vodka_cfg.get("subdir", state.vodka.valves.subdir) or state.vodka.valves.subdir)
                     state.vodka.valves.enable_summary = bool(vodka_cfg.get("enable_summary", state.vodka.valves.enable_summary))
                     state.vodka.valves.summary_require_session_id = bool(
                         vodka_cfg.get("summary_require_session_id", state.vodka.valves.summary_require_session_id)
@@ -954,23 +1003,57 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             state.attached_kbs.add("scratchpad")
             return (
                 f"[router] attached: {sorted(state.attached_kbs)}\n"
-                "cmd: >>attach scratchpad | >>detach scratchpad | >>scratch status | >>scratch list\n"
+                "cmd: >>attach scratchpad | >>detach scratchpad | >>scratch status|lock|unlock|find | >>scratch list\n"
                 "see >>help for full scratchpad commands"
             )
 
         sub = parts[1].lower() if len(parts) > 1 else "status"
+        if sub in ("strict", "free", "assist", "assisted"):
+            return "[scratchpad] mode controls removed; unified scratch behavior is active."
+
+        if sub == "lock":
+            arg = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+            if not arg:
+                return "[scratchpad] usage: >>scratch lock <index|index,index,...>"
+            if arg.lower() in {"off", "none", "clear", "reset"}:
+                state.scratchpad_locked_indices.clear()
+                return "[scratchpad] lock cleared"
+            recs = list_scratchpad_records(session_id, limit=1000000)
+            n_total = len(recs)
+            wanted = _parse_scratch_lock_indices(arg)
+            if not wanted:
+                return "[scratchpad] usage: >>scratch lock <index|index,index,...>"
+            invalid = sorted(i for i in wanted if i < 1 or i > n_total)
+            if invalid:
+                return (
+                    "[scratchpad] lock failed: invalid index(es): "
+                    + ", ".join(str(i) for i in invalid)
+                    + f" (valid range: 1..{max(1, n_total)})"
+                )
+            state.scratchpad_locked_indices = set(sorted(wanted))
+            return "[scratchpad] locked indices: " + ", ".join(str(i) for i in sorted(state.scratchpad_locked_indices))
+
+        if sub == "unlock":
+            state.scratchpad_locked_indices.clear()
+            return "[scratchpad] unlocked (all records eligible)"
 
         if sub in ("clear", "flush"):
             ok = clear_scratchpad(session_id)
+            state.scratchpad_locked_indices.clear()
             return "[scratchpad] cleared" if ok else "[scratchpad] clear failed"
 
         if sub in ("list", "ls"):
-            recs = list_scratchpad_records(session_id, limit=20)
+            recs = list_scratchpad_records(session_id, limit=1000000)
             if not recs:
                 return "[scratchpad] empty"
+            state.scratchpad_locked_indices = {
+                i for i in (getattr(state, "scratchpad_locked_indices", set()) or set())
+                if isinstance(i, int) and 1 <= i <= len(recs)
+            }
+            shown = recs[-20:]
             lines = [f"[scratchpad] last {len(recs)} capture(s):"]
             start = max(0, len(recs) - 20)
-            for i, rec in enumerate(recs[start:], 1):
+            for i, rec in enumerate(shown, start + 1):
                 src = str(rec.get("source_command", "unknown"))
                 txt = str(rec.get("text", "") or "")
                 preview = str(rec.get("preview", "") or "").strip()
@@ -987,7 +1070,50 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             query = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
             if not query:
                 query = "all"
-            return build_scratchpad_dump_text(session_id=session_id, query=query)
+            recs_all = list_scratchpad_records(session_id, limit=1000000)
+            state.scratchpad_locked_indices = {
+                i for i in (getattr(state, "scratchpad_locked_indices", set()) or set())
+                if isinstance(i, int) and 1 <= i <= len(recs_all)
+            }
+            locked = set(getattr(state, "scratchpad_locked_indices", set()) or set())
+            return build_scratchpad_dump_text(session_id=session_id, query=query, locked_indices=locked)
+
+        if sub == "find":
+            if not build_scratchpad_dump_text:
+                return "[scratchpad] find unavailable"
+            query = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+            if not query:
+                return "[scratchpad] usage: >>scratch find <query>"
+            recs_all = list_scratchpad_records(session_id, limit=1000000)
+            state.scratchpad_locked_indices = {
+                i for i in (getattr(state, "scratchpad_locked_indices", set()) or set())
+                if isinstance(i, int) and 1 <= i <= len(recs_all)
+            }
+            locked = set(getattr(state, "scratchpad_locked_indices", set()) or set())
+            if build_scratchpad_facts_block:
+                sp_top_k = int(cfg_get("scratchpad.top_k", 3))
+                sp_max_chars = int(cfg_get("scratchpad.max_chars", 1200))
+                facts = build_scratchpad_facts_block(
+                    session_id=session_id,
+                    query=query,
+                    top_k=sp_top_k,
+                    max_chars=sp_max_chars,
+                    locked_indices=locked,
+                )
+                if facts:
+                    rows: List[str] = []
+                    for ln in facts.splitlines():
+                        s = (ln or "").strip()
+                        if not s.startswith("- [scratchpad "):
+                            continue
+                        if "] " in s:
+                            rows.append("- " + s.split("] ", 1)[1].strip())
+                    if rows:
+                        return "[scratchpad find]\n" + "\n".join(rows)
+            out = build_scratchpad_dump_text(session_id=session_id, query=query, locked_indices=locked)
+            if out.startswith("[scratchpad dump]"):
+                out = out.replace("[scratchpad dump]", "[scratchpad find]", 1)
+            return out
 
         if sub == "add":
             if not capture_scratchpad_output:
@@ -1022,13 +1148,20 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             return f"[scratchpad] deleted {n} record(s)"
 
         recs = list_scratchpad_records(session_id, limit=1000000)
+        state.scratchpad_locked_indices = {
+            i for i in (getattr(state, "scratchpad_locked_indices", set()) or set())
+            if isinstance(i, int) and 1 <= i <= len(recs)
+        }
         attached = "scratchpad" in state.attached_kbs
+        locked = sorted(int(i) for i in (getattr(state, "scratchpad_locked_indices", set()) or set()) if int(i) > 0)
+        locked_str = ",".join(str(i) for i in locked) if locked else "none"
         return (
             "[scratchpad status]\n"
             f"attached={attached}\n"
+            f"lock={locked_str}\n"
             f"captures={len(recs)}\n"
             "tip: raw captures are stored in total_recall/session_kb/<session_id>.jsonl\n"
-            "cmd: >>attach scratchpad | >>detach scratchpad | >>scratch status | >>scratch list\n"
+            "cmd: >>attach scratchpad | >>detach scratchpad | >>scratch status|lock|unlock|find | >>scratch list\n"
             "see >>help for full scratchpad commands"
         )
 
@@ -1054,6 +1187,71 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         
         # Format and return recommendations
         return "[trust] " + format_recommendations(recommendations, query=query)
+
+    # cliniko (DETERMINISTIC clinical note pipeline)
+    if cmd_key == "cliniko":
+        subcommand = parts[1].lower() if len(parts) > 1 else ""
+
+        # Default: treat '>>cliniko' as 'auto' when full note payload is present
+        _known_subcommands = {
+            "auto", "parse", "compact", "review",
+            "help", "status",
+            "sidecar", "generate", "sanitize",
+        }
+        if (not subcommand) or (subcommand not in _known_subcommands):
+            _lead = (cmd_text or "").lstrip()
+            _tail = ""
+            for _prefix in (">>cliniko", "»cliniko", "Â»cliniko"):
+                if _lead.lower().startswith(_prefix):
+                    _tail = _lead[len(_prefix):].lstrip()
+                    break
+            if _tail and ("\n" in _tail or len(_tail) >= 200):
+                return handle_cliniko_command("auto", _tail, state, session_id)
+        
+        # Explicit subcommands
+        if subcommand == "auto":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for auto_prefix in (">>cliniko auto", "»cliniko auto", "Â»cliniko auto"):
+                if auto_prefix in _low:
+                    idx = _low.find(auto_prefix) + len(auto_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        if subcommand == "parse":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for parse_prefix in (">>cliniko parse", "»cliniko parse", "Â»cliniko parse"):
+                if parse_prefix in _low:
+                    idx = _low.find(parse_prefix) + len(parse_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        # Legacy compact (redirect but support for transition)
+        if subcommand == "compact":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for compact_prefix in (">>cliniko compact", "»cliniko compact"):
+                if compact_prefix in _low:
+                    idx = _low.find(compact_prefix) + len(compact_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        # Other subcommands (help, status, legacy generate/sanitize)
+        return handle_cliniko_command(subcommand, "", state, session_id)
+
     # attach/detach/list
     if cmd_key == "attach":
         if len(parts) < 2:
@@ -1129,6 +1327,9 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             prev_locked = _clear_locked_summ(state)
             _clear_pending_lock(state)
             _reset_profile_runtime_state(state)
+            # Detach-all contract: reset scratch mode/locks so next attach starts strict.
+            state.scratchpad_mode = "strict"
+            state.scratchpad_locked_indices.clear()
             if "scratchpad" in state.attached_kbs and list_scratchpad_records and clear_scratchpad:
                 recs = list_scratchpad_records(session_id, limit=1000000)
                 scratchpad_count = len(recs)
@@ -1149,6 +1350,10 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
                     unlock_note = f" and unlocked '{prev_locked}'"
             if target in KB_PATHS:
                 _clear_pending_lock(state)
+            if target == "scratchpad":
+                # Detach-scratchpad contract: reset mode/locks for next attach/run.
+                state.scratchpad_mode = "strict"
+                state.scratchpad_locked_indices.clear()
             if target == "scratchpad" and list_scratchpad_records and clear_scratchpad:
                 recs = list_scratchpad_records(session_id, limit=1000000)
                 n = len(recs)
@@ -1178,7 +1383,28 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         if len(parts) < 2:
             return "[router] usage: >>lock SUMM_<name>.md"
 
-        target_file = parts[1].strip()
+        target_file = " ".join(parts[1:]).strip()
+        # Scratch soft-alias: numeric lock forms target scratchpad indices when attached.
+        if "scratchpad" in (state.attached_kbs or set()):
+            m = re.fullmatch(r"\[?\s*(\d+(?:\s*,\s*\d+)*)\s*\]?", target_file)
+            if m:
+                if not list_scratchpad_records:
+                    return "[scratchpad] lock unavailable"
+                recs = list_scratchpad_records(session_id, limit=1000000)
+                n_total = len(recs)
+                wanted = _parse_scratch_lock_indices(m.group(1))
+                if not wanted:
+                    return "[scratchpad] usage: >>scratch lock <index|index,index,...>"
+                invalid = sorted(i for i in wanted if i < 1 or i > n_total)
+                if invalid:
+                    return (
+                        "[scratchpad] lock failed: invalid index(es): "
+                        + ", ".join(str(i) for i in invalid)
+                        + f" (valid range: 1..{max(1, n_total)})"
+                    )
+                state.scratchpad_locked_indices = set(sorted(wanted))
+                return "[scratchpad] locked indices: " + ", ".join(str(i) for i in sorted(state.scratchpad_locked_indices))
+
         low_target = target_file.lower()
 
         source_kbs = _source_filesystem_kbs(state)
@@ -1377,6 +1603,13 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         state.deterministic_last_reason = ""
         state.deterministic_last_answer = ""
         state.deterministic_last_frame = {}
+        # Cliniko staged state isolation: flush should hard-reset prior case scaffolding.
+        state.cliniko_last_scaffold = ""
+        state.cliniko_last_raw = ""
+        state.cliniko_last_draft = None
+        state.cliniko_last_region = ""
+        state.cliniko_compacted = None
+        state.cliniko_compaction_stats = {}
         purged = 0
         if purge_session_memory_jsonl:
             try:
@@ -1436,6 +1669,32 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             return "[weather] usage: >>weather <location>\nExample: >>weather Perth"
         return handle_weather_query(location)
 
+    # >>judge <criterion> : item1, item2, item3 [--verbose]
+    if cmd_key == "judge":
+        if not parse_judge_payload or not run_judge or not format_judge_run:
+            return "[router] judge not available (judge_worker.py missing)"
+        payload = cmd[len(parts[0]) :].strip()
+        criterion, items, verbose, err = parse_judge_payload(payload, min_items=2, max_items=4)
+        if err:
+            return err if err.strip() else JUDGE_USAGE_TEXT
+
+        # v1 role routing: explicit judge role, then fallback to critic/thinker.
+        judge_role = "judge"
+        if not str(cfg_get("roles.judge", "") or "").strip():
+            if str(cfg_get("roles.critic", "") or "").strip():
+                judge_role = "critic"
+            elif str(cfg_get("roles.thinker", "") or "").strip():
+                judge_role = "thinker"
+
+        run = run_judge(
+            criterion=criterion,
+            items=items,
+            role=judge_role,
+            call_model_prompt_fn=call_model_prompt,
+            verbose=verbose,
+        )
+        return format_judge_run(run)
+
     # >>raw (Raw mode toggle)
     if low == "raw":
         state.raw_sticky = True
@@ -1446,4 +1705,3 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return "[router] raw mode OFF"
 
     return f"[router] unknown command: {cmd}"
-
