@@ -210,14 +210,14 @@ You: >>judge [criterion] : X, Y --verbose
 Judge confidence: high
 audit_jsonl: total_recall/judge/judge_audit_<timestamp>.jsonl
 ```
-
+Result:
 What you actually get (instead of cosplay certainty):
 
 - Pairwise both directions (A/B then B/A), so position bias gets caught, not hidden.
 - Confidence is based on agreement pattern, not how swaggery the prose sounds.
 - Want to look at why? --verbose gives you a JSONL audit trail with provenance.
 - Attach scratchpad and judge evaluates from evidence, not vibes. Locked evidence unusable? Fail-closed.
-- Read that again slowly. IT. JUDGES. FROM. EVIDENCE. NOT. VIBES.
+- Read that again slowly. IT. JUDGES. FROM. EVIDENCE. NOT. VIBES. Even a 1.7B could do this. Fast.
 
 ---
 
