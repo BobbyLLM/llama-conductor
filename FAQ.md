@@ -729,7 +729,7 @@ What it does:
 
 What it does:
 - takes `2-4` comma-separated items
-- compares pairs under one criterion
+- compares each pair under one criterion in both directions (`A,B` then `B,A`)
 - forces the judge model to return strict `A|B|TIE` verdicts
 - aggregates scores into a ranked list
 - fails loud if output cannot be parsed deterministically
@@ -749,6 +749,18 @@ Verbose mode:
 - `--verbose` writes pairwise audit rows to:
   - `total_recall/judge/judge_audit_<UTCSTAMP>.jsonl`
 - router also returns the exact audit file path in the command output.
+- audit rows include:
+  - compared pair (`item_a`, `item_b`, order)
+  - parsed verdict (`A|B|TIE`)
+  - a condensed reasoning snippet for human audit
+  - raw model output captured for traceability
+
+Judge confidence (how it is computed):
+- confidence is derived from score margin between rank #1 and rank #2:
+  - `high`: margin `>= 1.5`
+  - `medium`: margin `>= 0.5` and `< 1.5`
+  - `low`: margin `< 0.5` (including ties/near-ties)
+- this is a stability signal from pairwise outcomes, not model self-reported confidence.
 
 <a id="sidecars"></a>
 #### Sidecars (`>>wiki`, `>>define`, `>>exchange`, `>>weather`) - what are they for?
