@@ -80,12 +80,23 @@ def parse_judge_payload(payload: str, *, min_items: int = 2, max_items: int = 4)
     return criterion, items, verbose, ""
 
 
-def _judge_prompt(criterion: str, item_a: str, item_b: str) -> str:
+def _judge_prompt(criterion: str, item_a: str, item_b: str, *, retry: bool = False) -> str:
+    if retry:
+        return (
+            "You are a strict comparator.\n"
+            "Return ONLY one line in this exact format:\n"
+            "VERDICT: A|B|TIE\n\n"
+            f"Criterion: {criterion}\n"
+            f"Option A: {item_a}\n"
+            f"Option B: {item_b}\n"
+        )
     return (
         "You are a strict comparator.\n"
         "Choose which option better satisfies the criterion.\n"
-        "Output exactly one token: A or B or TIE.\n"
-        "Do not output any extra words.\n\n"
+        "Respond with exactly two lines:\n"
+        "REASON: <1 short sentence, max 24 words>\n"
+        "VERDICT: A|B|TIE\n"
+        "No extra lines.\n\n"
         f"Criterion: {criterion}\n"
         f"Option A: {item_a}\n"
         f"Option B: {item_b}\n"
@@ -93,13 +104,38 @@ def _judge_prompt(criterion: str, item_a: str, item_b: str) -> str:
 
 
 _VERDICT_RE = re.compile(r"\b(A|B|TIE)\b", flags=re.IGNORECASE)
+_VERDICT_LINE_RE = re.compile(r"VERDICT\s*:\s*(A|B|TIE)\b", flags=re.IGNORECASE)
+_REASON_LINE_RE = re.compile(r"REASON\s*:\s*(.+)$", flags=re.IGNORECASE)
 
 
 def _parse_verdict(raw: str) -> Optional[str]:
-    m = _VERDICT_RE.search(str(raw or ""))
+    text = str(raw or "")
+    m = _VERDICT_LINE_RE.search(text)
+    if m:
+        return m.group(1).upper()
+    m = _VERDICT_RE.search(text)
     if not m:
         return None
     return m.group(1).upper()
+
+
+def _parse_reasoning(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    for line in text.splitlines():
+        m = _REASON_LINE_RE.match(line.strip())
+        if m:
+            return m.group(1).strip()
+    # fallback: first non-empty non-verdict line, trimmed
+    for line in text.splitlines():
+        ln = line.strip()
+        if not ln:
+            continue
+        if _VERDICT_LINE_RE.search(ln):
+            continue
+        return ln[:220]
+    return ""
 
 
 def _score_verdict(verdict: str) -> Tuple[float, float]:
@@ -141,6 +177,7 @@ def _write_audit_jsonl(*, run: JudgeRun, audit_dir: str) -> str:
                 "order": cmp.order,
                 "verdict": cmp.verdict,
                 "reasoning": cmp.reasoning,
+                "raw_output": cmp.raw_output,
             }
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
     return path
@@ -165,27 +202,39 @@ def run_judge(
         for order, left, right in (("ab", item_a, item_b), ("ba", item_b, item_a)):
             raw = call_model_prompt_fn(
                 role=role,
-                prompt=_judge_prompt(criterion, left, right),
-                max_tokens=8,
+                prompt=_judge_prompt(criterion, left, right, retry=False),
+                max_tokens=48,
                 temperature=0.0,
                 top_p=1.0,
             )
             verdict = _parse_verdict(raw)
             if verdict is None:
-                return JudgeRun(
-                    ok=False,
-                    criterion=criterion,
-                    items=list(items),
-                    error=(
-                        "[judge] pairwise verdict parse failure.\n"
-                        f"[judge] expected A|B|TIE, got: {str(raw or '').strip()[:160]}"
-                    ),
-                    verbose=verbose,
+                # Single strict retry path (middle-ground latency/correctness tradeoff).
+                retry_raw = call_model_prompt_fn(
+                    role=role,
+                    prompt=_judge_prompt(criterion, left, right, retry=True),
+                    max_tokens=8,
+                    temperature=0.0,
+                    top_p=1.0,
                 )
+                verdict = _parse_verdict(retry_raw)
+                if verdict is None:
+                    return JudgeRun(
+                        ok=False,
+                        criterion=criterion,
+                        items=list(items),
+                        error=(
+                            "[judge] pairwise verdict parse failure.\n"
+                            f"[judge] expected A|B|TIE, got: {str(retry_raw or raw or '').strip()[:160]}"
+                        ),
+                        verbose=verbose,
+                    )
+                raw = retry_raw
 
             s_left, s_right = _score_verdict(verdict)
             scores[left] += s_left
             scores[right] += s_right
+            reasoning = _parse_reasoning(raw)
             comparisons.append(
                 JudgeComparison(
                     criterion=criterion,
@@ -193,7 +242,7 @@ def run_judge(
                     item_b=right,
                     order=order,
                     verdict=verdict,
-                    reasoning="",
+                    reasoning=reasoning,
                     raw_output=str(raw or ""),
                 )
             )
