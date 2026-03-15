@@ -723,44 +723,71 @@ What it does:
 - keep execution in your control
 
 <a id="judge-router"></a>
+---
+
 #### `>>judge <criterion> : item1, item2, item3 [--verbose]` - what does it do?
 
-`>>judge` runs deterministic pairwise ranking over a short candidate list.
+Short answer: `>>judge` is a deterministic ranking tool, not a truth oracle. It compares options in both directions, scores the outcome, and shows its work. If you run it ungrounded, you're getting model priors. 
 
-What it does:
-- takes `2-4` comma-separated items
-- compares each pair under one criterion in both directions (`A,B` then `B,A`)
-- forces the judge model to return strict `A|B|TIE` verdicts
-- aggregates scores into a ranked list
-- fails loud if output cannot be parsed deterministically
+Which... while entertaining...and useful...isn't always *accurate*.
 
-How to set up role routing:
+How it works:
+
+- takes `2-4` comma-separated options
+- compares each pair twice (`A,B` then `B,A`)
+- accepts only strict verdicts (`A|B|TIE`) — fails loud if parse breaks
+- outputs ranked scores + `Winner`
+- computes confidence from agreement margin (not model swagger)
+
+Where `>>trust` and `>>scratch` come in:
+
+This bit is cool. When `>>judge` runs with `>>scratch` content attached, it reasons from *that* content — not model priors.
+
+Suddenly, your 1.7B judge model has an informed opinion. Weird how that works when you give it something to read.
+
+How to: 
+
+`>>scratch`, `>>add` your evidence, then `>>judge [criterion] : option1, option2`. 
+
+Or let `>>trust` walk you through it:
+
+`>>trust` which is healther, apples or pears?
+
+- `A) >>scratch --> >>judge [HIGH]` — paste evidence first, then rank from it
+- `B) >>judge [LOW]` — ungrounded pass (warns you this is priors, not verified facts)
+
+If scratch is used, judge uses that lock scope. If the locked scope can't support the question, judge fails closed. No fake ranking, no vibes verdict.
+
+Role routing:
+
 - set `roles.judge` in `router_config.yaml` (recommended)
-- if `roles.judge` is empty, router falls back to:
-  - `roles.critic` first
-  - then `roles.thinker`
+- fallback chain if empty: `roles.critic` → `roles.thinker`
 
 Examples:
+
 - `>>judge speed for daily use : rust, go, python`
-- `>>judge maintainability : monolith, modular monolith, microservices`
-- `>>judge rehab adherence likelihood : plan A, plan B, plan C --verbose`
+- `>>judge best 4B model for reasoning : qwen3, phi4-mini, gemma3`
+- `>>judge which is a better boy : golden retriever, labrador, pomeranian --verbose`
 
-Verbose mode:
-- `--verbose` writes pairwise audit rows to:
-  - `total_recall/judge/judge_audit_<UTCSTAMP>.jsonl`
-- router also returns the exact audit file path in the command output.
+Verbose mode (`--verbose`):
+
+- writes audit rows to `total_recall/judge/judge_audit_<UTCSTAMP>.jsonl`
+- output includes exact file path
 - audit rows include:
-  - compared pair (`item_a`, `item_b`, order)
-  - parsed verdict (`A|B|TIE`)
-  - a condensed reasoning snippet for human audit
-  - raw model output captured for traceability
+  - pair (`item_a`, `item_b`, order)
+  - verdict (`A|B|TIE`)
+  - condensed reasoning snippet
+  - raw output
+  - evidence provenance (`evidence_source`, `evidence_locked_indices`, `evidence_chars`)
 
-Judge confidence (how it is computed):
-- confidence is derived from score margin between rank #1 and rank #2:
-  - `high`: margin `>= 1.5`
-  - `medium`: margin `>= 0.5` and `< 1.5`
-  - `low`: margin `< 0.5` (including ties/near-ties)
-- this is a stability signal from pairwise outcomes, not model self-reported confidence.
+Confidence tiers:
+
+- `high`: top-vs-second margin `>= 1.5`
+- `medium`: margin `>= 0.5` and `< 1.5`
+- `low`: margin `< 0.5` (including ties)
+- this is stability/agreement, not correctness proof
+
+---
 
 <a id="sidecars"></a>
 #### Sidecars (`>>wiki`, `>>define`, `>>exchange`, `>>weather`) - what are they for?
@@ -1452,7 +1479,7 @@ Default display policy:
 - Strong explicit signals move it faster than weak implicit ones.
 - Repeated signals increase confidence.
 - Lack of reinforcement causes decay toward baseline.
-- `>>detach all` and `>>flush` reset profile/style runtime state.
+- `>>detach all` and `>>flush` reset profile/style runtime state (`>>flush` also purges session-memory and judge-audit JSONL artifacts).
 
 ### Output impact
 
