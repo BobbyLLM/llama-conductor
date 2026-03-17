@@ -22,5 +22,59 @@
       {{ content }}
     </article>
   </main>
+  <script>
+    (function () {
+      var root = document.querySelector(".prose");
+      if (!root) return;
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      var nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+
+      var urlRe = /https?:\/\/[^\s<>"']+/g;
+      function shouldSkip(node) {
+        var p = node.parentElement;
+        while (p) {
+          var t = p.tagName;
+          if (t === "A" || t === "CODE" || t === "PRE" || t === "SCRIPT" || t === "STYLE") return true;
+          p = p.parentElement;
+        }
+        return false;
+      }
+
+      function trimTrailing(url) {
+        var trimmed = url;
+        while (/[),.!?;:]$/.test(trimmed)) trimmed = trimmed.slice(0, -1);
+        return { clean: trimmed, tail: url.slice(trimmed.length) };
+      }
+
+      nodes.forEach(function (node) {
+        if (!node.nodeValue || shouldSkip(node)) return;
+        var text = node.nodeValue;
+        urlRe.lastIndex = 0;
+        if (!urlRe.test(text)) return;
+        urlRe.lastIndex = 0;
+
+        var frag = document.createDocumentFragment();
+        var last = 0;
+        var m;
+        while ((m = urlRe.exec(text)) !== null) {
+          var start = m.index;
+          var raw = m[0];
+          var parts = trimTrailing(raw);
+          if (start > last) frag.appendChild(document.createTextNode(text.slice(last, start)));
+          var a = document.createElement("a");
+          a.href = parts.clean;
+          a.textContent = parts.clean;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          frag.appendChild(a);
+          if (parts.tail) frag.appendChild(document.createTextNode(parts.tail));
+          last = start + raw.length;
+        }
+        if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+        node.parentNode.replaceChild(frag, node);
+      });
+    })();
+  </script>
 </body>
 </html>
