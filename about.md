@@ -4,6 +4,8 @@ title: About
 permalink: /about/
 ---
 
+# About
+
 Bonesetter. Touched in the head. Self-taught snake charmer. Built a muzzle fer a parrot what won't stop lyin', on a fifty-doubloon GPU, out o' pure spite. [Because reasons, me hearty](https://github.com/BobbyLLM/llama-conductor/blob/main/DESIGN.md).
 
 This be the logbook.
