@@ -42,6 +42,6 @@ When UI injection is enabled, the root WebUI page gets a small toolbar with:
 
 ## Launch
 
-Use your stack launcher (for example, `python -m llama_conductor.launch_stack up`).
+Use `C:\Users\bobbyp330\Downloads\START-2.bat`.
 
 The launcher sets these environment variables before starting `shim_server.py`.

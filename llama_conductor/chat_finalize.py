@@ -1,7 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from difflib import SequenceMatcher
 import hashlib
+import re
 from typing import Any, Callable, List, Optional
 
 
@@ -10,6 +11,7 @@ def finalize_chat_response(
     text: str,
     user_text: str,
     state: Any,
+    facts_block: str = "",
     lock_active: bool,
     scratchpad_grounded: bool,
     scratchpad_quotes: List[str],
@@ -19,12 +21,17 @@ def finalize_chat_response(
     sensitive_override_once: bool = False,
     bypass_serious_anti_loop: bool = False,
     deterministic_state_solver: bool = False,
+    scratchpad_lock_miss: bool | None = None,
+    scratchpad_lock_miss_indices: List[int] | None = None,
     serious_task_forward_fallback: str,
     make_stream_response: Callable[[str], Any],
     make_json_response: Callable[[str], Any],
     sanitize_scratchpad_grounded_output_fn: Callable[[str], str],
     append_scratchpad_provenance_fn: Callable[[str], str],
+    apply_scratchpad_strict_policy_fn: Callable[..., str],
     apply_locked_output_policy_fn: Callable[[str, Any], str],
+    apply_benchmark_contract_policy_fn: Callable[..., str],
+    rewrite_source_line_fn: Callable[[str, str], str],
     apply_deterministic_footer_fn: Callable[..., str],
     append_profile_footer_fn: Callable[..., str],
     rewrite_response_style_fn: Optional[Callable[..., str]],
@@ -40,6 +47,32 @@ def finalize_chat_response(
     score_output_compliance_fn: Optional[Callable[..., float]],
     compute_effective_strength_fn: Callable[..., float],
 ) -> Any:
+    def _set_lock_miss_footer(in_text: str) -> str:
+        t = str(in_text or "").strip()
+        if not t:
+            return "Confidence: unverified | Source: Model (not in locked scratch)"
+        lines = t.splitlines()
+        for i, ln in enumerate(lines):
+            m = re.match(r"^\s*Confidence:\s*([^|]+)\|\s*Source:\s*.*$", str(ln or ""), flags=re.I)
+            if m:
+                conf = str(m.group(1) or "unverified").strip() or "unverified"
+                lines[i] = f"Confidence: {conf} | Source: Model (not in locked scratch)"
+                return "\n".join(lines).strip()
+        cleaned = [ln for ln in lines if not re.match(r"^\s*Source:\s*", str(ln or ""), flags=re.I)]
+        body = "\n".join(cleaned).rstrip()
+        if body:
+            return body + "\n\nConfidence: unverified | Source: Model (not in locked scratch)"
+        return "Confidence: unverified | Source: Model (not in locked scratch)"
+
+    if scratchpad_lock_miss is None:
+        scratchpad_lock_miss = bool(getattr(state, "scratchpad_lock_miss", False))
+    if scratchpad_lock_miss_indices is None:
+        scratchpad_lock_miss_indices = sorted(
+            int(i)
+            for i in (getattr(state, "scratchpad_locked_indices", set()) or set())
+            if str(i).strip().isdigit() and int(i) > 0
+        )
+
     if scratchpad_grounded:
         text = sanitize_scratchpad_grounded_output_fn(text)
         if scratchpad_quotes:
@@ -48,9 +81,30 @@ def finalize_chat_response(
                 + "\n\nScratchpad Quotes:\n"
                 + "\n".join(f'- "{q}"' for q in scratchpad_quotes)
             )
+        text = apply_scratchpad_strict_policy_fn(
+            text=text,
+            user_text=user_text,
+            state=state,
+            scratchpad_grounded=scratchpad_grounded,
+            scratchpad_quotes=scratchpad_quotes,
+            facts_block=facts_block,
+        )
+        # Provenance safeguard: definitional answers generated from clipped
+        # scratch evidence are treated as mixed provenance.
+        if (
+            re.match(r"(?is)^\s*what(?:'s|\s+is)\s+", str(user_text or "").strip())
+            and any("..." in str(q or "") for q in (scratchpad_quotes or []))
+        ):
+            text = rewrite_source_line_fn(text, "Source: Mixed")
         text = append_scratchpad_provenance_fn(text)
 
-    if state.attached_kbs and "Source: Model" in text and not scratchpad_grounded and not lock_active:
+    if (
+        state.attached_kbs
+        and "Source: Model" in text
+        and not scratchpad_grounded
+        and not lock_active
+        and not bool(scratchpad_lock_miss)
+    ):
         kb_list = ", ".join(sorted(state.attached_kbs))
         disclaimer = (
             f"[Note: No relevant information found in attached KBs ({kb_list}). "
@@ -60,6 +114,16 @@ def finalize_chat_response(
 
     if lock_active:
         text = apply_locked_output_policy_fn(text, state)
+
+    # Lane-scoped benchmark contract hardening (narrow activation).
+    try:
+        text = apply_benchmark_contract_policy_fn(
+            text=text,
+            user_text=user_text,
+            scratchpad_grounded=scratchpad_grounded,
+        )
+    except Exception:
+        pass
 
     skip_profile_rewrite = bool(deterministic_state_solver and mode in ("fun", "fun_rewrite"))
     if rewrite_response_style_fn is not None and not skip_profile_rewrite:
@@ -115,13 +179,14 @@ def finalize_chat_response(
 
     if mode == "serious":
         try:
+            scratch_grounded_turn = bool(scratchpad_grounded)
             state_like_query = False
             if classify_query_family_fn is not None:
                 try:
                     state_like_query = classify_query_family_fn(user_text) in ("state_transition", "constraint_decision")
                 except Exception:
                     state_like_query = False
-            if bypass_serious_anti_loop or state_like_query:
+            if bypass_serious_anti_loop or state_like_query or scratch_grounded_turn:
                 state.serious_ack_reframe_streak = 0
                 state.serious_repeat_streak = 0
                 state.serious_last_body_signature = ""
@@ -155,6 +220,10 @@ def finalize_chat_response(
                     state.serious_last_body_signature = sig
         except Exception:
             pass
+
+    if scratchpad_grounded:
+        if not str(text or "").lstrip().startswith("[Scratch "):
+            text = f"[Scratch]\n\n{str(text or '').strip()}".strip()
 
     if score_output_compliance_fn is not None and getattr(state, "profile_enabled", False):
         try:
@@ -190,6 +259,15 @@ def finalize_chat_response(
         has_facts_block=has_facts_block,
         deterministic_state_solver=deterministic_state_solver,
     )
+    if bool(scratchpad_lock_miss) and not scratchpad_grounded:
+        idx_str = ", ".join(str(i) for i in (scratchpad_lock_miss_indices or []))
+        if not idx_str:
+            idx_str = "?"
+        note = f"[Not found in locked scratch entries [{idx_str}]. Model supplement below.]"
+        if note.lower() not in str(text or "").lower():
+            text = f"{note}\n\n{str(text or '').strip()}".strip()
+        text = _set_lock_miss_footer(text)
+
     text = append_profile_footer_fn(text=text, state=state, user_text=user_text)
 
     try:

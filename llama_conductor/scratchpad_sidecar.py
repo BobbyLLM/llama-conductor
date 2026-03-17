@@ -65,7 +65,16 @@ def get_session_scratchpad_path(session_id: str) -> str:
 
 
 def _tokenize(text: str) -> Set[str]:
-    return {m.group(0).lower() for m in _TOKEN_RE.finditer(text or "")}
+    out: Set[str] = set()
+    for m in _TOKEN_RE.finditer(text or ""):
+        tok = m.group(0).lower()
+        if not tok:
+            continue
+        out.add(tok)
+        # Normalize possessives so "carmack's" can match "carmack".
+        if tok.endswith("'s") and len(tok) > 3:
+            out.add(tok[:-2])
+    return out
 
 
 _GENERIC_EXHAUSTIVE_TOKENS = {
@@ -303,6 +312,74 @@ def clear_scratchpad(session_id: str) -> bool:
     return True
 
 
+def purge_session_kb_jsonl(storage_dir: str = "", *, max_age_minutes: Optional[int] = None) -> Dict[str, int]:
+    """
+    Global janitor for scratchpad session captures.
+    - Prunes expired records across all `total_recall/session_kb/*.jsonl`.
+    - Deletes files that become empty after pruning.
+    Returns summary counters.
+    """
+    base = (storage_dir or "").strip()
+    if not base:
+        base = str(cfg_get("scratchpad.storage_dir", "") or "").strip()
+    if not base:
+        base = str(cfg_get("vodka.storage_dir", "") or "").strip()
+    if not base:
+        base = os.getenv("DATA_DIR") or os.getcwd()
+    root = os.path.abspath(base)
+    folder = os.path.join(root, "total_recall", "session_kb")
+
+    stats: Dict[str, int] = {
+        "files_seen": 0,
+        "files_updated": 0,
+        "files_deleted": 0,
+        "records_seen": 0,
+        "records_deleted": 0,
+    }
+    if not os.path.isdir(folder):
+        return stats
+
+    if max_age_minutes is None:
+        max_age_minutes = int(cfg_get("scratchpad.max_age_minutes", 60))
+    if int(max_age_minutes) <= 0:
+        # Explicitly disabled expiry contract.
+        return stats
+
+    for name in os.listdir(folder):
+        if not name.lower().endswith(".jsonl"):
+            continue
+        path = os.path.join(folder, name)
+        if not os.path.isfile(path):
+            continue
+
+        stats["files_seen"] += 1
+        records = _load_records(path)
+        stats["records_seen"] += len(records)
+        pruned = _prune_expired_records(records, max_age_minutes=int(max_age_minutes))
+        removed = len(records) - len(pruned)
+        if removed <= 0:
+            continue
+
+        stats["records_deleted"] += removed
+        if not pruned:
+            try:
+                os.remove(path)
+                stats["files_deleted"] += 1
+            except Exception:
+                # Fail-open: janitor must never crash runtime paths.
+                pass
+            continue
+
+        try:
+            _save_records(path, pruned)
+            stats["files_updated"] += 1
+        except Exception:
+            # Fail-open: keep original file if save fails.
+            pass
+
+    return stats
+
+
 def list_scratchpad_records(session_id: str, limit: int = 30) -> List[Dict[str, Any]]:
     path = get_session_scratchpad_path(session_id)
     records = _load_pruned_records(path)
@@ -368,7 +445,12 @@ def delete_scratchpad_by_query(session_id: str, query: str) -> int:
     return removed
 
 
-def build_scratchpad_dump_text(*, session_id: str, query: str = "") -> str:
+def build_scratchpad_dump_text(
+    *,
+    session_id: str,
+    query: str = "",
+    locked_indices: Optional[Set[int]] = None,
+) -> str:
     """Deterministic full-text dump for exhaustive intents / explicit show command."""
     records = list_scratchpad_records(session_id, limit=0)
     if not records:
@@ -378,7 +460,10 @@ def build_scratchpad_dump_text(*, session_id: str, query: str = "") -> str:
     semantic_q_tokens = _semantic_query_tokens(q)
     exhaustive = _wants_exhaustive_query(q)
     rows: List[tuple[int, Dict[str, Any]]] = []
+    locked = {int(i) for i in (locked_indices or set()) if int(i) > 0}
     for i, rec in enumerate(records, 1):
+        if locked and i not in locked:
+            continue
         txt = str(rec.get("text", "") or "")
         src = str(rec.get("source_command", "") or "")
         if not txt:
@@ -413,6 +498,7 @@ def build_scratchpad_facts_block(
     query: str,
     top_k: int = 3,
     max_chars: int = 1200,
+    locked_indices: Optional[Set[int]] = None,
 ) -> str:
     path = get_session_scratchpad_path(session_id)
     records = _load_pruned_records(path)
@@ -425,7 +511,11 @@ def build_scratchpad_facts_block(
     exhaustive = _wants_exhaustive_query(q)
     scored: List[tuple[float, bool, Dict[str, Any]]] = []
 
+    locked = {int(i) for i in (locked_indices or set()) if int(i) > 0}
     for idx, rec in enumerate(records):
+        rec_index_1based = idx + 1
+        if locked and rec_index_1based not in locked:
+            continue
         txt = str(rec.get("text", "") or "")
         src = str(rec.get("source_command", "") or "")
         if not txt:
@@ -441,6 +531,10 @@ def build_scratchpad_facts_block(
             match_tokens = semantic_q_tokens if semantic_q_tokens else q_tokens
             overlap = len(match_tokens & t_tokens)
             is_match = overlap > 0
+            # Locked scratch mode is fail-closed: if caller constrained to
+            # explicit indices and there is no semantic overlap, exclude record.
+            if locked and overlap <= 0:
+                continue
             if overlap <= 0:
                 # Keep weak recency-only fallback but at low weight
                 score = 0.05 + (0.20 * recency)
@@ -502,9 +596,15 @@ def build_scratchpad_facts_block(
         if exhaustive or single_full_mode:
             snippet = str(rec.get("text", "") or "").strip()
         else:
-            snippet = _extract_query_snippet(str(rec.get("text", "")), q_tokens, max_len=420)
+            # Use semantic tokens for snippet targeting when available, so
+            # stopwords (e.g. "is/what") do not anchor the quote on irrelevant spans.
+            snippet_tokens = semantic_q_tokens if semantic_q_tokens else q_tokens
+            snippet = _extract_query_snippet(str(rec.get("text", "")), snippet_tokens, max_len=420)
         if not snippet:
             continue
+        # Keep one logical record per emitted line so downstream quote extraction
+        # can match query terms anywhere in the selected snippet.
+        snippet = " ".join(snippet.split())
 
         line = f"- [scratchpad cmd={source} ts={ts} sha={sha}] {snippet}"
         if (not exhaustive) and effective_max_chars > 0 and used + len(line) + 2 > effective_max_chars:

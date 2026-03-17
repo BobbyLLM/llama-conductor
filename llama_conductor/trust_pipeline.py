@@ -125,6 +125,103 @@ def _detect_multi_step(text: str) -> bool:
     return step_count >= 2
 
 
+def _normalize_item_token(text: str) -> str:
+    t = str(text or "").strip()
+    t = re.sub(r"^[\"'`(\[]+", "", t)
+    t = re.sub(r"[\"'`)\].,!?;:]+$", "", t)
+    return " ".join(t.split())
+
+
+def _parse_compare_query_to_judge(query: str) -> Dict[str, Any]:
+    """Parse comparative natural language into judge-ready criterion/items.
+
+    Returns:
+      {
+        ok: bool,
+        criterion: str,
+        items: List[str],
+        judge_command: str,
+      }
+    """
+    q = str(query or "").strip()
+    out: Dict[str, Any] = {
+        "ok": False,
+        "criterion": "",
+        "items": [],
+        "judge_command": "",
+    }
+    if not q:
+        return out
+
+    # Prefer explicit criterion:item list shape.
+    criterion = ""
+    item_blob = ""
+    if ":" in q:
+        left, right = q.split(":", 1)
+        criterion = left.strip()
+        item_blob = right.strip()
+    else:
+        # Natural-language fallback:
+        #   "Which is healthier, apples or pears?"
+        #   "Which is better for X, A vs B?"
+        # Parse trailing pair and use the leading clause as criterion.
+        qn = re.sub(r"\s+", " ", q).strip()
+        m = re.search(
+            r"(?P<a>[^,?:]+?)\s+(?:or|vs|versus)\s+(?P<b>[^,?:]+?)\s*[?.!]*\s*$",
+            qn,
+            flags=re.I,
+        )
+        if not m:
+            return out
+        a = _normalize_item_token(m.group("a"))
+        b = _normalize_item_token(m.group("b"))
+        if not a or not b:
+            return out
+        item_blob = f"{a}, {b}"
+
+        prefix = qn[: m.start()].strip().rstrip(",:; ")
+        # Remove common interrogative lead words from criterion text.
+        prefix = re.sub(r"^\s*(which|what)\s+", "", prefix, flags=re.I).strip()
+        criterion = prefix or "comparison"
+
+    if not criterion or not item_blob:
+        return out
+
+    # Normalize common pair separators.
+    norm = re.sub(r"\s+(?:or|and|vs|versus)\s+", ", ", item_blob, flags=re.I)
+    raw_items = [_normalize_item_token(x) for x in norm.split(",")]
+    items = [x for x in raw_items if x]
+
+    # Deduplicate, keep order.
+    uniq: List[str] = []
+    seen: Set[str] = set()
+    for it in items:
+        k = it.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq.append(it)
+    items = uniq
+
+    if len(items) < 2 or len(items) > 4:
+        return out
+
+    crit = criterion.strip()
+    if not (crit.startswith("[") and crit.endswith("]")):
+        crit = f"[{crit}]"
+    judge_cmd = ">>judge " + crit + " : " + ", ".join(items) + " --verbose"
+
+    out.update(
+        {
+            "ok": True,
+            "criterion": criterion.strip(),
+            "items": items,
+            "judge_command": judge_cmd,
+        }
+    )
+    return out
+
+
 def _extract_math_expression(query: str) -> str:
     """Extract clean math expression from natural language query."""
     clean = re.sub(r"^(what is|what's|whats|calculate|compute|solve|find|tell me)\s+", "", query, flags=re.I)
@@ -423,6 +520,39 @@ def generate_recommendations(
     primary_type = classification["primary_type"]
     pats = set(classification.get("patterns", []))
 
+    # ===== COMPARATIVE / RANKING QUERIES =====
+    # Route judge first only when we can parse criterion + 2-4 options.
+    judge_parse = _parse_compare_query_to_judge(query)
+    if bool(judge_parse.get("ok")):
+        judge_cmd = str(judge_parse.get("judge_command") or "").strip()
+
+        recommendations.append({
+            "rank": "A",
+            "tool": ">>scratch -> >>judge",
+            "confidence": "HIGH",
+            "reason": "Uses only what you paste, then ranks options fairly.",
+            "command": f">>scratch [paste context] then {judge_cmd}",
+            "flow": "scratch_then_judge",
+            "judge_command": judge_cmd,
+            "note": "After choosing A, router prompts: [PASTE CONTEXT BELOW].",
+        })
+
+        recommendations.append({
+            "rank": "B",
+            "tool": ">>judge",
+            "confidence": "LOW",
+            "reason": "Compares options without pasted evidence (judge-only pass).",
+            "command": judge_cmd,
+        })
+        recommendations.append({
+            "rank": "C",
+            "tool": "serious mode",
+            "confidence": "LOW",
+            "reason": "Quick direct answer with no ranking/audit checks.",
+            "command": query,
+        })
+        return recommendations
+
     # Helper: stable rank letters
     def _next_rank(rank_int: int) -> str:
         return chr(rank_int)
@@ -711,27 +841,22 @@ def format_recommendations(recommendations: List[Dict[str, str]], query: str = "
     lines: List[str] = []
 
     if query:
-        lines.append(f"Query: {query}")
-        lines.append("")
-    lines.append("**Recommended Tools:**")
+        lines.append(f"[trust] {query}")
+    else:
+        lines.append("[trust]")
     lines.append("")
     for rec in recommendations:
-        rank = rec["rank"]
-        tool = rec["tool"]
+        rank = str(rec["rank"])
+        tool = str(rec["tool"])
         confidence = rec["confidence"]
-        reason = rec["reason"]
-        command = rec["command"]
-        lines.append(f"{rank}) **{tool}** (confidence: {confidence})")
-        lines.append(f"   - {reason}")
-        label = "Command"
-        if tool in {">>wiki", ">>define"}:
-            label = "Suggested command"
-        lines.append(f"   - {label}: `{command}`")
-        note = rec.get("note", "")
-        if note:
-            lines.append(f"   - Note: {note}")
+        reason = str(rec["reason"])
+        command = str(rec["command"])
+        display_tool = ">>scratch --> >>judge" if tool == ">>scratch -> >>judge" else tool
+        lines.append(f"{rank}) {display_tool}  [{confidence}]")
+        lines.append(f"   Why: {reason}")
+        lines.append(f"   Cmd: {command}")
         lines.append("")
-    lines.append("**Choose an option (A, B, C...) or type your own command.**")
+    lines.append("Type A/B/C, or run a command directly.")
     return "\n".join(lines)
 
 

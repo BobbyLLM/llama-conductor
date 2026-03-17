@@ -1,4 +1,4 @@
-# Preprint Draft v5: Reliability of a Local 4B Router-Grounded Stack
+﻿# Preprint Draft v5: Reliability of a Local 4B Router-Grounded Stack
 
 Status: pre-publication draft for peer-review preparation. Updated 2026-03-14.
 

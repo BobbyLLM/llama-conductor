@@ -1,4 +1,4 @@
-As you may (or may not) be aware, there is a current fun meme test going around (as of 02.26.26) that purports to challenge LLM reasoning abilities and world models. 
+﻿As you may (or may not) be aware, there is a current fun meme test going around (as of 02.26.26) that purports to challenge LLM reasoning abilities and world models. 
 
 A recent blog post / ad spot by Opper.ai (https://opper.ai/blog/car-wash-test) nicely summarizes the test - 
 

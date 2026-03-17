@@ -132,30 +132,47 @@ def last_user_message(messages: List[Dict[str, Any]]) -> Tuple[str, int]:
 # Command/Selector Parsing
 # ---------------------------------------------------------------------------
 
+_LEADING_ZERO_WIDTH_RE = re.compile(r"^[\u200b\u200c\u200d\u2060\ufeff]+")
+_FILE_PASTED_BANNER_RE = re.compile(r"^---\s*File:\s*.*?---\s*$", re.I)
+
+
+def _normalize_command_prefix(s: str) -> str:
+    """Normalize leading transport artifacts before command/selector checks."""
+    t = (s or "").lstrip()
+    t = _LEADING_ZERO_WIDTH_RE.sub("", t)
+    # Some clients prepend a file banner line before pasted content.
+    # If the next non-empty line starts with a command sigil, recover it.
+    if t:
+        lines = t.splitlines()
+        if lines and _FILE_PASTED_BANNER_RE.match(lines[0].strip()):
+            rest = "\n".join(lines[1:]).lstrip()
+            if rest:
+                t = rest
+    # Normalize common mojibake command sigils to literal guillemet.
+    if t.startswith("\u00c3\u201a\u00c2\u00bb"):  # "Ã‚Â»"
+        t = "\u00bb" + t[len("\u00c3\u201a\u00c2\u00bb") :]
+    elif t.startswith("\u00c2\u00bb"):  # "Â»"
+        t = "\u00bb" + t[len("\u00c2\u00bb") :]
+    return t
+
+
 def is_command(s: str) -> bool:
     """Check if string is a session command (>>). Does NOT match ?? (Vodka recall)."""
-    t = (s or "").lstrip()
-    return t.startswith(">>") or t.startswith("»") or t.startswith("Â»")
-
+    t = _normalize_command_prefix(s)
+    return t.startswith(">>") or t.startswith("\u00bb")
 
 def strip_cmd_prefix(s: str) -> str:
-    """Strip command prefix (>>, », or mojibake variants)."""
-    s = (s or "").lstrip()
-    
-    # Support single-char command sigil as equivalent to >>
-    # NOTE: Some clients deliver the '»' sigil as mojibake 'Â»'.
-    if s.startswith("Â»"):
-        return s[2:].strip()
-    if s.startswith("»"):
-        return s[1:].strip()
+    """Strip command prefix (>> or «guillemet» variants)."""
+    s = _normalize_command_prefix(s)
     if s.startswith(">>"):
         return s[2:].strip()
+    if s.startswith("\u00bb"):
+        return s[1:].strip()
     return s.strip()
-
 
 def split_selector(user_text: str) -> Tuple[str, str]:
     """Return (selector, text). selector is one of: '', 'mentats','fun','vision','ocr'."""
-    t = (user_text or "").lstrip()
+    t = _normalize_command_prefix(user_text)
 
     # Support command-style aliases for vision/OCR:
     # - >>vision / >>vl / >>v

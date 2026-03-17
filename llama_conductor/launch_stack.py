@@ -53,20 +53,46 @@ def _get_path(cfg: Mapping[str, Any], dotted: str, default: Any) -> Any:
     return cur
 
 
-def _http_ready(url: str, timeout_s: float = 2.0) -> bool:
+def _http_ready(
+    url: str,
+    timeout_s: float = 2.0,
+    ok_statuses: Optional[set[int]] = None,
+    body_must_contain: Optional[str] = None,
+) -> bool:
     try:
         with urlopen(url, timeout=timeout_s) as resp:  # nosec B310 - local health probes only
-            return 200 <= int(getattr(resp, "status", 0)) < 500
+            status = int(getattr(resp, "status", 0))
+            if ok_statuses is None:
+                if not (200 <= status < 400):
+                    return False
+            elif status not in ok_statuses:
+                return False
+
+            if body_must_contain:
+                body = resp.read(4096).decode("utf-8", errors="ignore")
+                if body_must_contain not in body:
+                    return False
+            return True
     except URLError:
         return False
     except Exception:
         return False
 
 
-def _wait_http_ready(url: str, timeout_s: float, label: str) -> bool:
+def _wait_http_ready(
+    url: str,
+    timeout_s: float,
+    label: str,
+    ok_statuses: Optional[set[int]] = None,
+    body_must_contain: Optional[str] = None,
+) -> bool:
     deadline = time.monotonic() + max(0.5, float(timeout_s))
     while time.monotonic() < deadline:
-        if _http_ready(url):
+        if _http_ready(
+            url,
+            ok_statuses=ok_statuses,
+            body_must_contain=body_must_contain,
+        ):
             return True
         time.sleep(0.5)
     print(f"[launch] ERROR: {label} not ready within {timeout_s:.1f}s -> {url}")
@@ -88,6 +114,13 @@ def _spawn(cmd: List[str], cwd: Path, env: Mapping[str, str], dry_run: bool) -> 
         flags |= getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
         flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         kwargs["creationflags"] = flags
+        minimize_on_spawn = _as_bool(env.get("LAUNCH_STACK_START_MINIMIZED", "1"), default=True)
+        if minimize_on_spawn and hasattr(subprocess, "STARTUPINFO"):
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+            # SW_SHOWMINIMIZED=2 keeps the window available on taskbar while starting minimized.
+            startupinfo.wShowWindow = 2
+            kwargs["startupinfo"] = startupinfo
     else:
         kwargs["start_new_session"] = True
 
@@ -262,6 +295,7 @@ def _run_up(args: argparse.Namespace) -> int:
         keep = _as_int(args.keep if args.keep is not None else _get_path(cfg, "backend.llama_cpp.keep", 96), 96)
         batch_size = _as_int(args.batch_size if args.batch_size is not None else _get_path(cfg, "backend.llama_cpp.batch_size", 512), 512)
         ubatch_size = _as_int(args.ubatch_size if args.ubatch_size is not None else _get_path(cfg, "backend.llama_cpp.ubatch_size", 256), 256)
+        n_parallel = _as_int(args.parallel if args.parallel is not None else _get_path(cfg, "backend.llama_cpp.parallel", 1), 1)
 
         if not _generate_models_preset(
             python_exe=py,
@@ -293,6 +327,8 @@ def _run_up(args: argparse.Namespace) -> int:
             "-ub",
             str(ubatch_size),
             "--metrics",
+            "--parallel",
+            str(n_parallel),
             "--port",
             str(llama_port),
             "--host",
@@ -307,9 +343,19 @@ def _run_up(args: argparse.Namespace) -> int:
 
     if not args.dry_run:
         if plan.provider != "custom":
-            if not _wait_http_ready(f"{plan.upstream_base_url}/v1/models", plan.ready_timeout_s, "upstream backend"):
+            if not _wait_http_ready(
+                f"{plan.upstream_base_url}/v1/models",
+                plan.ready_timeout_s,
+                "upstream backend",
+                ok_statuses={200},
+            ):
                 return 3
-        if not _wait_http_ready(f"http://127.0.0.1:{plan.router_port}/v1/models", plan.ready_timeout_s, "llama-conductor"):
+        if not _wait_http_ready(
+            f"http://127.0.0.1:{plan.router_port}/v1/models",
+            plan.ready_timeout_s,
+            "llama-conductor",
+            ok_statuses={200},
+        ):
             return 3
 
     if plan.shim_enabled:
@@ -335,7 +381,13 @@ def _run_up(args: argparse.Namespace) -> int:
         shim_cmd = [py, str(shim_py)]
         _spawn(shim_cmd, cwd=shim_dir, env=env_shim, dry_run=args.dry_run)
         if not args.dry_run:
-            if not _wait_http_ready(f"http://127.0.0.1:{plan.shim_port}/shim/healthz", plan.ready_timeout_s, "shim"):
+            if not _wait_http_ready(
+                f"http://127.0.0.1:{plan.shim_port}/shim/healthz",
+                plan.ready_timeout_s,
+                "shim",
+                ok_statuses={200},
+                body_must_contain='"ok":true',
+            ):
                 return 3
     else:
         print("[launch] shim disabled by config/flag; skipping shim launch.")
@@ -389,6 +441,7 @@ def _build_parser() -> argparse.ArgumentParser:
     up.add_argument("--keep", type=int, default=None)
     up.add_argument("--batch-size", type=int, default=None)
     up.add_argument("--ubatch-size", type=int, default=None)
+    up.add_argument("--parallel", type=int, default=None, help="llama-server --parallel (n_parallel)")
     up.add_argument("--shim-host", default=None)
     up.add_argument("--shim-port", type=int, default=None)
     up.add_argument("--no-shim", action="store_true", help="Disable shim launch even if config enables it")

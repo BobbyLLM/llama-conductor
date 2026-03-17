@@ -1,4 +1,4 @@
-# Router Command Cheat Sheet
+﻿# Router Command Cheat Sheet
 
 ## Core command prefixes
 - `>>` router/system commands
@@ -58,7 +58,7 @@ Minimal examples:
 - `>>judge <criterion> : item1, item2, item3 [--verbose]` pairwise ranker (2-4 items)
 - `>>find <query>` search attached KB files
 - `>>peek <query>` preview KB retrieval chunks for the query
-- `>>flush` clear CTC history cache, reset session profile/style identity, and delete session-memory JSONL files (does not detach KBs)
+- `>>flush` clear CTC history cache, reset session profile/style identity, and delete session-memory, scratchpad session captures, plus judge-audit JSONL files (does not detach KBs)
 Tips:
 - Use these when you want a direct tool result rather than a free-form chat answer.
 - API-backed commands (`wiki`, `define`, `exchange`, `weather`) can fail if upstream services are unavailable.
@@ -255,3 +255,4 @@ Tips:
 Tips:
 - If an answer is weak and hits are `0`, the issue is likely missing retrieval; if hits are non-zero, the issue is more likely synthesis/interpretation quality.
 - Hit counts are a quick clue, not a quality grade.
+

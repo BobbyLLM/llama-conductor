@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
 from .interaction_profile import InteractionProfile, new_profile
+from .config import cfg_get
 
 
 @dataclass
@@ -35,11 +36,20 @@ class SessionState:
     # Trust mode: pending recommendations for A/B/C response
     pending_trust_query: str = ""
     pending_trust_recommendations: List[Dict[str, str]] = field(default_factory=list)
+    pending_trust_judge_command: str = ""
     
     # Auto-execute query after >>attach all from trust
     auto_query_after_attach: str = ""
     auto_detach_after_response: bool = False
     
+    # Cliniko sidecar: staged clinical note pipeline
+    cliniko_compacted: Optional[str] = None
+    cliniko_compaction_stats: Dict[str, int] = field(default_factory=dict)
+    cliniko_last_draft: Optional[str] = None
+    cliniko_last_scaffold: str = ""
+    cliniko_last_raw: str = ""
+    cliniko_last_region: str = ""
+
     # Session interaction profile (ephemeral, in-memory only)
     profile_enabled: bool = True
     interaction_profile: InteractionProfile = field(default_factory=new_profile)
@@ -67,6 +77,13 @@ class SessionState:
     last_user_text: str = ""
     last_assistant_text: str = ""
 
+    # Scratchpad grounding controls (session-ephemeral).
+    # Modes: "strict" (facts-only), "assisted" (facts-first synthesis allowed).
+    scratchpad_mode: str = "strict"
+    # Optional 1-based indices scoped to current scratchpad list order.
+    # Empty means unlocked (all eligible records).
+    scratchpad_locked_indices: Set[int] = field(default_factory=set)
+
 
 # Global session storage
 _SESSIONS: Dict[str, SessionState] = {}
@@ -76,4 +93,12 @@ def get_state(session_id: str) -> SessionState:
     """Get or create session state for given session ID."""
     if session_id not in _SESSIONS:
         _SESSIONS[session_id] = SessionState()
+        # Fresh process/session bootstrap: clear any persisted scratchpad
+        # for this session id unless explicitly disabled in config.
+        if bool(cfg_get("scratchpad.clear_on_session_init", True)):
+            try:
+                from .scratchpad_sidecar import clear_scratchpad  # lazy import to avoid cycle
+                clear_scratchpad(session_id)
+            except Exception:
+                pass
     return _SESSIONS[session_id]
