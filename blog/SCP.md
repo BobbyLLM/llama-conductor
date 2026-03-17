@@ -1,6 +1,6 @@
 ---
 layout: default
-title: SCP-LLM-121
+title: "SCP-LLM-121"
 permalink: /blog/scp-llm-121/
 ---
 **Item #:** SCP-LLM-121

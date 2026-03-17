@@ -1,6 +1,6 @@
 ---
 layout: default
-title: Mom, can we get ChatGPT? Mom: we have ChatGPT at home
+title: "Mom, can we get ChatGPT? Mom: we have ChatGPT at home"
 permalink: /blog/meme-test/
 ---
 As you may (or may not) be aware, there is a current fun meme test going around (as of 02.26.26) that purports to challenge LLM reasoning abilities and world models. 
@@ -108,4 +108,5 @@ The logic is straightforward: for an object (the car) to undergo a transformatio
 ---
 
 Yesterday, I argued for the notion that LLMs can perform something that approximates deduction (see: [Lemmy thread](https://lemmy.world/post/43503268/22321124)). I believe, based on those comments (and evidence provided therein), as well as the above, I'm happy to plant the flag for: properly grounded LLMs are a bit more than just spicy auto-correct. As always, I could be wrong and YMMV.
+
 
