@@ -96,6 +96,12 @@ _CONTAINER_CAPACITY_RE = re.compile(
     r"(?P<cap>\d+(?:\.\d+)?)\s*(?P<cap_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)\s*(?:cup|container|bucket|bottle)",
     re.IGNORECASE,
 )
+_CONTAINER_CAPACITY_NL_RE = re.compile(
+    r"(?:cup|container|bucket|bottle)\b[^\n]{0,80}?"
+    r"(?:can\s+)?(?:contain|contains|hold|holds|capacity(?:\s+is|\s+of)?|max(?:imum)?(?:\s+is|\s+of)?)\s*"
+    r"(?P<cap>\d+(?:\.\d+)?)\s*(?P<cap_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)",
+    re.IGNORECASE,
+)
 _CONTAINER_START_RE = re.compile(
     r"(?:with|already\s+has|currently\s+has|holding)\s*"
     r"(?P<start>\d+(?:\.\d+)?)\s*(?P<start_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)",
@@ -106,6 +112,13 @@ _SINGLE_CONTAINER_TRANSFER_RE = re.compile(
     r"(?P<delta>\d+(?:\.\d+)?)\s*(?:more\s*)?(?P<delta_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)"
     r"(?:\s+(?:of\s+)?[a-z]+(?:\s+[a-z]+){0,2})?\s*(?:into|in)\s*"
     r"(?:it|the\s*(?:cup|container|bucket|bottle)|this\s*(?:cup|container|bucket|bottle)|that\s*(?:cup|container|bucket|bottle))\b",
+    re.IGNORECASE,
+)
+_SINGLE_CONTAINER_FILL_RE = re.compile(
+    r"\b(?:fill|filled|filling)\s*"
+    r"(?:it|the\s*(?:cup|container|bucket|bottle)|this\s*(?:cup|container|bucket|bottle)|that\s*(?:cup|container|bucket|bottle))\s*"
+    r"with\s*(?P<delta>\d+(?:\.\d+)?)\s*(?P<delta_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)"
+    r"(?:\s+(?:of\s+)?[a-z]+(?:\s+[a-z]+){0,2})?\b",
     re.IGNORECASE,
 )
 _SPLIT_EQUAL_NL_RE = re.compile(
@@ -158,6 +171,14 @@ _INTO_CONTAINER_RE = re.compile(
     r"(?:cup|container|bucket|bottle)\b",
     re.IGNORECASE,
 )
+_FOLLOWUP_SPLIT_COUNT_RE = re.compile(
+    r"(?:"
+    r"(?:among|between|across|into)\s*(?P<n>\d+(?:\.\d+)?)\s*(?:other\s+|new\s*)?(?:cups?|containers?|buckets?|bottles?)"
+    r"|"
+    r"(?:other\s+)?(?P<n2>\d+(?:\.\d+)?)\s*(?:cups?|containers?|buckets?|bottles?)"
+    r")",
+    re.IGNORECASE,
+)
 
 _BALANCE_START_STRONG_RE = re.compile(
     r"""
@@ -180,6 +201,14 @@ _BALANCE_CAP_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 _ASK_REMAINING_RE = re.compile(r"\b(how much|how many|remaining|left|now)\b", re.IGNORECASE)
+_GOVERNANCE_STATE_RE = re.compile(r"\bstate\b", re.IGNORECASE)
+_GOVERNANCE_CUE_RE = re.compile(
+    r"\b("
+    r"authority|statutory|jurisdiction|federal|regulator|regulatory|permit|permits|"
+    r"policy|compliance|council|agency|classification|pathway|act-\d+|law|laws"
+    r")\b",
+    re.IGNORECASE,
+)
 _SCHED_TASKS_RE = re.compile(
     r"\b(?P<n>\d+(?:\.\d+)?)\s*(tasks?|jobs?|patients?|orders?|tickets?|items?|units?)\b",
     re.IGNORECASE,
@@ -350,12 +379,57 @@ class StateReasoningResult:
     frame: Optional[Dict[str, Any]] = None
 
 
+def _has_strong_state_transition_signature(text: str) -> bool:
+    """Guardrail helper for state-solver routing.
+
+    Returns True only when explicit transfer/capacity/scheduling signatures are present.
+    """
+    t = " ".join((text or "").split())
+    if not t:
+        return False
+    if _SCHEMA_MARKER_RE.search(t):
+        return True
+    if any(
+        rx.search(t)
+        for rx in (
+            _FIRST_ADD_RE,
+            _FIRST_POUR_RE,
+            _DIRECT_TOTAL_CAP_RE,
+            _CONTAINER_CAPACITY_RE,
+            _CONTAINER_CAPACITY_NL_RE,
+            _SINGLE_CONTAINER_TRANSFER_RE,
+            _INTO_CONTAINER_RE,
+            _SPLIT_EQUAL_NL_RE,
+            _SPLIT_REMAINING_AFTER_OP_RE,
+            _SCHED_TASKS_RE,
+        )
+    ):
+        return True
+    if _BALANCE_START_STRONG_RE.search(t) and _OPERATION_MENTION_RE.search(t):
+        return True
+    if _NUM_RE.search(t) and _OPERATION_MENTION_RE.search(t) and (
+        _ASK_OVERFLOW_RE.search(t) or _ASK_REMAINING_RE.search(t)
+    ):
+        return True
+    return False
+
+
+def _looks_like_governance_state_context(text: str) -> bool:
+    """Detect policy/legal 'state authority' semantics that must not hit transfer solver."""
+    t = " ".join((text or "").split())
+    if not t:
+        return False
+    return bool(_GOVERNANCE_STATE_RE.search(t) and _GOVERNANCE_CUE_RE.search(t))
+
+
 def classify_query_family(query: str) -> str:
     t = " ".join(str(query or "").split())
     if not t:
         return "other"
     if _SCHEMA_MARKER_RE.search(t):
         return "state_transition"
+    if _looks_like_governance_state_context(t) and not _has_strong_state_transition_signature(t):
+        return "other"
     if (
         _STATE_INTENT_RE.search(t)
         and len(_NUM_RE.findall(t)) >= 2
@@ -571,7 +645,7 @@ def _as_float(v: Optional[str]) -> Optional[float]:
 
 
 def _solve_single_container_transfer(text: str) -> StateReasoningResult:
-    m_cap = _CONTAINER_CAPACITY_RE.search(text)
+    m_cap = _CONTAINER_CAPACITY_RE.search(text) or _CONTAINER_CAPACITY_NL_RE.search(text)
     if not m_cap:
         return StateReasoningResult()
     cap = _as_float(m_cap.group("cap"))
@@ -583,6 +657,8 @@ def _solve_single_container_transfer(text: str) -> StateReasoningResult:
         return StateReasoningResult()
 
     ops = list(_SINGLE_CONTAINER_TRANSFER_RE.finditer(text))
+    ops.extend(_SINGLE_CONTAINER_FILL_RE.finditer(text))
+    ops.sort(key=lambda m: m.start())
     if not ops:
         return StateReasoningResult()
     if len(ops) > 1:
@@ -601,12 +677,18 @@ def _solve_single_container_transfer(text: str) -> StateReasoningResult:
     start_ml = 0.0
     m_start = _CONTAINER_START_RE.search(text)
     if m_start:
-        sv = _as_float(m_start.group("start"))
-        su = str(m_start.group("start_unit") or "")
-        if sv is not None:
-            start_conv = _volume_to_ml(sv, su)
-            if start_conv is not None:
-                start_ml = start_conv
+        # Ignore incidental "with <num><unit>" inside operation phrasing
+        # (for example: "fill it with 600ml"), which is transfer amount, not start state.
+        op_span = (op.start(), op.end())
+        start_span = (m_start.start(), m_start.end())
+        overlaps_op = (start_span[0] < op_span[1]) and (op_span[0] < start_span[1])
+        if not overlaps_op:
+            sv = _as_float(m_start.group("start"))
+            su = str(m_start.group("start_unit") or "")
+            if sv is not None:
+                start_conv = _volume_to_ml(sv, su)
+                if start_conv is not None:
+                    start_ml = start_conv
 
     if _has_unparsed_operation_fragment(
         text, covered_spans=[(m_cap.start(), m_cap.end()), (op.start(), op.end())]
@@ -1001,19 +1083,56 @@ def _is_state_transition_followup_candidate(query: str) -> bool:
     return bool(_INTO_CONTAINER_RE.search(t))
 
 
+def _is_state_transition_split_followup_candidate(query: str) -> bool:
+    t = " ".join((query or "").split()).lower()
+    if not t:
+        return False
+    if not re.search(r"\b(split|divide|division|equal(?:ly)?|evenly)\b", t):
+        return False
+    if not _FOLLOWUP_SPLIT_COUNT_RE.search(t):
+        return False
+    return bool(re.search(r"\b(that|those|it|contents?|whatever|remaining|other)\b", t))
+
+
 def solve_state_transition_followup(*, frame: Dict[str, Any], query: str) -> StateReasoningResult:
     t = " ".join((query or "").split())
     if not t or not isinstance(frame, dict):
         return StateReasoningResult(family="state_transition")
     if str(frame.get("kind") or "") != "container_transfer_state":
         return StateReasoningResult(family="state_transition")
-    if not _is_state_transition_followup_candidate(t):
-        return StateReasoningResult(family="state_transition")
     try:
         carried_ml = float(frame.get("amount_ml"))
     except Exception:
         return StateReasoningResult(family="state_transition")
     if carried_ml < 0:
+        return StateReasoningResult(family="state_transition")
+
+    if _is_state_transition_split_followup_candidate(t):
+        m_n = _FOLLOWUP_SPLIT_COUNT_RE.search(t)
+        n_raw = ""
+        if m_n:
+            n_raw = str(m_n.group("n") or m_n.group("n2") or "")
+        n_v = _as_float(n_raw) if n_raw else None
+        if n_v is None or n_v <= 0:
+            return _fail_loud("Follow-up split/divide requires a valid container count.")
+        unit_hint = str(frame.get("unit_hint") or "ml")
+        each_ml = carried_ml / n_v
+        each_disp = _volume_from_ml(each_ml, unit_hint)
+        unit_disp = _volume_unit_display(unit_hint)
+        ans = f"Equal split amount is {_fmt(each_disp)} {unit_disp} per cup.\nSource: Contextual"
+        out_frame = dict(frame)
+        out_frame["amount_ml"] = float(carried_ml)
+        out_frame["unit_hint"] = unit_disp
+        return StateReasoningResult(
+            handled=True,
+            fail_loud=False,
+            family="state_transition",
+            answer=ans,
+            reason="state_transition_followup_split_equal",
+            frame=out_frame,
+        )
+
+    if not _is_state_transition_followup_candidate(t):
         return StateReasoningResult(family="state_transition")
 
     into_matches = list(_INTO_CONTAINER_RE.finditer(t))

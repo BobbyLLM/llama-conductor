@@ -1,4 +1,4 @@
-# config.py
+﻿# config.py
 """Configuration management for MoA Router."""
 
 import os
@@ -79,3 +79,4 @@ MENTATS_DEBUG = bool(cfg_get("mentats.debug", False))
 MENTATS_DEBUG_PAYLOAD = bool(cfg_get("mentats.debug_payload", False))
 ROUTER_DEBUG = bool(cfg_get("router.debug", False))
 ROUTER_DEBUG_LOG_USER_TEXT = bool(cfg_get("router.debug_log_user_text", False))
+

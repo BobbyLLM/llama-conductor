@@ -161,21 +161,39 @@ def _expand_breadcrumbs_in_text(text: str, fr: "FastRecall") -> str:
     return pattern.sub(_repl, text)
 
 
+def _resolve_storage_base(storage_dir: str = "") -> str:
+    base = storage_dir or os.getenv("DATA_DIR") or os.getcwd()
+    return os.path.abspath(base)
+
+
+def _normalize_vodka_subdir(vodka_subdir: str) -> str:
+    sub = str(vodka_subdir or "vodka").strip().strip("/\\")
+    if sub in {"", ".", ".."}:
+        return ""
+    return sub
+
+
+def _resolve_vodka_roots(storage_dir: str = "", vodka_subdir: str = "vodka") -> Tuple[str, str]:
+    base = _resolve_storage_base(storage_dir)
+    legacy_root = os.path.join(base, "total_recall")
+    sub = _normalize_vodka_subdir(vodka_subdir)
+    scoped_root = os.path.join(legacy_root, sub) if sub else legacy_root
+    return scoped_root, legacy_root
+
+
 def purge_session_memory_jsonl(storage_dir: str = "", vodka_subdir: str = "vodka") -> int:
     """
     Delete all session-memory JSONL files.
     Intended for router startup so each reboot starts clean.
     Returns number of deleted files.
     """
-    base = storage_dir or os.getenv("DATA_DIR") or os.getcwd()
-    base = os.path.abspath(base)
     deleted = 0
-    legacy_folder = os.path.join(base, "total_recall", "session_memory")
-    sub = str(vodka_subdir or "vodka").strip().strip("/\\")
-    scoped_folder = os.path.join(base, "total_recall", sub, "session_memory") if sub else legacy_folder
-    folders = [scoped_folder]
-    if os.path.normcase(legacy_folder) != os.path.normcase(scoped_folder):
+    scoped_root, legacy_root = _resolve_vodka_roots(storage_dir, vodka_subdir)
+    folders = [os.path.join(scoped_root, "session_memory")]
+    legacy_folder = os.path.join(legacy_root, "session_memory")
+    if os.path.normcase(legacy_folder) != os.path.normcase(folders[0]):
         folders.append(legacy_folder)
+
     for folder in folders:
         if not os.path.isdir(folder):
             continue
@@ -190,21 +208,135 @@ def purge_session_memory_jsonl(storage_dir: str = "", vodka_subdir: str = "vodka
                 continue
     return deleted
 
+
+def purge_vodka_ctx_facts(
+    storage_dir: str = "",
+    *,
+    vodka_subdir: str = "vodka",
+    max_ctx_items: int = 3000,
+) -> Dict[str, int]:
+    """
+    Startup janitor for Vodka ctx facts.
+    Prunes expired entries and caps ctx cardinality.
+    Returns janitor stats.
+    """
+    stats: Dict[str, int] = {
+        "files_seen": 0,
+        "files_updated": 0,
+        "expired_deleted": 0,
+        "cap_deleted": 0,
+        "entries_after": 0,
+    }
+
+    scoped_root, legacy_root = _resolve_vodka_roots(storage_dir, vodka_subdir)
+    roots = [scoped_root]
+    if os.path.normcase(legacy_root) != os.path.normcase(scoped_root):
+        roots.append(legacy_root)
+
+    now = dt.datetime.now().astimezone()
+    max_items = max(500, min(int(max_ctx_items or 3000), 5000))
+
+    for root in roots:
+        facts_file = os.path.join(root, "facts.json")
+        if not os.path.isfile(facts_file):
+            continue
+        stats["files_seen"] += 1
+
+        try:
+            with open(facts_file, "r", encoding="utf-8") as f:
+                data = _loads(f.read())
+            if not isinstance(data, dict):
+                continue
+        except Exception:
+            continue
+
+        changed = False
+
+        # Expiry pass.
+        to_delete: List[str] = []
+        for k, rec in list(data.items()):
+            if not isinstance(rec, dict) or rec.get("type") != "vodka_ctx":
+                continue
+            exp_s = str(rec.get("expires_at", "") or "")
+            if not exp_s:
+                continue
+            exp_dt = _parse_ts_common(exp_s)
+            if exp_dt and exp_dt < now:
+                to_delete.append(str(k))
+        if to_delete:
+            changed = True
+            stats["expired_deleted"] += len(to_delete)
+            for k in to_delete:
+                data.pop(k, None)
+
+        # Cap pass.
+        ctx_keys = [k for k, rec in data.items() if isinstance(rec, dict) and rec.get("type") == "vodka_ctx"]
+        if len(ctx_keys) > max_items:
+            changed = True
+            overflow_n = len(ctx_keys) - max_items
+            ctx_keys_sorted = sorted(ctx_keys, key=lambda kid: str(data.get(kid, {}).get("created_at", "")))
+            overflow = ctx_keys_sorted[:overflow_n]
+            stats["cap_deleted"] += len(overflow)
+            for k in overflow:
+                data.pop(k, None)
+
+        if changed:
+            try:
+                tmp = facts_file + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(_dumps(data))
+                os.replace(tmp, facts_file)
+                stats["files_updated"] += 1
+            except Exception:
+                # Fail-open: janitor must never block startup.
+                pass
+
+        stats["entries_after"] += sum(
+            1 for rec in data.values() if isinstance(rec, dict) and rec.get("type") == "vodka_ctx"
+        )
+
+    return stats
+
 # -------------------------------
 # Storage backend
 # -------------------------------
 
 class Storage:
-    def __init__(self, base_dir: str, debug: bool = False):
+    def __init__(self, base_dir: str, debug: bool = False, vodka_subdir: str = "vodka"):
         self.base_root = base_dir
-        self.base = _ensure_dir(os.path.join(base_dir, "total_recall"))
+        self.total_recall_root = _ensure_dir(os.path.join(base_dir, "total_recall"))
+        self.vodka_subdir = _normalize_vodka_subdir(vodka_subdir)
+        self.legacy_base = self.total_recall_root
+        self.base = (
+            _ensure_dir(os.path.join(self.total_recall_root, self.vodka_subdir))
+            if self.vodka_subdir
+            else self.total_recall_root
+        )
         self.facts_file = os.path.join(self.base, "facts.json")
+        self.legacy_facts_file = os.path.join(self.legacy_base, "facts.json")
         self.log_file = os.path.join(self.base, "activity.log")
         self.debug_file = os.path.join(self.base, "vodka_debug.log") if debug else None
         self.debug = debug
 
         if not os.path.exists(self.facts_file):
-            self._atomic_write(self.facts_file, {})
+            # One-time migration bootstrap: if scoped path is new but legacy facts exist,
+            # seed the scoped file so existing memory remains visible.
+            if (
+                self.vodka_subdir
+                and os.path.exists(self.legacy_facts_file)
+                and os.path.isfile(self.legacy_facts_file)
+            ):
+                try:
+                    with open(self.legacy_facts_file, "r", encoding="utf-8") as f:
+                        legacy = _loads(f.read())
+                    if isinstance(legacy, dict):
+                        self._atomic_write(self.facts_file, legacy)
+                    else:
+                        self._atomic_write(self.facts_file, {})
+                except Exception:
+                    self._atomic_write(self.facts_file, {})
+            else:
+                self._atomic_write(self.facts_file, {})
 
     def _atomic_write(self, path: str, obj: Any):
         tmp = path + ".tmp"
@@ -234,6 +366,14 @@ class Storage:
             with open(self.facts_file, "r", encoding="utf-8") as f:
                 return _loads(f.read())
         except Exception:
+            if self.vodka_subdir and os.path.isfile(self.legacy_facts_file):
+                try:
+                    with open(self.legacy_facts_file, "r", encoding="utf-8") as f:
+                        legacy = _loads(f.read())
+                    if isinstance(legacy, dict):
+                        return legacy
+                except Exception:
+                    pass
             self._atomic_write(self.facts_file, {})
             return {}
 
@@ -460,6 +600,7 @@ class Filter:
 
         # Storage / TTL
         storage_dir: str = Field(default="", description="Base dir for total_recall storage.")
+        subdir: str = Field(default="vodka", description="Scoped subdir under total_recall for Vodka artifacts.")
         base_ttl_days: int = Field(default=3, description="Base TTL for new ctx notes.")
         touch_extension_days: int = Field(default=5, description="TTL extension per touch.")
         max_touches: int = Field(default=2, description="Max touch extensions.")
@@ -484,9 +625,10 @@ class Filter:
         base = self.valves.storage_dir or os.getenv("DATA_DIR") or os.getcwd()
         base = os.path.abspath(base)
         _ensure_dir(base)
+        vodka_subdir = str(getattr(self.valves, "subdir", "vodka") or "vodka")
 
         if self._storage is None:
-            self._storage = Storage(base, debug=bool(self.valves.debug))
+            self._storage = Storage(base, debug=bool(self.valves.debug), vodka_subdir=vodka_subdir)
 
         base_ttl = max(1, min(int(self.valves.base_ttl_days or 3), 30))
         ext_ttl = max(1, min(int(self.valves.touch_extension_days or 5), 30))
@@ -907,6 +1049,21 @@ class Filter:
         sid = self._normalize_session_id(session_id)
         folder = _ensure_dir(os.path.join(fr.S.base, "session_memory"))
         return os.path.join(folder, f"{sid}.jsonl")
+
+    def _session_memory_file_legacy(self, session_id: str) -> str:
+        fr = self._get_storage_and_fr()
+        sid = self._normalize_session_id(session_id)
+        folder = _ensure_dir(os.path.join(fr.S.legacy_base, "session_memory"))
+        return os.path.join(folder, f"{sid}.jsonl")
+
+    def _session_memory_read_file(self, session_id: str) -> str:
+        primary = self._session_memory_file(session_id)
+        if os.path.exists(primary):
+            return primary
+        legacy = self._session_memory_file_legacy(session_id)
+        if os.path.exists(legacy):
+            return legacy
+        return primary
 
     def _compact_memory_text(self, value: Any, max_len: int = 220) -> str:
         txt = str(value or "").strip().replace("\n", " ")
@@ -1333,10 +1490,12 @@ class Filter:
         return mx
 
     def _reset_session_memory_store(self, sid: str, path: str) -> None:
-        try:
-            os.remove(path)
-        except Exception:
-            pass
+        targets = {path, self._session_memory_file(sid), self._session_memory_file_legacy(sid)}
+        for p in targets:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
         self._mu_cache.pop(sid, None)
         self._mu_index.pop(sid, None)
         self._mu_last_update_turn.pop(sid, None)
@@ -1387,21 +1546,22 @@ class Filter:
             max_segments=int(self.valves.summary_segments_per_message or 3),
             include_assistant=bool(self.valves.summary_include_assistant),
         )
-        path = self._session_memory_file(sid)
-        existing = self._load_memory_units_jsonl(path)
+        write_path = self._session_memory_file(sid)
+        read_path = self._session_memory_read_file(sid)
+        existing = self._load_memory_units_jsonl(read_path)
         # Session IDs can be reused by client/IP fallback. If a "fresh" convo
         # starts on a reused id, stale units pollute recall quality.
         if existing and n_user <= 2:
             max_turn_seen = self._max_turn_in_units(existing)
             if max_turn_seen > (n_user + 1):
                 existing = []
-                self._reset_session_memory_store(sid, path)
+                self._reset_session_memory_store(sid, read_path)
         merged = self._merge_memory_units(
             existing,
             units,
             max_units=int(self.valves.summary_memory_max_units or 96),
         )
-        self._write_memory_units_jsonl(path, merged)
+        self._write_memory_units_jsonl(write_path, merged)
         self._refresh_memory_index(sid, merged)
         self._mu_last_update_turn[sid] = n_user
         if debug_enabled:
@@ -2323,15 +2483,15 @@ class Filter:
         by_id = self._mu_cache.get(sid)
         idx_map = self._mu_index.get(sid)
         if not by_id or not idx_map:
-            path = self._session_memory_file(sid)
-            units = self._load_memory_units_jsonl(path)
+            read_path = self._session_memory_read_file(sid)
+            units = self._load_memory_units_jsonl(read_path)
             # Same stale-session guard as update path, but evaluated on every
             # injection turn so reused session IDs are cleaned immediately.
             n_user = self._count_user_messages(messages)
             if units and n_user <= 2:
                 max_turn_seen = self._max_turn_in_units(units)
                 if max_turn_seen > (n_user + 1):
-                    self._reset_session_memory_store(sid, path)
+                    self._reset_session_memory_store(sid, read_path)
                     units = []
             self._refresh_memory_index(sid, units)
             by_id = self._mu_cache.get(sid, {})
@@ -2432,7 +2592,7 @@ class Filter:
     def get_session_memory_status(self, session_id: str, *, user_turn_hint: int = 0) -> Dict[str, Any]:
         """Return lightweight observability for session-memory behavior."""
         sid = self._normalize_session_id(session_id)
-        path = self._session_memory_file(sid)
+        path = self._session_memory_read_file(sid)
         by_id = self._mu_cache.get(sid)
         if by_id is None:
             units = self._load_memory_units_jsonl(path)

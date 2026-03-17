@@ -370,9 +370,29 @@ def format_judge_run(run: JudgeRun) -> str:
     if not run.ok:
         return run.error or "[judge] failed"
 
-    lines: List[str] = ["[judge] ranking", f"criterion: {run.criterion}", ""]
+    lines: List[str] = []
+    if str(getattr(run, "evidence_source", "") or "").strip().lower() in {"", "none"}:
+        lines.extend(
+            [
+                "[judge] No evidence loaded. Running ungrounded.",
+                "[judge] Confidence reflects model priors, not VERIFIED FACTS.",
+                "[judge] For better outcomes, use >>scratch pathway.",
+                "",
+            ]
+        )
+
+    lines.extend(["[judge] ranking", f"criterion: {run.criterion}", ""])
     for i, (item, score) in enumerate(run.ranked, 1):
         lines.append(f"{i}. {item} (score={score:.2f})")
+    if run.ranked:
+        top_score = float(run.ranked[0][1])
+        winners = [item for item, score in run.ranked if abs(float(score) - top_score) < 1e-9]
+        if len(winners) == 1:
+            lines.append("")
+            lines.append(f"Winner: {winners[0]}")
+        else:
+            lines.append("")
+            lines.append(f"Winner: TIE ({', '.join(winners)})")
     lines.extend(
         [
             "",

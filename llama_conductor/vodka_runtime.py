@@ -84,6 +84,7 @@ def apply_vodka_runtime(
             merged_vodka_cfg.update(vodka_cfg)
 
         vodka.valves.storage_dir = str(merged_vodka_cfg.get("storage_dir", vodka.valves.storage_dir) or vodka.valves.storage_dir)
+        vodka.valves.subdir = str(merged_vodka_cfg.get("subdir", vodka.valves.subdir) or vodka.valves.subdir)
         vodka.valves.base_ttl_days = int(merged_vodka_cfg.get("base_ttl_days", vodka.valves.base_ttl_days))
         vodka.valves.touch_extension_days = int(merged_vodka_cfg.get("touch_extension_days", vodka.valves.touch_extension_days))
         user_max_touches = int(merged_vodka_cfg.get("max_touches", vodka.valves.max_touches))

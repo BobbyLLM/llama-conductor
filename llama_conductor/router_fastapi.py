@@ -1,4 +1,4 @@
-"""FastAPI orchestration layer for llama-conductor.
+﻿"""FastAPI orchestration layer for llama-conductor.
 
 Responsibilities:
 - expose API routes
@@ -52,9 +52,8 @@ from .interaction_profile import (
     update_profile_from_user_turn,
 )
 from .privacy_utils import safe_preview, short_hash
-
 # Required modules
-from .vodka_filter import Filter as VodkaFilter, purge_session_memory_jsonl
+from .vodka_filter import Filter as VodkaFilter, purge_session_memory_jsonl, purge_vodka_ctx_facts
 from .serious import run_serious
 
 # Optional modules (feature-detected)
@@ -90,12 +89,18 @@ try:
         build_scratchpad_facts_block,
         wants_exhaustive_query,
         build_scratchpad_dump_text,
+        list_scratchpad_records,
+        capture_scratchpad_output,
+        purge_session_kb_jsonl,
     )
 except Exception:
     maybe_capture_command_output = None  # type: ignore
     build_scratchpad_facts_block = None  # type: ignore
     wants_exhaustive_query = None  # type: ignore
     build_scratchpad_dump_text = None  # type: ignore
+    list_scratchpad_records = None  # type: ignore
+    capture_scratchpad_output = None  # type: ignore
+    purge_session_kb_jsonl = None  # type: ignore
 
 try:
     from .sources_footer import normalize_sources_footer  # type: ignore
@@ -147,6 +152,9 @@ from .chat_postprocess import (
     scratchpad_quote_lines as _pp_scratchpad_quote_lines,
     sanitize_scratchpad_grounded_output as _pp_sanitize_scratchpad_grounded_output,
     append_scratchpad_provenance as _pp_append_scratchpad_provenance,
+    apply_scratchpad_strict_policy as _pp_apply_scratchpad_strict_policy,
+    apply_benchmark_contract_policy as _pp_apply_benchmark_contract_policy,
+    rewrite_source_line as _pp_rewrite_source_line,
     apply_image_footer as _pp_apply_image_footer,
     lock_constraints_block as _pp_lock_constraints_block,
     apply_locked_output_policy as _pp_apply_locked_output_policy,
@@ -224,6 +232,44 @@ def _debug_user_fragment(text: str) -> str:
     if ROUTER_DEBUG_LOG_USER_TEXT:
         return safe_preview(raw, max_len=240)
     return f"<redacted len={len(raw)} sha={short_hash(raw)}>"
+
+
+def _is_explicit_citation_request(text: str) -> bool:
+    s = str(text or "")
+    if not s:
+        return False
+    patterns = [
+        r"\bcite\b",
+        r"\bcitation(?:s)?\b",
+        r"\b(?:list|show|provide|give)\s+(?:me\s+)?(?:the\s+)?(?:references|sources|provenance)\b",
+        r"\bwhat\s+(?:are|were)\s+(?:your|the)\s+(?:references|sources)\b",
+    ]
+    return any(re.search(p, s, flags=re.I) for p in patterns)
+
+
+def _is_structured_schema_task_prompt(text: str) -> bool:
+    s = str(text or "")
+    if not s:
+        return False
+    if not re.search(r"\boutput\s+exactly\b", s, flags=re.I):
+        return False
+    header_markers = [
+        "a_argument:",
+        "b_argument:",
+        "decision:",
+        "justification:",
+        "stakeholder_a_priorities:",
+        "stakeholder_b_priorities:",
+        "difference_summary:",
+        "what_changed:",
+        "no_longer_valid:",
+        "updated_conclusion:",
+        "contradictions:",
+        "source_priority:",
+        "conclusion:",
+    ]
+    low = s.lower()
+    return any(h in low for h in header_markers)
 
 
 _IMAGE_EMITTER_ENABLED = bool(cfg_get("router.image_emitter.enabled", False))
@@ -340,6 +386,7 @@ def _finalize_chat_response(
     text: str,
     user_text: str,
     state: SessionState,
+    facts_block: str = "",
     lock_active: bool,
     scratchpad_grounded: bool,
     scratchpad_quotes: List[str],
@@ -349,11 +396,14 @@ def _finalize_chat_response(
     sensitive_override_once: bool = False,
     bypass_serious_anti_loop: bool = False,
     deterministic_state_solver: bool = False,
+    scratchpad_lock_miss: bool | None = None,
+    scratchpad_lock_miss_indices: List[int] | None = None,
 ):
     return _chat_finalize_response(
         text=text,
         user_text=user_text,
         state=state,
+        facts_block=facts_block,
         lock_active=lock_active,
         scratchpad_grounded=scratchpad_grounded,
         scratchpad_quotes=scratchpad_quotes,
@@ -363,12 +413,17 @@ def _finalize_chat_response(
         sensitive_override_once=sensitive_override_once,
         bypass_serious_anti_loop=bypass_serious_anti_loop,
         deterministic_state_solver=deterministic_state_solver,
+        scratchpad_lock_miss=scratchpad_lock_miss,
+        scratchpad_lock_miss_indices=scratchpad_lock_miss_indices,
         serious_task_forward_fallback=_SERIOUS_TASK_FORWARD_FALLBACK,
         make_stream_response=lambda t: StreamingResponse(_stream_sse(t), media_type="text/event-stream"),
         make_json_response=lambda t: JSONResponse(_make_openai_response(t)),
         sanitize_scratchpad_grounded_output_fn=_pp_sanitize_scratchpad_grounded_output,
         append_scratchpad_provenance_fn=_pp_append_scratchpad_provenance,
+        apply_scratchpad_strict_policy_fn=_pp_apply_scratchpad_strict_policy,
         apply_locked_output_policy_fn=_pp_apply_locked_output_policy,
+        apply_benchmark_contract_policy_fn=_pp_apply_benchmark_contract_policy,
+        rewrite_source_line_fn=_pp_rewrite_source_line,
         apply_deterministic_footer_fn=(
             lambda **kw: _pp_apply_deterministic_footer(
                 **kw,
@@ -433,20 +488,32 @@ async def _chat_exception_guard(request: Request, call_next):
 
 
 @app.on_event("startup")
-async def _startup_router() -> None:
+async def _startup_runtime() -> None:
     try:
         base = str(cfg_get("vodka.storage_dir", "") or "").strip()
         subdir = str(cfg_get("vodka.subdir", "vodka") or "vodka").strip()
         purged = purge_session_memory_jsonl(base, vodka_subdir=subdir)
         _dbg(f"[DEBUG] startup session-memory purge deleted={purged}")
+        stats = purge_vodka_ctx_facts(
+            base,
+            vodka_subdir=subdir,
+            max_ctx_items=int(cfg_get("vodka.max_ctx_items", 3000) or 3000),
+        )
+        _dbg(f"[DEBUG] startup vodka-facts janitor stats={stats}")
     except Exception:
         pass
-
-
+    try:
+        if purge_session_kb_jsonl is not None:
+            base = str(cfg_get("scratchpad.storage_dir", "") or "").strip()
+            if not base:
+                base = str(cfg_get("vodka.storage_dir", "") or "").strip()
+            stats = purge_session_kb_jsonl(base)
+            _dbg(f"[DEBUG] startup session-kb janitor stats={stats}")
+    except Exception:
+        pass
 @app.on_event("shutdown")
-async def _shutdown_router() -> None:
+async def _shutdown_runtime() -> None:
     return None
-
 
 @app.get("/healthz")
 def healthz():
@@ -519,13 +586,12 @@ def _stage_openwebui_title_bypass(*, user_text_raw: str) -> Optional[str]:
         t_l = t.lower()
         if "router" in t_l or "fastapi" in t_l:
             return "Router Debugging"
-        if "clinical" in t_l:
-            return "Clinical Pipeline"
         return "Chat Summary"
 
     if not _is_openwebui_title_task(user_text_raw):
         return None
-    if ROUTER_DEBUG:
+    title_debug = bool(cfg_get("router.debug", False))
+    if title_debug:
         _dbg("[DEBUG] openwebui title task bypass")
     return json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
 
@@ -794,6 +860,23 @@ def _stage_pending_trust_choice(
     # Clear pending state first.
     state.pending_trust_query = ""
     state.pending_trust_recommendations = []
+    state.pending_trust_judge_command = ""
+
+    # Guided trust macro: choose A -> prompt paste -> auto add + auto judge.
+    if str(chosen_rec.get("flow", "") or "").strip() == "scratch_then_judge":
+        judge_cmd = str(chosen_rec.get("judge_command", "") or "").strip()
+        if not judge_cmd or not _is_command(judge_cmd):
+            text = "[trust] scratch->judge flow misconfigured (missing judge command)"
+            resp = StreamingResponse(_stream_sse(text), media_type="text/event-stream") if stream else JSONResponse(_make_openai_response(text))
+            return True, resp, selector, user_text, user_text_raw, raw_messages
+        state.pending_trust_judge_command = judge_cmd
+        text = (
+            "[PASTE EVIDENCE FOR JUDGE]\n"
+            "Paste source text now (or type CANCEL).\n"
+            "Enter anything else to run ungrounded >>judge."
+        )
+        resp = StreamingResponse(_stream_sse(text), media_type="text/event-stream") if stream else JSONResponse(_make_openai_response(text))
+        return True, resp, selector, user_text, user_text_raw, raw_messages
 
     _cmd_norm = (command or "").lstrip()
     if _cmd_norm.startswith("Â»"):
@@ -848,6 +931,73 @@ def _stage_pending_trust_choice(
                 break
 
     return False, None, selector, user_text, user_text_raw, raw_messages
+
+
+def _stage_pending_trust_judge_context(
+    *,
+    state: SessionState,
+    session_id: str,
+    stream: bool,
+    raw_messages: List[Dict[str, Any]],
+    user_text_raw: str,
+    selector: str,
+    user_text: str,
+) -> Tuple[bool, Optional[Any], str, str, str, List[Dict[str, Any]]]:
+    """Handle guided paste step for trust -> scratch -> judge flow."""
+    judge_cmd = str(getattr(state, "pending_trust_judge_command", "") or "").strip()
+    if not judge_cmd:
+        return False, None, selector, user_text, user_text_raw, raw_messages
+
+    def _respond(text: str) -> Tuple[bool, Optional[Any], str, str, str, List[Dict[str, Any]]]:
+        resp = StreamingResponse(_stream_sse(text), media_type="text/event-stream") if stream else JSONResponse(_make_openai_response(text))
+        return True, resp, selector, user_text, user_text_raw, raw_messages
+
+    incoming = str(user_text_raw or "")
+    trimmed = incoming.strip()
+
+    # Allow explicit cancel from paste step.
+    if trimmed.upper() in {"CANCEL", ">>CANCEL"}:
+        state.pending_trust_judge_command = ""
+        return _respond("[trust] scratch->judge canceled.")
+
+    # Empty / whitespace-only input: run ungrounded judge path explicitly.
+    if not trimmed:
+        note = "[NO CONTEXT ADDED; RUNNING DEFAULT >>JUDGE RANKING]"
+        prev_attached = set(state.attached_kbs or set())
+        prev_lock = set(getattr(state, "scratchpad_locked_indices", set()) or set())
+        try:
+            # Force ungrounded fallback for this one guided invocation.
+            state.attached_kbs.discard("scratchpad")
+            state.scratchpad_locked_indices.clear()
+            judge_reply = handle_command(judge_cmd, state=state, session_id=session_id)
+        finally:
+            state.attached_kbs = set(prev_attached)
+            state.scratchpad_locked_indices = set(int(i) for i in prev_lock if int(i) > 0)
+            state.pending_trust_judge_command = ""
+        if judge_reply is None:
+            return _respond(f"{note}\n\n[trust] judge execution failed")
+        return _respond(f"{note}\n\n{judge_reply}")
+
+    # Non-empty input: treat as scratch context and run judge immediately.
+    if capture_scratchpad_output is None:
+        state.pending_trust_judge_command = ""
+        return _respond("[scratchpad] add unavailable")
+
+    state.attached_kbs.add("scratchpad")
+    rec = capture_scratchpad_output(
+        session_id=session_id,
+        source_command=">>trust paste",
+        text=incoming,
+    )
+    ack = "[scratchpad] add failed"
+    if rec:
+        ack = f"[scratchpad] added sha={str(rec.get('sha256', ''))[:12]}"
+
+    judge_reply = handle_command(judge_cmd, state=state, session_id=session_id)
+    state.pending_trust_judge_command = ""
+    if judge_reply is None:
+        return _respond(f"{ack}\n\n[trust] judge execution failed")
+    return _respond(f"{ack}\n\n{judge_reply}")
 
 
 def _stage_pending_lock_confirmation(
@@ -941,6 +1091,7 @@ async def _stage_pending_vodka_comment(
         text=text,
         user_text=user_text_raw,
         state=state,
+        facts_block="",
         lock_active=False,
         scratchpad_grounded=False,
         scratchpad_quotes=[],
@@ -986,7 +1137,10 @@ async def v1_chat_completions(req: Request):
     )
     user_text_raw, _ = last_user_message(raw_messages)
     if not user_text_raw and not request_has_images:
-        return JSONResponse(_make_openai_response("[router error: no user message]"))
+        # Allow empty submission only for guided trust paste step.
+        if not str(getattr(state, "pending_trust_judge_command", "") or "").strip():
+            return JSONResponse(_make_openai_response("[router error: no user message]"))
+        user_text_raw = ""
     if not user_text_raw and request_has_images:
         user_text_raw = "[image]"
 
@@ -1031,6 +1185,18 @@ async def v1_chat_completions(req: Request):
     )
     if trust_handled:
         return trust_resp
+
+    trust_judge_handled, trust_judge_resp, selector, user_text, user_text_raw, raw_messages = _stage_pending_trust_judge_context(
+        state=state,
+        session_id=session_id,
+        stream=stream,
+        raw_messages=raw_messages,
+        user_text_raw=user_text_raw,
+        selector=selector,
+        user_text=user_text,
+    )
+    if trust_judge_handled:
+        return trust_judge_resp
 
     lock_handled, lock_resp = _stage_pending_lock_confirmation(
         state=state,
@@ -1251,6 +1417,8 @@ async def v1_chat_completions(req: Request):
     lock_active = lock_active_now
     scratchpad_quotes: List[str] = []
     scratchpad_grounded = False
+    scratchpad_lock_miss = False
+    scratchpad_lock_miss_indices: List[int] = []
     constraints_block = ""
     if state.profile_enabled:
         try:
@@ -1264,6 +1432,11 @@ async def v1_chat_completions(req: Request):
             f"{lock_constraints}\n\n{constraints_block}".strip() if constraints_block else lock_constraints
         )
     scratchpad_exhaustive = False
+    scratchpad_locked_indices = set(
+        int(i)
+        for i in (getattr(state, "scratchpad_locked_indices", set()) or set())
+        if str(i).strip().isdigit() and int(i) > 0
+    )
     scratchpad_exhaustive_mode = str(cfg_get("scratchpad.exhaustive_response_mode", "raw") or "raw").strip().lower()
     if (not lock_active) and "scratchpad" in state.attached_kbs and build_scratchpad_facts_block is not None:
         try:
@@ -1276,23 +1449,78 @@ async def v1_chat_completions(req: Request):
                 query=user_text,
                 top_k=sp_top_k,
                 max_chars=sp_max_chars,
+                locked_indices=scratchpad_locked_indices,
             )
             if sp_block:
                 scratchpad_grounded = True
                 scratchpad_quotes = _pp_scratchpad_quote_lines(sp_block, query=user_text)
+                if not scratchpad_quotes:
+                    # Robustness: if query-filtered extraction misses due
+                    # tokenization edge cases, fall back to any quote span.
+                    scratchpad_quotes = _pp_scratchpad_quote_lines(sp_block, query="")
                 facts_block = f"{facts_block}\n\n{sp_block}".strip() if facts_block else sp_block
                 scratchpad_constraints = (
-                    "Grounding mode: SCRATCHPAD_ONLY.\n"
-                    "- Use only FACTS provided in this turn (scratchpad facts).\n"
-                    "- If FACTS are insufficient, say so explicitly.\n"
-                    "- Do not use pretrained/background knowledge.\n"
-                    "- Keep claims constrained to provided facts."
+                    "Grounding mode: SCRATCHPAD.\n"
+                    "- Prefer FACTS provided in this turn (scratchpad facts).\n"
+                    "- Give a complete direct answer in normal prose.\n"
+                    "- Synthesize from provided facts; do not just dump quote snippets.\n"
+                    "- If you infer beyond explicit facts, mark that portion as model supplement."
                 )
+                if re.search(r"\b(same|similar|difference|different|compare|conceptual(?:ly)?)\b", user_text or "", re.I):
+                    scratchpad_constraints += (
+                        "\n- For comparison questions, answer with an explicit verdict first "
+                        "(e.g., Yes/No/Partly), then explain using at least two grounded facts."
+                    )
                 constraints_block = (
                     f"{scratchpad_constraints}\n\n{constraints_block}".strip()
                     if constraints_block
                     else scratchpad_constraints
                 )
+            else:
+                has_query_tokens = bool(re.search(r"[A-Za-z0-9]{3,}", user_text or ""))
+                if scratchpad_locked_indices and has_query_tokens:
+                    scratchpad_lock_miss = True
+                    scratchpad_lock_miss_indices = sorted(scratchpad_locked_indices)
+        except Exception:
+            pass
+
+    # Deterministic reference mode for strict scratch grounding.
+    cite_like_query = _is_explicit_citation_request(user_text)
+    structured_schema_task_prompt = _is_structured_schema_task_prompt(user_text)
+    if (
+        scratchpad_grounded
+        and cite_like_query
+        and (not structured_schema_task_prompt)
+        and list_scratchpad_records is not None
+    ):
+        try:
+            recs = list_scratchpad_records(session_id, limit=1000000)
+            if scratchpad_locked_indices:
+                filtered = []
+                for i, rec in enumerate(recs, 1):
+                    if i in scratchpad_locked_indices:
+                        filtered.append((i, rec))
+            else:
+                filtered = list(enumerate(recs, 1))
+            rows = []
+            for idx, rec in filtered[:8]:
+                src = str(rec.get("source_command", "unknown") or "unknown")
+                sha = str(rec.get("sha256", "") or "")[:12]
+                txt = str(rec.get("text", "") or "").strip()
+                preview = " ".join(txt.split())
+                if len(preview) > 220:
+                    preview = preview[:219].rstrip() + "..."
+                rows.append(f"- [{idx}] cmd={src} sha={sha} quote=\"{preview}\"")
+            if rows:
+                text = "[Scratch]\n\nReferences:\n" + "\n".join(rows)
+            else:
+                text = (
+                    "[Scratch]\n\nNo scratchpad references are available for the current selection."
+                )
+            text = _pp_append_scratchpad_provenance(text)
+            if stream:
+                return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
+            return JSONResponse(_make_openai_response(text))
         except Exception:
             pass
 
@@ -1304,8 +1532,13 @@ async def v1_chat_completions(req: Request):
         and build_scratchpad_dump_text is not None
     ):
         try:
-            dump_text = build_scratchpad_dump_text(session_id=session_id, query=user_text)
+            dump_text = build_scratchpad_dump_text(
+                session_id=session_id,
+                query=user_text,
+                locked_indices=scratchpad_locked_indices,
+            )
             text = dump_text.strip() if dump_text else "[scratchpad] empty"
+            text = f"[Scratch]\n\n{text}".strip()
             text = _pp_append_scratchpad_provenance(text)
             if stream:
                 return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
@@ -1363,7 +1596,13 @@ async def v1_chat_completions(req: Request):
         is_argumentative_prompt=_is_argumentative_prompt,
         is_argumentatively_complete=_is_argumentatively_complete,
         fallback_with_mode_header=_fallback_with_mode_header,
-        finalize_chat_response=_finalize_chat_response,
+        finalize_chat_response=(
+            lambda **kw: _finalize_chat_response(
+                scratchpad_lock_miss=scratchpad_lock_miss,
+                scratchpad_lock_miss_indices=scratchpad_lock_miss_indices,
+                **kw,
+            )
+        ),
     )
     if mode_resp is not None:
         if state_solver_used and state_solver_answer:
@@ -1387,6 +1626,7 @@ async def v1_chat_completions(req: Request):
             text=state_solver_answer,
             user_text=user_text,
             state=state,
+            facts_block=facts_block,
             lock_active=lock_active,
             scratchpad_grounded=scratchpad_grounded,
             scratchpad_quotes=scratchpad_quotes,
@@ -1395,6 +1635,8 @@ async def v1_chat_completions(req: Request):
             mode="serious",
             sensitive_override_once=sensitive_override_once,
             bypass_serious_anti_loop=True,
+            scratchpad_lock_miss=scratchpad_lock_miss,
+            scratchpad_lock_miss_indices=scratchpad_lock_miss_indices,
         )
 
     if int(getattr(state, "serious_ack_reframe_streak", 0) or 0) >= 1:
@@ -1506,6 +1748,7 @@ async def v1_chat_completions(req: Request):
         text=text,
         user_text=user_text,
         state=state,
+        facts_block=facts_block,
         lock_active=lock_active,
         scratchpad_grounded=scratchpad_grounded,
         scratchpad_quotes=scratchpad_quotes,
@@ -1513,6 +1756,8 @@ async def v1_chat_completions(req: Request):
         stream=stream,
         mode="serious",
         sensitive_override_once=sensitive_override_once,
+        scratchpad_lock_miss=scratchpad_lock_miss,
+        scratchpad_lock_miss_indices=scratchpad_lock_miss_indices,
     )
 
 
@@ -1523,5 +1768,6 @@ if __name__ == "__main__":
     host = str(cfg_get("server.host", "0.0.0.0"))
     port = int(cfg_get("server.port", 9000))
     uvicorn.run("router_fastapi:app", host=host, port=port, reload=False)
+
 
 
