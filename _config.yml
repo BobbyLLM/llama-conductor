@@ -1,6 +1,10 @@
 title: llama-conductor blog
 description: deterministic routing, grounded reasoning, and operator notes
+url: "https://bobbyllm.github.io"
+baseurl: "/llama-conductor"
 markdown: kramdown
+plugins:
+  - jekyll-sitemap
 kramdown:
   input: GFM
 permalink: pretty

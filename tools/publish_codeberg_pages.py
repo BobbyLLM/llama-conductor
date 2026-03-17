@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import html
 import re
 import shutil
 import subprocess
@@ -222,7 +223,68 @@ def dest_from_permalink(out_root: Path, permalink: str) -> Path:
     return out_root / f"{rel}.html"
 
 
-def build_site(repo_root: Path, out_root: Path, base_path: str, canonical_base: str) -> None:
+def discover_pages(repo_root: Path) -> list[str]:
+    pages: list[str] = []
+    for rel in ("index.md", "about.md", "blog/index.md"):
+        if (repo_root / rel).exists():
+            pages.append(rel)
+    blog_dir = repo_root / "blog"
+    if blog_dir.exists():
+        for p in sorted(blog_dir.glob("*.md"), key=lambda x: x.name.lower()):
+            rel = p.relative_to(repo_root).as_posix()
+            if rel == "blog/index.md":
+                continue
+            pages.append(rel)
+    return pages
+
+
+def xml_escape(s: str) -> str:
+    return html.escape(s, quote=True)
+
+
+def codeberg_url_from_permalink(permalink: str, site_base: str) -> str:
+    p = permalink.strip()
+    if not p.startswith("/"):
+        p = "/" + p
+    if p == "/":
+        return site_base.rstrip("/") + "/"
+    if p.endswith("/"):
+        return site_base.rstrip("/") + p.rstrip("/") + ".html"
+    return site_base.rstrip("/") + p
+
+
+def write_sitemap(out_root: Path, urls: list[str]) -> None:
+    unique_urls = sorted(set(urls))
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    for u in unique_urls:
+        lines.append(f"  <url><loc>{xml_escape(u)}</loc></url>")
+    lines.append("</urlset>")
+    (out_root / "sitemap.xml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_robots(out_root: Path, site_base: str) -> None:
+    body = "\n".join(
+        [
+            "User-agent: *",
+            "Allow: /",
+            "",
+            f"Sitemap: {site_base.rstrip('/')}/sitemap.xml",
+            "",
+        ]
+    )
+    (out_root / "robots.txt").write_text(body, encoding="utf-8")
+
+
+def build_site(
+    repo_root: Path,
+    out_root: Path,
+    base_path: str,
+    canonical_base: str,
+    site_base: str,
+) -> None:
     if out_root.exists():
         shutil.rmtree(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -234,13 +296,8 @@ def build_site(repo_root: Path, out_root: Path, base_path: str, canonical_base: 
         if src.exists():
             shutil.copytree(src, out_root / rel, dirs_exist_ok=True)
 
-    pages = [
-        "index.md",
-        "about.md",
-        "blog/index.md",
-        "blog/meme-test.md",
-        "blog/SCP.md",
-    ]
+    pages = discover_pages(repo_root)
+    sitemap_urls: list[str] = []
     for rel in pages:
         src = repo_root / rel
         raw = read_text(src)
@@ -265,11 +322,14 @@ def build_site(repo_root: Path, out_root: Path, base_path: str, canonical_base: 
         html = prefix_root_links(html, base_path)
         canonical_href = canonical_from_permalink(str(permalink), canonical_base)
         doc = page_shell(str(title), html, base_path, canonical_href=canonical_href)
+        sitemap_urls.append(codeberg_url_from_permalink(str(permalink), site_base))
 
         dst = dest_from_permalink(out_root, str(permalink))
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(doc, encoding="utf-8")
 
+    write_sitemap(out_root, sitemap_urls)
+    write_robots(out_root, site_base)
     (out_root / ".nojekyll").write_text("", encoding="utf-8")
 
 
@@ -310,6 +370,7 @@ def main() -> None:
     ap.add_argument("--out-dir", default=".codeberg_site")
     ap.add_argument("--base-path", default="/llama-conductor")
     ap.add_argument("--canonical-base", default="https://bobbyllm.github.io/llama-conductor")
+    ap.add_argument("--site-base", default="https://bobbyllm.codeberg.page/llama-conductor")
     ap.add_argument("--branch", default="pages")
     ap.add_argument("--remote", default="origin")
     ap.add_argument("--publish", action="store_true")
@@ -323,6 +384,7 @@ def main() -> None:
         out_root,
         args.base_path.rstrip("/"),
         args.canonical_base.rstrip("/"),
+        args.site_base.rstrip("/"),
     )
     if args.publish:
         publish_pages(repo_root, out_root, args.branch, args.remote, args.site_subdir)
