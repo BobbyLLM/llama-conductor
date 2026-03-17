@@ -54,15 +54,17 @@ def ensure_h1(body: str, title: str) -> str:
     return f"# {title}\n\n{body}"
 
 
-def page_shell(title: str, content_html: str, base_path: str) -> str:
+def page_shell(title: str, content_html: str, base_path: str, canonical_href: str | None = None) -> str:
     css = f"{base_path}/assets/css/site.css?v={int(dt.datetime.now().timestamp())}"
     about_href = f"{base_path}/about.html"
+    canonical_line = f'  <link rel="canonical" href="{canonical_href}">\n' if canonical_href else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{title} | llama-conductor</title>
+{canonical_line}  <meta name="robots" content="index,follow">
   <link rel="stylesheet" href="{css}">
 </head>
 <body>
@@ -90,6 +92,15 @@ def _pretty_to_html(path: str) -> str:
     if path.endswith("/"):
         return path.rstrip("/") + ".html"
     return path
+
+
+def canonical_from_permalink(permalink: str, canonical_base: str) -> str:
+    p = permalink.strip()
+    if not p.startswith("/"):
+        p = "/" + p
+    if p != "/" and not p.endswith("/"):
+        p = p + "/"
+    return canonical_base.rstrip("/") + p
 
 
 def prefix_root_links(html: str, base_path: str) -> str:
@@ -211,7 +222,7 @@ def dest_from_permalink(out_root: Path, permalink: str) -> Path:
     return out_root / f"{rel}.html"
 
 
-def build_site(repo_root: Path, out_root: Path, base_path: str) -> None:
+def build_site(repo_root: Path, out_root: Path, base_path: str, canonical_base: str) -> None:
     if out_root.exists():
         shutil.rmtree(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -252,7 +263,8 @@ def build_site(repo_root: Path, out_root: Path, base_path: str) -> None:
         body = ensure_h1(body, str(title))
         html = render_markdown(body)
         html = prefix_root_links(html, base_path)
-        doc = page_shell(str(title), html, base_path)
+        canonical_href = canonical_from_permalink(str(permalink), canonical_base)
+        doc = page_shell(str(title), html, base_path, canonical_href=canonical_href)
 
         dst = dest_from_permalink(out_root, str(permalink))
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -297,6 +309,7 @@ def main() -> None:
     ap.add_argument("--repo-root", default=".")
     ap.add_argument("--out-dir", default=".codeberg_site")
     ap.add_argument("--base-path", default="/llama-conductor")
+    ap.add_argument("--canonical-base", default="https://bobbyllm.github.io/llama-conductor")
     ap.add_argument("--branch", default="pages")
     ap.add_argument("--remote", default="origin")
     ap.add_argument("--publish", action="store_true")
@@ -305,7 +318,12 @@ def main() -> None:
 
     repo_root = Path(args.repo_root).resolve()
     out_root = repo_root / args.out_dir
-    build_site(repo_root, out_root, args.base_path.rstrip("/"))
+    build_site(
+        repo_root,
+        out_root,
+        args.base_path.rstrip("/"),
+        args.canonical_base.rstrip("/"),
+    )
     if args.publish:
         publish_pages(repo_root, out_root, args.branch, args.remote, args.site_subdir)
 
