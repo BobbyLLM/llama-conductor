@@ -9,4 +9,4 @@ Chiropractor. ASD. Self-taught Python. Built an LLM anti-hallucination harness o
 This is the blog.
 
 Get in touch.
-sanding-oink-grant(AT)duck(DOT)com or find me on Lemmy.
+sanding-oink-grant(AT)duck(DOT)com or [find me on Lemmy](https://lemmy.world/u/SuspciousCarrot78).
