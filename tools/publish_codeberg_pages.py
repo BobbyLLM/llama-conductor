@@ -265,6 +265,19 @@ def write_sitemap(out_root: Path, urls: list[str]) -> None:
     (out_root / "sitemap.xml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_sitemap_index(out_root: Path, site_base: str) -> None:
+    body = "\n".join(
+        [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+            f"  <sitemap><loc>{xml_escape(site_base.rstrip('/') + '/sitemap.xml')}</loc></sitemap>",
+            "</sitemapindex>",
+            "",
+        ]
+    )
+    (out_root / "sitemap-index.xml").write_text(body, encoding="utf-8")
+
+
 def write_robots(out_root: Path, site_base: str) -> None:
     body = "\n".join(
         [
@@ -329,6 +342,7 @@ def build_site(
         dst.write_text(doc, encoding="utf-8")
 
     write_sitemap(out_root, sitemap_urls)
+    write_sitemap_index(out_root, site_base)
     write_robots(out_root, site_base)
     (out_root / ".nojekyll").write_text("", encoding="utf-8")
 
