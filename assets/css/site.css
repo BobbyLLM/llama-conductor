@@ -15,8 +15,13 @@
 body {
   margin: 0;
   color: var(--ink);
+  background-color: #171a1f;
   background: radial-gradient(1200px 600px at 18% -12%, #3a3d43 0%, var(--bg) 44%, #171a1f 100%);
   font: 19px/1.75 "Georgia", "Cambria", "Times New Roman", serif;
+}
+
+html {
+  background: #171a1f;
 }
 
 .bg-grid {
