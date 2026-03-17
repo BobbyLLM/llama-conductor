@@ -14,5 +14,6 @@ BobbyLLM's field notes on local AI, spite engineering, and teaching a 4B model t
 
 ## Repository
 
+- [About]({{ '/about/' | relative_url }})
 - [Codeberg](https://codeberg.org/BobbyLLM/llama-conductor)
 - [GitHub mirror](https://github.com/BobbyLLM/llama-conductor)

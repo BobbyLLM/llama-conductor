@@ -57,8 +57,6 @@ def ensure_h1(body: str, title: str) -> str:
 def page_shell(title: str, content_html: str, base_path: str) -> str:
     css = f"{base_path}/assets/css/site.css?v={int(dt.datetime.now().timestamp())}"
     about_href = f"{base_path}/about.html"
-    meme_href = f"{base_path}/blog/meme-test.html"
-    scp_href = f"{base_path}/blog/scp-llm-121.html"
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -73,10 +71,7 @@ def page_shell(title: str, content_html: str, base_path: str) -> str:
     <a class="brand" href="{base_path}/">llama-conductor</a>
     <nav>
       <a href="{base_path}/">Home</a>
-      <a href="{meme_href}">Meme Test</a>
-      <a href="{scp_href}">SCP-LLM-121</a>
       <a href="{about_href}">About</a>
-      <a href="https://codeberg.org/BobbyLLM/llama-conductor">Codeberg</a>
     </nav>
   </header>
   <main class="wrap">
