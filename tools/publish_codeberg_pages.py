@@ -65,6 +65,7 @@ def page_shell(title: str, content_html: str, base_path: str, canonical_href: st
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{title} | llama-conductor</title>
+  <meta name="google-site-verification" content="X-oVkpKrZtcgUicays4QvguYOmD5x98mby9rVN5yx10" />
 {canonical_line}  <meta name="robots" content="index,follow">
   <link rel="stylesheet" href="{css}">
 </head>
