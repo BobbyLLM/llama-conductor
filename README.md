@@ -17,8 +17,8 @@ TL;DR: "In God we trust. All others bring data." - Deming
 - [Quickstart](#quickstart-first-time-recommended) - Get it running in 5 minutes
 - [Y U DO DIS?](DESIGN.md) - Design fool-osophy and Q&A
 - [BULLSHIT. PROVE IT](prepub/PAPER.md) - Ok, I will (Prepub draft + evidence bundle)
-- [Mom, can we get ChatGPT? Mom: we have ChatGPT at home](blog/meme-test.md) - A fun meme test that shows the effect of deterministic grounding
-- [SCP-LLM-121](blog/SCP.md) "My God...it got loose?!?" (yeah, I got bored)
+- [Mom, can we get ChatGPT? Mom: we have ChatGPT at home](https://bobbyllm.github.io/llama-conductor/blog/meme-test/) - A fun meme test that shows the effect of deterministic grounding
+- [SCP-LLM-121](https://bobbyllm.github.io/llama-conductor/blog/scp-llm-121/) "My God...it got loose?!?" (yeah, I got bored)
 
 ---
 

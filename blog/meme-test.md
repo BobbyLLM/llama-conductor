@@ -1,8 +1,3 @@
----
-layout: default
-title: "Mom, can we get ChatGPT? Mom: we have ChatGPT at home"
-permalink: /blog/meme-test/
----
 As you may (or may not) be aware, there is a current fun meme test going around (as of 02.26.26) that purports to challenge LLM reasoning abilities and world models. 
 
 A recent blog post / ad spot by Opper.ai ([Opper.ai car wash test](https://opper.ai/blog/car-wash-test)) nicely summarizes the test - 
