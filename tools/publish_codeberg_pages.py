@@ -44,7 +44,8 @@ def load_defaults(config_path: Path) -> dict[str, dict]:
 
 def strip_liquid_relative_url(md: str, base_path: str) -> str:
     pat = re.compile(r"\{\{\s*'([^']+)'\s*\|\s*relative_url\s*\}\}")
-    return pat.sub(lambda m: f"{base_path}{m.group(1)}", md)
+    # Keep root-relative paths here; base prefixing is handled in HTML phase.
+    return pat.sub(lambda m: f"{m.group(1)}", md)
 
 
 def ensure_h1(body: str, title: str) -> str:
@@ -124,8 +125,17 @@ def render_markdown(body: str) -> str:
     # Minimal fallback for this repo's content.
     html_lines: list[str] = []
     in_code = False
+    in_ul = False
+
+    def close_ul() -> None:
+        nonlocal in_ul
+        if in_ul:
+            html_lines.append("</ul>")
+            in_ul = False
+
     for line in body.splitlines():
         if line.strip().startswith("```"):
+            close_ul()
             if not in_code:
                 html_lines.append("<pre><code>")
             else:
@@ -136,29 +146,30 @@ def render_markdown(body: str) -> str:
             html_lines.append(line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
             continue
         if line.startswith("# "):
+            close_ul()
             html_lines.append(f"<h1>{line[2:].strip()}</h1>")
             continue
         if line.startswith("## "):
+            close_ul()
             html_lines.append(f"<h2>{line[3:].strip()}</h2>")
             continue
         if line.startswith("- "):
-            if not html_lines or not html_lines[-1].startswith("<ul"):
+            if not in_ul:
                 html_lines.append("<ul>")
+                in_ul = True
             item = line[2:].strip()
             item = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', item)
             html_lines.append(f"<li>{item}</li>")
             continue
-        if html_lines and html_lines[-1].startswith("<li>") and line.strip() == "":
-            html_lines.append("</ul>")
-            continue
         if line.strip() == "":
+            close_ul()
             html_lines.append("")
             continue
+        close_ul()
         text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', line)
         text = re.sub(r"(https?://[^\s<]+)", r'<a href="\1">\1</a>', text)
         html_lines.append(f"<p>{text}</p>")
-    if html_lines and html_lines[-1].startswith("<li>"):
-        html_lines.append("</ul>")
+    close_ul()
     return "\n".join(html_lines)
 
 
