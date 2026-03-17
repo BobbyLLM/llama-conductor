@@ -1,0 +1,144 @@
+:root {
+  --bg: #f5f2ea;
+  --ink: #14130f;
+  --muted: #5b574e;
+  --card: #fffdf7;
+  --line: #d9d1c3;
+  --accent: #a13615;
+  --link: #053d7a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: radial-gradient(1200px 600px at 20% -10%, #ffffff 0%, var(--bg) 45%, #eee7d9 100%);
+  font: 19px/1.75 "Georgia", "Cambria", "Times New Roman", serif;
+}
+
+.bg-grid {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(0, 0, 0, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.03) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.15), transparent 70%);
+}
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 253, 247, 0.92);
+  backdrop-filter: blur(6px);
+}
+
+.site-header .brand {
+  font: 700 0.95rem/1 "Consolas", "Cascadia Mono", monospace;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+
+.site-header nav {
+  display: flex;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.site-header nav a {
+  color: var(--muted);
+  text-decoration: none;
+  font: 600 0.85rem/1 "Consolas", "Cascadia Mono", monospace;
+}
+
+.site-header nav a:hover {
+  color: var(--ink);
+}
+
+.wrap {
+  max-width: 980px;
+  margin: 2rem auto;
+  padding: 0 1rem 2rem;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: 0 16px 34px rgba(24, 20, 10, 0.08);
+}
+
+.prose {
+  padding: 1.8rem 2rem 2.2rem;
+}
+
+.prose h1,
+.prose h2,
+.prose h3 {
+  color: #1d1a13;
+  line-height: 1.25;
+}
+
+.prose h1 {
+  margin-top: 0;
+  font-size: 2rem;
+}
+
+.prose h2 {
+  margin-top: 2rem;
+  font-size: 1.45rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+
+.prose h3 {
+  margin-top: 1.4rem;
+  font-size: 1.15rem;
+}
+
+.prose a {
+  color: var(--link);
+}
+
+.prose code {
+  font: 0.9em/1.2 "Consolas", "Cascadia Mono", monospace;
+  background: #efe6d8;
+  padding: 0.12em 0.35em;
+  border-radius: 3px;
+}
+
+.prose pre {
+  overflow-x: auto;
+  padding: 0.9rem;
+  background: #211c15;
+  color: #f6f2ea;
+  border: 1px solid #3b3226;
+}
+
+.prose blockquote {
+  margin: 1rem 0;
+  padding: 0.2rem 1rem;
+  border-left: 4px solid #bca77d;
+  background: #faf4e8;
+}
+
+@media (max-width: 760px) {
+  body {
+    font-size: 17px;
+  }
+  .prose {
+    padding: 1.2rem;
+  }
+}
