@@ -111,6 +111,15 @@ def prefix_root_links(html: str, base_path: str) -> str:
 
 
 def render_markdown(body: str) -> str:
+    # Preferred parser path: markdown-it-py
+    try:
+        from markdown_it import MarkdownIt  # type: ignore
+
+        md = MarkdownIt("commonmark", {"linkify": True, "typographer": True}).enable("table")
+        return md.render(body)
+    except Exception:
+        pass
+
     # Prefer pandoc if available; otherwise use a minimal fallback.
     p = shutil.which("pandoc")
     if p:
@@ -132,6 +141,28 @@ def render_markdown(body: str) -> str:
         if in_ul:
             html_lines.append("</ul>")
             in_ul = False
+
+    def linkify_plain_urls(s: str) -> str:
+        # Only linkify outside existing HTML tags.
+        parts = re.split(r"(<[^>]+>)", s)
+        out: list[str] = []
+
+        def repl(m: re.Match[str]) -> str:
+            url = m.group(1)
+            # Trim common trailing punctuation that should remain outside the link.
+            tail = ""
+            while url and url[-1] in "),.!?;:":
+                tail = url[-1] + tail
+                url = url[:-1]
+            return f'<a href="{url}">{url}</a>{tail}'
+
+        url_re = re.compile(r"(https?://[^\s<]+)")
+        for part in parts:
+            if part.startswith("<") and part.endswith(">"):
+                out.append(part)
+            else:
+                out.append(url_re.sub(repl, part))
+        return "".join(out)
 
     for line in body.splitlines():
         if line.strip().startswith("```"):
@@ -167,7 +198,7 @@ def render_markdown(body: str) -> str:
             continue
         close_ul()
         text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', line)
-        text = re.sub(r"(https?://[^\s<]+)", r'<a href="\1">\1</a>', text)
+        text = linkify_plain_urls(text)
         html_lines.append(f"<p>{text}</p>")
     close_ul()
     return "\n".join(html_lines)
