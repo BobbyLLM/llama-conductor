@@ -3,9 +3,9 @@ layout: default
 title: Blog Index
 ---
 
-# Deterministic Blog Surface
+# Clanker Adjacent
 
-Readable project notes and demos, published from this repo.
+BobbyLLM's field notes on local AI, spite engineering, and teaching a 4B model to shut up when it doesn't know.
 
 ## Featured Posts
 
