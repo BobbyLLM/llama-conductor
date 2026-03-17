@@ -85,6 +85,13 @@ def page_shell(title: str, content_html: str, base_path: str) -> str:
 """
 
 
+def prefix_root_links(html: str, base_path: str) -> str:
+    base = base_path.rstrip("/")
+    html = re.sub(r'href="/(?!/)', f'href="{base}/', html)
+    html = re.sub(r'src="/(?!/)', f'src="{base}/', html)
+    return html
+
+
 def render_markdown(body: str) -> str:
     # Prefer pandoc if available; otherwise use a minimal fallback.
     p = shutil.which("pandoc")
@@ -190,6 +197,7 @@ def build_site(repo_root: Path, out_root: Path, base_path: str) -> None:
         body = strip_liquid_relative_url(body, base_path)
         body = ensure_h1(body, str(title))
         html = render_markdown(body)
+        html = prefix_root_links(html, base_path)
         doc = page_shell(str(title), html, base_path)
 
         dst = dest_from_permalink(out_root, str(permalink))
