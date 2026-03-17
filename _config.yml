@@ -1,0 +1,6 @@
+title: llama-conductor blog
+description: deterministic routing, grounded reasoning, and operator notes
+markdown: kramdown
+kramdown:
+  input: GFM
+permalink: pretty
