@@ -1,4 +1,4 @@
----
+﻿---
 layout: default
 title: Mom, can we get ChatGPT? Mom: we have ChatGPT at home
 permalink: /blog/meme-test/
@@ -107,6 +107,7 @@ Confidence: medium | Source: Contextual
 
 ---
 
-Yesterday, I argued for the notion that LLMs can perform something that approximates deduction (see: https://lemmy.world/post/43503268/22321124). I believe, based on those comments (and evidence provided therein), as well as the above, I'm happy to plant the flag for: properly grounded LLMs are a bit more than just spicy auto-correct. As always, I could be wrong and YMMV.
+Yesterday, I argued for the notion that LLMs can perform something that approximates deduction (see: [Lemmy thread](https://lemmy.world/post/43503268/22321124)). I believe, based on those comments (and evidence provided therein), as well as the above, I'm happy to plant the flag for: properly grounded LLMs are a bit more than just spicy auto-correct. As always, I could be wrong and YMMV.
 
    
+
