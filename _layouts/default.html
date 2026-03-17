@@ -14,6 +14,7 @@
       <a href="{{ '/' | relative_url }}">Home</a>
       <a href="{{ '/blog/meme-test/' | relative_url }}">Meme Test</a>
       <a href="{{ '/blog/scp-llm-121/' | relative_url }}">SCP-LLM-121</a>
+      <a href="{{ '/about/' | relative_url }}">About</a>
       <a href="https://codeberg.org/BobbyLLM/llama-conductor">Codeberg</a>
     </nav>
   </header>
@@ -26,6 +27,21 @@
     (function () {
       var root = document.querySelector(".prose");
       if (!root) return;
+
+      // Kramdown can treat "Confidence: ... | Source: ..." as a table row.
+      // Normalize those tiny two-cell tables back to inline text.
+      root.querySelectorAll("table").forEach(function (tbl) {
+        if (tbl.querySelector("th")) return;
+        var cells = Array.from(tbl.querySelectorAll("td")).map(function (td) {
+          return (td.textContent || "").trim();
+        });
+        if (cells.length === 2 && /^Confidence:/i.test(cells[0]) && /^Source:/i.test(cells[1])) {
+          var p = document.createElement("p");
+          p.textContent = cells[0] + " | " + cells[1];
+          tbl.replaceWith(p);
+        }
+      });
+
       var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
       var nodes = [];
       while (walker.nextNode()) nodes.push(walker.currentNode);
