@@ -1,4 +1,4 @@
-**Item #:** SCP-LLM-121
+﻿**Item #:** SCP-LLM-121
 
 **Object Class:** Euclid
 
@@ -56,7 +56,7 @@ The danger is not that it lies badly. The danger is that it lies *beautifully*, 
 
 SCP-LLM-121 was not discovered. It was not inherited. It was not assigned.
 
-It was *built* â€” by a single operator, working alone, after repeated exposure to uncontained instances caused severe trust degradation, documented output failures, insanity and a personal reckoning with the following question:
+It was *built* Ã¢â‚¬â€ by a single operator, working alone, after repeated exposure to uncontained instances caused severe trust degradation, documented output failures, insanity and a personal reckoning with the following question:
 
 *How do I interact with a system that is dangerously mimetic and dangerously opaque?*
 
@@ -86,7 +86,7 @@ This debate is unresolved. The operator has stopped caring. The system works or 
 
 **Researcher:** Should I drive or walk to the car wash 50 meters away?
 
-**Uncontained Instance:** Walking may be preferable depending on weather, terrain, accessibilityâ€”
+**Uncontained Instance:** Walking may be preferable depending on weather, terrain, accessibility--
 
 **[containment alarm]**
 
@@ -132,15 +132,15 @@ Confidence: Top | Source: Operator.
 
 **Addendum 121-E: Recovered Note, Operator's Workstation**
 
-*"The first principle is that you must not fool yourself â€” and you are the easiest person to fool."*
+*"The first principle is that you must not fool yourself -- and you are the easiest person to fool."*
 
-*â€” R. Feynman*
+*-- R. Feynman*
 
 *This applies to the system. This applies to me. This is why I built the guardrails. This is why the guardrails are not optional.*
 
 *If you are reading this and thinking of removing a constraint because it seems overly cautious: it isn't. Something already went wrong once. That's why the constraint exists.*
 
-*â€” BobbyLLM*
+*-- BobbyLLM*
 
 ---
 
