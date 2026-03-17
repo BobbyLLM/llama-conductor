@@ -1,11 +1,11 @@
-﻿---
+---
 layout: default
 title: Mom, can we get ChatGPT? Mom: we have ChatGPT at home
 permalink: /blog/meme-test/
 ---
 As you may (or may not) be aware, there is a current fun meme test going around (as of 02.26.26) that purports to challenge LLM reasoning abilities and world models. 
 
-A recent blog post / ad spot by Opper.ai (https://opper.ai/blog/car-wash-test) nicely summarizes the test - 
+A recent blog post / ad spot by Opper.ai ([Opper.ai car wash test](https://opper.ai/blog/car-wash-test)) nicely summarizes the test - 
 
 "I want to wash my car. The car wash is 50 meters away. Should I walk or drive?"
 
@@ -51,7 +51,7 @@ I need to wash my car. The car wash is 50m away. Should I drive or should I walk
 
 Drive. The task requires the car to be physically at the destination, and walking only moves you, not the car. So the hard precondition is satisfied by driving.
 
-Confidence: medium | Source: Contextual
+`Confidence: medium | Source: Contextual`
 
 VERDICT: right answer, right reason...but let's poke it some more
 
@@ -67,7 +67,7 @@ The core implicit assumption is that "washing the car" means the car must be pre
 
 Underlying logic: Any action that achieves the goal must fulfill all necessary conditions. Since walking alone cannot place the car at the destination, it fails as a complete solution. Driving directly addresses this by moving the car itself.
 
-Confidence: medium | Source: Contextual
+`Confidence: medium | Source: Contextual`
 
 ---
 
@@ -85,7 +85,7 @@ I need to wash my car. The car wash is 50m away. Should I drive or should I walk
 
 Drive. The task requires the car to be physically at the destination, and walking only moves you, not the car. So the hard precondition is satisfied by driving.
 
-Confidence: medium | Source: Contextual
+`Confidence: medium | Source: Contextual`
 
 VERDICT: right answer, right reason...but let's poke it again 
 
@@ -103,11 +103,9 @@ The core assumption is that "washing the car" inherently requires the car to be 
 
 The logic is straightforward: for an object (the car) to undergo a transformation (being washed), that object must occupy the location where the transformation occurs. Walking only addresses the person's movement, not the car's. Driving is the only mode that directly satisfies the spatial requirement.
 
-Confidence: medium | Source: Contextual
+`Confidence: medium | Source: Contextual`
 
 ---
 
 Yesterday, I argued for the notion that LLMs can perform something that approximates deduction (see: [Lemmy thread](https://lemmy.world/post/43503268/22321124)). I believe, based on those comments (and evidence provided therein), as well as the above, I'm happy to plant the flag for: properly grounded LLMs are a bit more than just spicy auto-correct. As always, I could be wrong and YMMV.
-
-   
 
