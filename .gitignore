@@ -52,3 +52,6 @@ DOCS-TRUTH-MAP.md
 # Keep local docs index/ops notes off remote
 docs/INDEX.md
 docs/operations/
+
+# Local static publish artifacts
+.codeberg_site/
