@@ -55,6 +55,9 @@ def ensure_h1(body: str, title: str) -> str:
 
 def page_shell(title: str, content_html: str, base_path: str) -> str:
     css = f"{base_path}/assets/css/site.css?v={int(dt.datetime.now().timestamp())}"
+    about_href = f"{base_path}/about.html"
+    meme_href = f"{base_path}/blog/meme-test.html"
+    scp_href = f"{base_path}/blog/scp-llm-121.html"
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -69,9 +72,9 @@ def page_shell(title: str, content_html: str, base_path: str) -> str:
     <a class="brand" href="{base_path}/">llama-conductor</a>
     <nav>
       <a href="{base_path}/">Home</a>
-      <a href="{base_path}/blog/meme-test/">Meme Test</a>
-      <a href="{base_path}/blog/scp-llm-121/">SCP-LLM-121</a>
-      <a href="{base_path}/about/">About</a>
+      <a href="{meme_href}">Meme Test</a>
+      <a href="{scp_href}">SCP-LLM-121</a>
+      <a href="{about_href}">About</a>
       <a href="https://codeberg.org/BobbyLLM/llama-conductor">Codeberg</a>
     </nav>
   </header>
@@ -85,9 +88,23 @@ def page_shell(title: str, content_html: str, base_path: str) -> str:
 """
 
 
+def _pretty_to_html(path: str) -> str:
+    if path == "/":
+        return path
+    if path.endswith("/"):
+        return path.rstrip("/") + ".html"
+    return path
+
+
 def prefix_root_links(html: str, base_path: str) -> str:
     base = base_path.rstrip("/")
-    html = re.sub(r'href="/(?!/)', f'href="{base}/', html)
+
+    def repl_href(m: re.Match[str]) -> str:
+        path = m.group(1)
+        new_path = _pretty_to_html(path)
+        return f'href="{base}{new_path}"'
+
+    html = re.sub(r'href="(/(?!/)[^"]*)"', repl_href, html)
     html = re.sub(r'src="/(?!/)', f'src="{base}/', html)
     return html
 
@@ -153,8 +170,8 @@ def dest_from_permalink(out_root: Path, permalink: str) -> Path:
     if rel == "":
         return out_root / "index.html"
     if p.endswith("/"):
-        return out_root / rel / "index.html"
-    return out_root / rel
+        return out_root / f"{rel}.html"
+    return out_root / f"{rel}.html"
 
 
 def build_site(repo_root: Path, out_root: Path, base_path: str) -> None:
@@ -219,24 +236,12 @@ def publish_pages(repo_root: Path, out_root: Path, branch: str, remote: str, sit
                 shutil.rmtree(item)
             else:
                 item.unlink()
-        subdir = site_subdir.strip("/").strip()
-        if not subdir:
-            subdir = "llama-conductor"
-        target_root = tmp / subdir
-        target_root.mkdir(parents=True, exist_ok=True)
-
         for item in out_root.iterdir():
-            dst = target_root / item.name
+            dst = tmp / item.name
             if item.is_dir():
                 shutil.copytree(item, dst)
             else:
                 shutil.copy2(item, dst)
-
-        # Root-level redirect so both / and /<repo>/ are usable.
-        (tmp / "index.html").write_text(
-            f'<!doctype html><meta http-equiv="refresh" content="0; url=/{subdir}/">',
-            encoding="utf-8",
-        )
         (tmp / ".nojekyll").write_text("", encoding="utf-8")
         run(["git", "add", "-A"], tmp)
         diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=str(tmp))
@@ -258,7 +263,7 @@ def main() -> None:
     ap.add_argument("--branch", default="pages")
     ap.add_argument("--remote", default="origin")
     ap.add_argument("--publish", action="store_true")
-    ap.add_argument("--site-subdir", default="llama-conductor")
+    ap.add_argument("--site-subdir", default="")
     args = ap.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
