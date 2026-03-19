@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>I'd like to show you my...ass | llama-conductor</title>
+  <meta name="google-site-verification" content="X-oVkpKrZtcgUicays4QvguYOmD5x98mby9rVN5yx10" />
+  <link rel="canonical" href="https://bobbyllm.github.io/llama-conductor/blog/claude-in-a-can-1/">
+  <meta name="robots" content="index,follow">
+  <link rel="stylesheet" href="/llama-conductor/assets/css/site.css?v=1773895751">
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <header class="site-header">
+    <a class="brand" href="/llama-conductor/">llama-conductor</a>
+    <nav>
+      <a href="/llama-conductor/">Home</a>
+      <a href="/llama-conductor/about.html">About</a>
+    </nav>
+  </header>
+  <main class="wrap">
+    <article class="card prose">
+      <h1>I'd like to show you my...ass</h1>
+<p><strong>I'd like to show you my...ass</strong></p>
+<p>Marvel movies.</p>
+<p>When they're good, they're great (Winter Soldier). When they're bad, they're...The Eternals.</p>
+<p>From time to time, I find myself drawn to one of the &quot;less good ones&quot; that I personally quite enjoy (IronMan 2). Apart from the near incessant torturing of my wife with Ivan Vanko impressions (&quot;Dats not my Boid&quot;) I find myself reflecting on the cameo scenes with Howard Stark (John Slattery) that make the heart of the movie.</p>
+<p>In one pivotal scene, Howard goes from offering to &quot;personally show you his ass&quot; (<a href="https://www.youtube.com/watch?v=Rxb_iemjo4Y">YouTube clip</a>) to lamenting the limits of his technology while expressing his love for Tony. He looks at the camera, dead on, and says -</p>
+<p>&quot;I am limited by the technology of my time&quot;.</p>
+<p>Which in a torturous, saccharine way, brings us to Claude in a Can.</p>
+<p><strong>I've got sunshine, in a bag</strong></p>
+<p>Like you, I've used all manner of cloud based, state of the art (SOTA) LLM.</p>
+<p>There are good ones, and bad ones (<em>cough</em> You're absolutely right!), but like many I always seem to come back to Claude.</p>
+<p>Not because Anthropic are particularly virtuous but rather because Claude just ... doesn't suck.</p>
+<p>It will frequently tell me to fuck off to bed. It will REFUSE to do things it knows I can (or should) do for myself. As AI go, it does a passable impression of something that has an opinion and a spine.</p>
+<p>Yet...Claude is a rich man's AI. Undoubtedly. Daily time limits, weekly time limits, &quot;buy extra usage now for just $9.99!&quot;. What's worse, from a privacy and &quot;don't be evil&quot; point of view, I find myself on shaky moral ground. Better then to Tony Stank (not a typo) myself something from a box of scraps.</p>
+<p>So, that got me to thinking, what is it about Claude that I so enjoy....and how can I steal it?</p>
+<p><strong>I am limited by the technology of my time</strong></p>
+<p>The normal, sane, solution to this problem would be to drop $5-$10K, purchase a beastly rig (that no doubt chews through 2Kw/day of power), slap some LoRA set dressing on it to give it the Anthropic accent and call it a day.</p>
+<p>But, I'm not normal (clearly). Instead, I decided to do something...different.</p>
+<p>I decided to think.</p>
+<p>What makes Claude...Claude?</p>
+<p>For the average (non coder), I'd argue the entire experience comes down to behaviour. The tone, the refusals, timing, the call backs. The seemingly magical ability to sit with something instead of pivoting and then help create a novel connection that sparks a new idea. That is a thinking tool.</p>
+<p>And that can be stolen.</p>
+<p>At least, the nucleus of it - because like Cesar Millan showed us, behaviour is trainable.</p>
+<p>The question then becomes -</p>
+<ul>
+<li>How does one approximate Claude-like behaviour?</li>
+<li>Without LoRA?</li>
+<li>On hardware that Anthropic wouldn't use to play Tetris on?</li>
+</ul>
+<p><strong>Kaioken x 5</strong></p>
+<p>I run on 4GB of VRAM, with 640 CUDA cores, on a 1L shoebox. Do not weep for me, for I am already dead.</p>
+<p>However, being dead gives me an advantage. It cuts off a lot of &quot;just add more grunt&quot; options. So, I find myself returning to the tried and tested decision tree.</p>
+<p>For the uninitiated, a decision tree is exactly what it sounds like - a flowchart that makes decisions based on rules. No neural network. No training data. Hell, no GPU required. Millisecond fast.</p>
+<p>Just if this --&gt; then that.</p>
+<p>It's the oldest trick in the book. It's also, it turns out, exactly the right tool for this problem.</p>
+<p>Because Claude-like behaviour isn't magic. It's a sequence of decisions. What is this person doing right now? What do they need from this response? What would make this worse? A decision tree can answer all three before the model touches the keyboard.</p>
+<p>So that's what I did.</p>
+<p>Before the model sees anything, something else runs first.</p>
+<p>Every message you send gets classified. Not for content - for <em>intent</em>. What are you actually doing right now? Are you working? Venting? Taking the piss? Wrapping something painful in a joke because that's how you handle it?</p>
+<p>That's KAIOKEN. A fast turn classifier that reads the human before the model does.</p>
+<p>The taxonomy is simple. Macro label: <code>working</code>, <code>casual</code>, or <code>personal</code>. Subsignal: <code>playful</code>, <code>friction</code>, <code>distress_hint</code>, <code>vulnerable_under_humour</code>, or nothing. It's a work in progress, but as MVP, I started here.</p>
+<p>&quot;I'm 47, old, fat and broken. Why did I take up coding?&quot; hits different than &quot;prove you're not sentient, Aristotle.&quot; They should get different responses from the LLM. Not because the model is smart enough to figure that out reliably - it isn't, not at 4B - but because the harness already knows, and tells it what to do.</p>
+<p>KAIOKEN doesn't touch the model. It touches the instructions the model receives. Classification fires, label maps to behavioural injection, 4B gets concrete direction before it generates a single token. All at millisecond speeds (yay, no latency)</p>
+<p>And yes: the name is from Dragon Ball Z. Kaioken multiplies a fighter's power beyond their normal limits. Seemed accurate.</p>
+<p>It's the steering wheel. The next post will describe the engine. Assuming the engine doesn't embarrass me first before I finish building it from a box of scraps.</p>
+<p>Until then, Ivan Vanko says hello.</p>
+<p><a href="https://i.imgur.com/R7RGy3D.jpeg"><img src="https://i.imgur.com/R7RGy3D.jpeg" alt="Ivan Vanko says hello" /></a></p>
+
+    </article>
+  </main>
+</body>
+</html>
