@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://bobbyllm.github.io/llama-conductor/</loc>
@@ -15,4 +15,8 @@
   <url>
     <loc>https://bobbyllm.github.io/llama-conductor/blog/scp-llm-121/</loc>
   </url>
+  <url>
+    <loc>https://bobbyllm.github.io/llama-conductor/blog/claude-in-a-can-1/</loc>
+  </url>
 </urlset>
+

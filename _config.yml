@@ -1,4 +1,4 @@
-title: llama-conductor blog
+﻿title: llama-conductor blog
 description: deterministic routing, grounded reasoning, and operator notes
 url: "https://bobbyllm.github.io"
 baseurl: "/llama-conductor"
@@ -19,3 +19,10 @@ defaults:
       layout: default
       title: "SCP-LLM-121"
       permalink: /blog/scp-llm-121/
+
+  - scope:
+      path: "blog/claude_in_a_can_1.md"
+    values:
+      layout: default
+      title: "I'd like to show you my...ass"
+      permalink: /blog/claude-in-a-can-1/

@@ -1,4 +1,4 @@
----
+﻿---
 layout: default
 title: Blog
 permalink: /blog/
@@ -12,3 +12,5 @@ BobbyLLM's field notes on local AI, spite engineering, and teaching a 4B model t
 
 - [Mom, can we get ChatGPT? Mom: we have ChatGPT at home](/blog/meme-test/)
 - [SCP-LLM-121](/blog/scp-llm-121/)
+
+- [I'd like to show you my...ass](/blog/claude-in-a-can-1/)
