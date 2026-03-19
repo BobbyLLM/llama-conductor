@@ -13,10 +13,11 @@ permalink: /sitemap.xml
   <url>
     <loc>{{ site.url }}{{ site.baseurl }}/blog/</loc>
   </url>
-{% assign blog_pages = site.pages | where_exp: "p", "p.url contains '/blog/' and p.url != '/blog/' and p.url != '/blog/index.html'" %}
-{% for p in blog_pages %}
+{% for p in site.pages %}
+{% if p.url contains '/blog/' and p.url != '/blog/' and p.url != '/blog/index.html' %}
   <url>
     <loc>{{ site.url }}{{ site.baseurl }}{{ p.url | replace: 'index.html','' }}</loc>
   </url>
+{% endif %}
 {% endfor %}
 </urlset>
