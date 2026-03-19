@@ -1,4 +1,4 @@
----
+﻿---
 layout: default
 title: Blog Index
 ---
@@ -11,9 +11,11 @@ BobbyLLM's field notes on local AI, spite engineering, and teaching a 4B model t
 
 - [Mom, can we get ChatGPT? Mom: we have ChatGPT at home]({{ '/blog/meme-test/' | relative_url }})
 - [SCP-LLM-121]({{ '/blog/scp-llm-121/' | relative_url }})
+- [I'd like to show you my...ass]({{ '/blog/claude-in-a-can-1/' | relative_url }})
 
 ## Links
 
 - [Codeberg](https://codeberg.org/BobbyLLM/llama-conductor)
 - [GitHub mirror](https://github.com/BobbyLLM/llama-conductor)
 - [About]({{ '/about/' | relative_url }})
+
