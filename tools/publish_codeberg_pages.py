@@ -17,10 +17,12 @@ def run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
 
 
 def read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+    # Use utf-8-sig so BOM-marked markdown files still parse front matter correctly.
+    return path.read_text(encoding="utf-8-sig")
 
 
 def split_front_matter(raw: str) -> tuple[dict, str]:
+    raw = raw.lstrip("\ufeff")
     if not raw.startswith("---"):
         return {}, raw
     m = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n?", raw, flags=re.S)
