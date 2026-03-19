@@ -5,19 +5,18 @@ permalink: /sitemap.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>{{ site.url }}{{ site.baseurl }}/</loc>
+    <loc>https://bobbyllm.github.io/llama-conductor/</loc>
   </url>
   <url>
-    <loc>{{ site.url }}{{ site.baseurl }}/about/</loc>
+    <loc>https://bobbyllm.github.io/llama-conductor/about/</loc>
   </url>
   <url>
-    <loc>{{ site.url }}{{ site.baseurl }}/blog/</loc>
+    <loc>https://bobbyllm.github.io/llama-conductor/blog/</loc>
   </url>
-{% for p in site.pages %}
-{% if p.url contains '/blog/' and p.url != '/blog/' and p.url != '/blog/index.html' %}
   <url>
-    <loc>{{ site.url }}{{ site.baseurl }}{{ p.url | replace: 'index.html','' }}</loc>
+    <loc>https://bobbyllm.github.io/llama-conductor/blog/meme-test/</loc>
   </url>
-{% endif %}
-{% endfor %}
+  <url>
+    <loc>https://bobbyllm.github.io/llama-conductor/blog/scp-llm-121/</loc>
+  </url>
 </urlset>
