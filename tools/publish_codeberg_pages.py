@@ -54,6 +54,20 @@ def strip_liquid_relative_url(md: str, base_path: str) -> str:
 def ensure_h1(body: str, title: str) -> str:
     if re.search(r"(?m)^\s*#\s+", body):
         return body
+    # Avoid duplicate title rendering when first non-empty line already carries
+    # the same text as bold/plain opener (common in blog drafts).
+    first_nonempty = ""
+    for line in body.splitlines():
+        if line.strip():
+            first_nonempty = line.strip()
+            break
+    if first_nonempty:
+        plain = first_nonempty
+        m = re.match(r"^\*\*(.+?)\*\*$", plain)
+        if m:
+            plain = m.group(1).strip()
+        if plain == title.strip():
+            return body
     return f"# {title}\n\n{body}"
 
 
