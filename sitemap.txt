@@ -1,4 +1,4 @@
-﻿https://bobbyllm.github.io/llama-conductor/
+https://bobbyllm.github.io/llama-conductor/
 https://bobbyllm.github.io/llama-conductor/about/
 https://bobbyllm.github.io/llama-conductor/blog/
 https://bobbyllm.github.io/llama-conductor/blog/meme-test/
