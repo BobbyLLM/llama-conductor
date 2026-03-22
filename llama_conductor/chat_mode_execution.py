@@ -345,7 +345,16 @@ async def maybe_handle_fun_fr_raw(
     is_argumentatively_complete: Callable[[str], bool],
     fallback_with_mode_header: Callable[[str, str], str],
     finalize_chat_response: Callable[..., Any],
+    kaioken_postguard_fn: Optional[Callable[[str], str]] = None,
 ) -> Optional[Any]:
+    def _postguard(text: str) -> str:
+        if kaioken_postguard_fn is None:
+            return text
+        try:
+            return str(kaioken_postguard_fn(text))
+        except Exception:
+            return text
+
     if fun_mode == "fun":
         # Preserve deterministic solver output exactly when present.
         # We only decorate with a FUN header/quote; we do not run a rewrite pass.
@@ -360,6 +369,7 @@ async def maybe_handle_fun_fr_raw(
                 seed_quote=quote,
             )
             text = f'[FUN] "{quote}"\n\n{base}' if quote else f"[FUN]\n\n{base}"
+            text = _postguard(text)
             return finalize_chat_response(
                 text=text,
                 user_text=user_text,
@@ -392,6 +402,7 @@ async def maybe_handle_fun_fr_raw(
             sel = await run_sync(select_fun_style_seed, state=state, user_text=user_text, base_text=base)
             quote = str(sel.get("seed") or "")
             text = f'[FUN] "{quote}"\n\n{base}' if quote else f"[FUN]\n\n{base}"
+            text = _postguard(text)
         else:
             base_preview = (state_solver_answer or "").strip()
             if not base_preview:
@@ -436,6 +447,7 @@ async def maybe_handle_fun_fr_raw(
 
             if is_argumentative_prompt(user_text) and not is_argumentatively_complete(text):
                 text = fallback_with_mode_header(text, base_preview)
+            text = _postguard(text)
 
         return finalize_chat_response(
             text=text,
@@ -488,6 +500,7 @@ async def maybe_handle_fun_fr_raw(
             quote = str(sel.get("seed") or "")
             qline = f'"{quote}"' if quote else '""'
             text = f"[FUN REWRITE] {qline}\n\n{safe_base or base_preview}"
+            text = _postguard(text)
             return finalize_chat_response(
                 text=text,
                 user_text=user_text,
@@ -527,6 +540,7 @@ async def maybe_handle_fun_fr_raw(
             text = f"[FUN REWRITE] {qline}\n\n{base_preview}"
         if is_argumentative_prompt(user_text) and not is_argumentatively_complete(text):
             text = fallback_with_mode_header(text, base_preview)
+        text = _postguard(text)
 
         return finalize_chat_response(
             text=text,
@@ -554,6 +568,7 @@ async def maybe_handle_fun_fr_raw(
             constraints_block=constraints_block,
             thinker_role="thinker",
         )).strip()
+        text = _postguard(text)
         return finalize_chat_response(
             text=text,
             user_text=user_text,

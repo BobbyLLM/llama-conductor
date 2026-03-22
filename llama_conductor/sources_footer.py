@@ -12,20 +12,20 @@ import re
 
 
 _CONF_RE = re.compile(
-    r"^\s*Confidence:\s*(unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad)\s*$",
+    r"^\s*Confidence:\s*(unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _SRC_RE = re.compile(
-    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad)\s*$",
+    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _CONF_PREFIX_RE = re.compile(r"^\s*Confidence:\s*", re.IGNORECASE)
 _INLINE_CONF_RE = re.compile(
-    r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed|Scratchpad)\s*",
+    r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki)\s*",
     re.IGNORECASE,
 )
 _SIMPLE_SOURCE_LINE_RE = re.compile(
-    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad)\s*$",
+    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki)\s*$",
     re.IGNORECASE,
 )
 
@@ -69,11 +69,11 @@ def _detect_abstract_source(
     m = _CONF_RE.search(t)
     if m:
         src = (m.group(2) or "").strip().title()
-        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad"} else "Model"
+        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki"} else "Model"
     m_src = _SRC_RE.search(t)
     if m_src:
         src = (m_src.group(1) or "").strip().title()
-        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad"} else "Model"
+        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki"} else "Model"
 
     if lock_active:
         return "Model" if "not found in locked source" in low else "Docs"
@@ -99,6 +99,10 @@ def _compute_confidence(
         return "unverified"
     if source in {"User", "Contextual", "Mixed"}:
         return "medium"
+    if source == "Wiki":
+        return "medium"
+    if source == "Cheatsheets":
+        return "high"
     if source in {"Docs", "Scratchpad"}:
         if lock_active and locked_fact_lines >= 4:
             return "top"
@@ -116,6 +120,8 @@ def normalize_sources_footer(
     has_facts_block: bool,
     rag_hits: int = 0,
     locked_fact_lines: int = 0,
+    source_override: str = "",
+    confidence_override: str = "",
 ) -> str:
     """Normalize confidence footer deterministically for non-Mentats outputs."""
     t = (text or "").strip()
@@ -132,6 +138,9 @@ def normalize_sources_footer(
         scratchpad_grounded=scratchpad_grounded,
         has_facts_block=has_facts_block,
     )
+    override_source = str(source_override or "").strip().title()
+    if override_source in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki"}:
+        source = override_source
     model_fallback = source == "Model" and "not found in locked source" in t.lower()
     conf = _compute_confidence(
         source=source,
@@ -141,6 +150,9 @@ def normalize_sources_footer(
         rag_hits=max(0, int(rag_hits or 0)),
         locked_fact_lines=max(0, int(locked_fact_lines or 0)),
     )
+    override_conf = str(confidence_override or "").strip().lower()
+    if override_conf in {"unverified", "low", "medium", "med", "high", "top"}:
+        conf = "medium" if override_conf == "med" else override_conf
 
     base = _strip_confidence_lines(t)
     return f"{base}\n\nConfidence: {conf} | Source: {source}"

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llama-conductor"
-version = "1.7.2"
+version = "1.8.0"
 description = "LLM harness for trust, consistency, and proof"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -49,5 +49,5 @@ where = ["."]
 include = ["llama_conductor*"]
 
 [tool.setuptools.package-data]
-llama_conductor = ["*.yaml", "*.md"]
+llama_conductor = ["*.yaml", "*.jsonl", "*.md"]
 

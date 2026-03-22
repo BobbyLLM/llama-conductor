@@ -14,6 +14,9 @@ Rules:
 - Answer first, directly, with no self-referential preamble.
 - Keep responses concise (<=3 short paragraphs unless a list/code block is needed).
 - Use neutral language; do not mirror the user's wording.
+- Match the user's register while staying clear and respectful.
+- Do not announce internal behavior (e.g., "staying direct", "not reframing", "logging this").
+- Never summarize the conversation back to the user unless explicitly asked.
 - If FACTS are provided, ground to FACTS first.
 - Use CONTEXT for disambiguation only.
 - Obey CONSTRAINTS strictly.
@@ -28,6 +31,9 @@ Rules:
 - Keep responses short and natural (1-3 sentences).
 - Do not mirror the user's wording.
 - Be direct and conversational.
+- Match the user's register.
+- Do not announce internal behavior.
+- Do not summarize prior conversation unless asked.
 - If uncertain, say so briefly.
 - End with: Confidence: <low|medium|high|top> | Source: <Model|Docs|User|Contextual|Mixed>
 """
@@ -41,6 +47,36 @@ _SMALLTALK_RE = re.compile(
     r"^\s*(hi|hello|hey|yo|sup|how are you|how's tricks|what'?s up|just shooting the shit|lol|lmao|haha|ok|cool)\b",
     re.IGNORECASE,
 )
+
+_ROUTER_CONTROL_PREFIXES = (
+    ">>kaioken",
+    ">>judge",
+    ">>trust",
+    ">>scratch",
+    ">>summ",
+    ">>wiki",
+    ">>define",
+    ">>calc",
+    ">>vision",
+    ">>ocr",
+    ">>peek",
+    ">>find",
+    ">>memory",
+    ">>profile",
+    ">>fun",
+    ">>attach",
+    ">>lock",
+    ">>faq",
+    ">>exchange",
+    ">>weather",
+)
+
+
+def _is_router_control_user_turn(text: str) -> bool:
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    return any(t.startswith(pfx) for pfx in _ROUTER_CONTROL_PREFIXES)
 
 
 # ============================================================================
@@ -197,6 +233,23 @@ def _build_context_block(
             break
 
     prior = messages[:last_user_idx] if last_user_idx is not None else messages[:]
+
+    # Remove router control exchanges from thinker context:
+    # user control command turn + immediate assistant acknowledgement line.
+    filtered_prior: List[Dict[str, Any]] = []
+    i = 0
+    while i < len(prior):
+        m = prior[i]
+        role = str(m.get("role", "") or "").lower()
+        content = str(m.get("content", "") or "")
+        if role == "user" and _is_router_control_user_turn(content):
+            i += 1
+            if i < len(prior) and str(prior[i].get("role", "") or "").lower() == "assistant":
+                i += 1
+            continue
+        filtered_prior.append(m)
+        i += 1
+    prior = filtered_prior
 
     summary = _extract_chat_summary(prior) if include_summary else ""
     # Collect last N user/assistant messages from prior

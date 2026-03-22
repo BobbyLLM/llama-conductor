@@ -35,6 +35,27 @@ _ACK_REFRAME_LOOP_RE = re.compile(
     re.IGNORECASE,
 )
 
+_BEHAVIOR_ANNOUNCE_SENTENCE_RE = re.compile(
+    r"\b("
+    r"kaioken(?:'s| is)? on|"
+    r"kaioken is active|"
+    r"functionally sound|"
+    r"your greeting is noted|"
+    r"i(?:'|\u2019)?ll push (?:the )?response to (?:its|the) limit|"
+    r"precision and force(?: if needed)?|"
+    r"i operate in serious mode(?: now)?|"
+    r"be direct with your questions(?: or tasks)?|"
+    r"i(?:'|’)?ll keep (?:my )?responses? tighter(?:\s+from now on)?|"
+    r"i can adjust my tone|"
+    r"my behavior is designed|"
+    r"i lost (?:track|the thread)|"
+    r"lost the thread|"
+    r"you(?:'|’)?re asking a question now|you are asking a question now|"
+    r"please state (?:it|your question) clearly"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 def strip_in_body_confidence_source_claims(text: str) -> str:
     t = (text or "").strip()
@@ -67,6 +88,44 @@ def strip_in_body_confidence_source_claims(text: str) -> str:
             blank = 0
         collapsed.append(ln)
     return "\n".join(collapsed).strip()
+
+
+def strip_behavior_announcement_sentences(text: str, fallback_text: str = "I hear you.") -> str:
+    t = (text or "").strip()
+    if not t:
+        return t
+    out_lines: List[str] = []
+    body_kept_count = 0
+    for ln in t.splitlines():
+        raw = (ln or "").strip()
+        if not raw:
+            out_lines.append("")
+            continue
+        # Preserve formal footers verbatim.
+        low = raw.lower()
+        if low.startswith("confidence:") or low.startswith("source:") or low.startswith("sources:") or low.startswith("profile:"):
+            out_lines.append(ln)
+            continue
+        parts = re.split(r"(?<=[.!?])\s+", raw)
+        kept: List[str] = []
+        for s in parts:
+            ss = (s or "").strip()
+            if not ss:
+                continue
+            if _BEHAVIOR_ANNOUNCE_SENTENCE_RE.search(ss):
+                continue
+            kept.append(ss)
+        if kept:
+            out_lines.append(" ".join(kept))
+            body_kept_count += 1
+    cleaned = "\n".join(out_lines).strip()
+    if cleaned and body_kept_count > 0:
+        return cleaned
+    footer_lines = [ln for ln in out_lines if (ln or "").strip().lower().startswith(("confidence:", "source:", "sources:", "profile:"))]
+    fb = str(fallback_text or "I hear you.").strip() or "I hear you."
+    if footer_lines:
+        return fb + "\n\n" + "\n".join(footer_lines)
+    return fb
 
 
 def is_argumentative_prompt(user_text: str) -> bool:
@@ -264,4 +323,3 @@ def normalize_agreement_ack_tense(text: str, user_text: str) -> str:
     t = re.sub(r"\bwas valid and well-phrased\b", "is valid and well-phrased", t, flags=re.IGNORECASE)
     t = re.sub(r"\bwas a core design principle\b", "is a core design principle", t, flags=re.IGNORECASE)
     return t
-

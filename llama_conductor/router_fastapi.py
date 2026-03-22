@@ -1,4 +1,4 @@
-﻿"""FastAPI orchestration layer for llama-conductor.
+"""FastAPI orchestration layer for llama-conductor.
 
 Responsibilities:
 - expose API routes
@@ -7,6 +7,7 @@ Responsibilities:
 """
 
 from __future__ import annotations
+import hashlib
 import json
 import re
 import traceback
@@ -30,7 +31,7 @@ from .config import (
     ROUTER_DEBUG,
     ROUTER_DEBUG_LOG_USER_TEXT,
 )
-from .session_state import get_state, SessionState
+from .session_state import get_state, SessionState, KAIOKEN_CLOSED_THREAD_TTL_TURNS
 from .helpers import (
     has_images_in_messages,
     has_image_signal,
@@ -52,6 +53,8 @@ from .interaction_profile import (
     update_profile_from_user_turn,
 )
 from .privacy_utils import safe_preview, short_hash
+from .upstream_watchdog import start_watchdog, stop_watchdog
+
 # Required modules
 from .vodka_filter import Filter as VodkaFilter, purge_session_memory_jsonl, purge_vodka_ctx_facts
 from .serious import run_serious
@@ -106,6 +109,20 @@ try:
     from .sources_footer import normalize_sources_footer  # type: ignore
 except Exception:
     normalize_sources_footer = None  # type: ignore
+
+try:
+    from .sidecars import handle_wiki_query as _sidecar_wiki_query  # type: ignore
+except Exception:
+    _sidecar_wiki_query = None  # type: ignore
+
+try:
+    from .cheatsheets_runtime import (  # type: ignore
+        resolve_cheatsheets_turn as _resolve_cheatsheets_turn,
+        load_cheatsheets_entries as _load_cheatsheets_entries,
+    )
+except Exception:
+    _resolve_cheatsheets_turn = None  # type: ignore
+    _load_cheatsheets_entries = None  # type: ignore
 
 try:
     from .style_adapter import rewrite_response_style, score_output_compliance  # type: ignore
@@ -166,8 +183,37 @@ from .chat_semantic import (
     semantic_pick_clarifier_option as _semantic_pick_clarifier_option,
     semantic_refine_constraint_choice as _semantic_refine_constraint_choice,
 )
+from .kaioken_literal import (
+    _extract_literal_followup_anchor as _kl_extract_literal_followup_anchor,
+    _first_clause_for_anchor_parse as _kl_first_clause_for_anchor_parse,
+    _is_literal_followup_turn as _kl_is_literal_followup_turn,
+    _literal_anchor_is_primary_subject as _kl_literal_anchor_is_primary_subject,
+    _resolve_recent_anchor as _kl_resolve_recent_anchor,
+)
+from .kaioken_guards import (
+    _choose_short_fallback as _kg_choose_short_fallback,
+    _normalize_for_repeat_check as _kg_normalize_for_repeat_check,
+    _recent_repeat_within_window as _kg_recent_repeat_within_window,
+    _remember_recent_assistant_body as _kg_remember_recent_assistant_body,
+    _repeat_like as _kg_repeat_like,
+    _sentence_count_for_guard as _kg_sentence_count_for_guard,
+    _split_fun_prefix as _kg_split_fun_prefix,
+)
+from .kaioken_classify import (
+    _is_clarification_prompt as _kc_is_clarification_prompt,
+    _is_continuation_prompt as _kc_is_continuation_prompt,
+    _is_resolution_signal as _kc_is_resolution_signal,
+    _is_topic_switch_prompt as _kc_is_topic_switch_prompt,
+    _user_explicitly_requests_advice as _kc_user_explicitly_requests_advice,
+    _user_explicitly_requests_encouragement as _kc_user_explicitly_requests_encouragement,
+)
+from .kaioken_routing import (
+    KaiokenRoutingDeps as _KaiokenRoutingDeps,
+    _apply_output_guard as _kr_apply_output_guard,
+)
 from .router_correction_utils import (
     is_correction_intent_query as _is_correction_intent_query,
+    evaluate_structural_correction_intent as _evaluate_structural_correction_intent,
     is_explicit_reengage_query as _is_explicit_reengage_query,
     extract_numeric_correction as _extract_numeric_correction,
     unit_canonical as _unit_canonical,
@@ -184,6 +230,7 @@ from .router_correction_utils import (
 )
 from .router_response_utils import (
     strip_in_body_confidence_source_claims as _strip_in_body_confidence_source_claims,
+    strip_behavior_announcement_sentences as _strip_behavior_announcement_sentences,
     is_argumentative_prompt as _is_argumentative_prompt,
     is_argumentatively_complete as _is_argumentatively_complete,
     fallback_with_mode_header as _fallback_with_mode_header,
@@ -195,6 +242,14 @@ from .router_response_utils import (
     serious_max_tokens_for_query as _rr_serious_max_tokens_for_query,
     normalize_agreement_ack_tense as _rr_normalize_agreement_ack_tense,
 )
+try:
+    from .kaioken import (  # type: ignore
+        append_kaioken_telemetry as _kaioken_append_telemetry,
+        classify_register as _kaioken_classify_register,
+    )
+except Exception:
+    _kaioken_append_telemetry = None  # type: ignore
+    _kaioken_classify_register = None  # type: ignore
 try:
     from .state_reasoning import (  # type: ignore
         classify_constraint_turn,
@@ -232,6 +287,1468 @@ def _debug_user_fragment(text: str) -> str:
     if ROUTER_DEBUG_LOG_USER_TEXT:
         return safe_preview(raw, max_len=240)
     return f"<redacted len={len(raw)} sha={short_hash(raw)}>"
+
+
+_CHEATSHEETS_DIR = Path(__file__).resolve().parent / "cheatsheets"
+try:
+    if _load_cheatsheets_entries is not None:
+        _load_cheatsheets_entries(_CHEATSHEETS_DIR)
+except Exception:
+    pass
+
+
+def _emit_kaioken_telemetry(
+    *,
+    state: SessionState,
+    session_id: str,
+    user_text: str,
+    route_class: str,
+    outcome: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Fail-open KAIOKEN telemetry emitter (phase 0 sensor-only)."""
+    if _kaioken_append_telemetry is None:
+        return
+    try:
+        enabled = bool(getattr(state, "kaioken_enabled", bool(cfg_get("kaioken.enabled", True))))
+        mode = str(getattr(state, "kaioken_mode", str(cfg_get("kaioken.mode", "log_only") or "log_only")) or "log_only").strip().lower()
+        state.kaioken_turn_counter = int(getattr(state, "kaioken_turn_counter", 0) or 0) + 1
+        _kaioken_append_telemetry(
+            session_id=session_id,
+            turn_index=state.kaioken_turn_counter,
+            user_text=str(user_text or ""),
+            route_class=str(route_class or "control"),
+            enabled=enabled,
+            mode=mode,
+            log_all_routes=bool(cfg_get("kaioken.log_all_routes", True)),
+            session_hash_salt=str(cfg_get("kaioken.session_hash_salt", "kaioken-v1") or "kaioken-v1"),
+            extra=dict(outcome or {}),
+        )
+    except Exception:
+        # Never alter runtime behavior because of telemetry failure.
+        pass
+
+
+def _build_kaioken_soft_constraints(*, state: SessionState, user_text: str) -> str:
+    """Phase-1 soft guidance for model-chat lane only (fail-open, high-confidence only)."""
+    if _kaioken_classify_register is None:
+        return ""
+    if not bool(getattr(state, "kaioken_enabled", False)):
+        return ""
+    mode = str(getattr(state, "kaioken_mode", "log_only") or "log_only").strip().lower()
+    if mode not in {"coerce", "phase1"}:
+        return ""
+    try:
+        cls = _kaioken_classify_register(str(user_text or ""))
+    except Exception:
+        return ""
+    switch_anchor_tokens: list[str] = []
+    switch_prior_tokens: list[str] = []
+    force_switch_hint = False
+    try:
+        threads = _get_kaioken_threads(state)
+        open_rows: list[tuple[int, Dict[str, Any]]] = []
+        for _tid, meta in threads.items():
+            if not isinstance(meta, dict):
+                continue
+            if bool(meta.get("closed", False)):
+                continue
+            open_rows.append((int(meta.get("last_turn", -9999) or -9999), meta))
+        has_open_thread = bool(open_rows)
+        turn_counter = int(getattr(state, "kaioken_turn_counter", 0) or 0)
+        last_switch_turn = int(getattr(state, "kaioken_last_topic_switch_turn", 0) or 0)
+        is_switch_turn = _is_topic_switch_prompt(user_text)
+        is_post_switch_turn = bool(
+            (last_switch_turn > 0)
+            and ((turn_counter - last_switch_turn) == 1)
+            and (not _is_continuation_prompt(user_text))
+            and (not _is_clarification_prompt(user_text))
+            and (not _is_resolution_signal(user_text))
+        )
+        force_switch_hint = bool(has_open_thread and (is_switch_turn or is_post_switch_turn))
+        if force_switch_hint:
+            switch_anchor_tokens = _collect_topic_candidates(str(user_text or ""), closed_topics=set())[:4]
+            open_rows.sort(key=lambda x: x[0], reverse=True)
+            switch_prior_tokens = sorted(_thread_tokens(open_rows[0][1]))[:4] if open_rows else []
+    except Exception:
+        force_switch_hint = False
+        switch_anchor_tokens = []
+        switch_prior_tokens = []
+    conf = str(getattr(cls, "confidence", "low") or "low").lower()
+    subs = {str(s).strip().lower() for s in list(getattr(cls, "subsignals", []) or [])}
+    macro = str(getattr(cls, "macro", "working") or "working").strip().lower()
+    if conf != "high":
+        if _is_continuation_prompt(user_text):
+            prev = str(getattr(state, "last_user_text", "") or "").strip()
+            if prev:
+                try:
+                    pcls = _kaioken_classify_register(prev)
+                    psubs = {str(s).strip().lower() for s in list(getattr(pcls, "subsignals", []) or [])}
+                    pmacro = str(getattr(pcls, "macro", "working") or "working").strip().lower()
+                    if {"distress_hint", "vulnerable_under_humour"} & psubs:
+                        subs = psubs
+                        macro = pmacro
+                        conf = "high"
+                    elif _KAIOKEN_DISTRESS_FALLBACK_RE.search(prev):
+                        subs = {"distress_hint"}
+                        macro = "personal"
+                        conf = "high"
+                except Exception:
+                    pass
+        if conf != "high" and (not force_switch_hint):
+            return ""
+    literal_anchor = _extract_literal_followup_anchor(str(user_text or ""), state=state)
+    literal_followup = bool(literal_anchor)
+    hints: List[str] = []
+
+    if "directive" in subs:
+        hints.append("Follow user constraints/format exactly before adding extra detail.")
+
+    if "vulnerable_under_humour" in subs:
+        hints.extend([
+            "User is mixing humor with pain/stress.",
+            "Engage with the joke first, then acknowledge what is underneath.",
+            "Do NOT explain or narrate the joke.",
+            "Do NOT switch into generic motivational language.",
+            "Do NOT give unsolicited advice unless user explicitly asks for it.",
+            "Keep it short (2-5 sentences), grounded, and human.",
+        ])
+    elif "distress_hint" in subs:
+        hints.extend([
+            "User is signaling real self-doubt/distress.",
+            "Acknowledge directly and briefly.",
+            "Do NOT use platitudes, pep-talk slogans, or generic reassurance.",
+            "Do NOT give unsolicited advice unless user explicitly asks for it.",
+            "Keep response short (2-5 sentences).",
+        ])
+    elif macro == "working":
+        hints.append("Keep response concise, task-first, and explicit about concrete next steps.")
+    elif macro == "personal":
+        hints.append("Use calm, supportive tone; acknowledge briefly, then prioritize practical help.")
+    elif macro == "casual":
+        hints.append("Keep tone light but maintain factual accuracy and directness.")
+    if literal_followup:
+        hints.extend([
+            f"This is a literal follow-up about `{literal_anchor}`.",
+            f"Answer `{literal_anchor}` directly and concretely.",
+            "Do NOT pivot into metaphor, identity analysis, or broad reframing.",
+        ])
+    closed_topics = _closed_topics_not_mentioned(state, user_text)
+    if closed_topics:
+        hints.append(
+            "Do not resurface resolved topics unless the user explicitly asks to reopen them: "
+            + ", ".join(sorted(closed_topics)[:4])
+        )
+    if force_switch_hint:
+        hints.append("Topic switch detected while prior thread remains open; prioritize the new topic now.")
+        if switch_anchor_tokens:
+            hints.append("Anchor this response to current topic tokens: " + ", ".join(switch_anchor_tokens))
+        if switch_prior_tokens:
+            hints.append("Do not continue prior thread tokens unless user explicitly reopens them: " + ", ".join(switch_prior_tokens))
+
+    if not hints:
+        return ""
+    lines = "\n".join(f"- {h}" for h in hints)
+    return "KAIOKEN guidance (soft):\n" + lines
+
+
+_KAIOKEN_PEP_TALK_RE = re.compile(
+    r"\b("
+    r"you(?:'|’)re not|you are not|you got this|keep going|keep pushing|keep debugging|push through|start small|"
+    r"focus on|many developers|age (?:isn(?:'|’)t|is not)|"
+    r"progress over perfection|you(?:'|’)re human|you are human|"
+    r"take breaks|ergonomic|posture|chair|monitor|"
+    r"stop comparing|temporary setbacks?|just a setback"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_METAPHOR_PIVOT_RE = re.compile(
+    r"\b("
+    r"metaphor|symbolic|represents|reflects|the real pain is|"
+    r"about feeling outdated|about your doubt|comparison to others|comparing yourself"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_ADVICE_RE = re.compile(
+    r"\b("
+    r"you should|try\b|start\b|start with|start by|focus on|consider|"
+    r"take breaks?|rest\b|use an ergonomic|posture|chair|monitor|"
+    r"do this|next step|keep coding|ship what you have|let(?:'|’)s\b|lets\b"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_REASSURE_RE = re.compile(
+    r"\b("
+    r"you(?:'|’)re not|you are not|it(?:'|’)s okay|it is okay|"
+    r"you(?:'|’)ll be fine|you will be fine|you(?:'|’)ve got this|you got this|"
+    r"not a flaw in you|not a sign (?:you(?:'|’)re|you are) failing|not failing"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_HELP_OFFER_RE = re.compile(
+    r"\b("
+    r"if you want, i can|how can i help|i can help|"
+    r"i can walk through|i can talk through|i can mirror|for example[: ]"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_ANNOUNCE_RE = re.compile(
+    r"\b("
+    r"i'?ll keep this direct and non-preachy|"
+    r"keeping this direct and grounded|"
+    r"keeping this direct|"
+    r"keeping it direct|"
+    r"keep this direct|"
+    r"keep it direct|"
+    r"staying direct|"
+    r"stay direct|"
+    r"i'?ll keep responses tighter(?:\s+from now on)?|"
+    r"i'?m already operating in direct mode|"
+    r"i'?ll give (?:you )?straight talk without fluff|"
+    r"understood\.?\s*no more meta|"
+    r"give me the exact task and desired output format"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_DISTRESS_FALLBACK_RE = re.compile(
+    r"\b("
+    r"fraud|too old|too broken|mass-irrelevant|can't do this|cannot do this|"
+    r"i don't know why i bother|falling behind|overloaded|venting"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_LITERAL_LINES = (
+    "Your {anchor} matters here. I won't dress it up or pivot away from it.",
+    "That's real. I'm not going to reframe your {anchor}.",
+    "Yeah. That's the actual thing - your {anchor}.",
+    "That one is literal. Your {anchor} is the thing.",
+    "Yeah. Your {anchor}'s the thing that doesn't negotiate.",
+)
+_KAIOKEN_SHORT_FALLBACKS = (
+    "I hear you.",
+    "I hear you. That's not nothing.",
+    "That sits heavy.",
+    "Yeah, that's the real thing.",
+    "That's a lot.",
+    "Go on.",
+)
+_KAIOKEN_POSITIVE_FRAMING_RE = re.compile(
+    r"\b(great move|good choice|smart decision|wise decision|excellent choice|solid move)\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_ACK_RE = re.compile(
+    r"\b(i hear you|i get it|that sits heavy|fair|valid|makes sense|i know)\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_BRIDGE_RE = re.compile(
+    r"\b(but|and yet|still|though|even so|yet)\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_END_REFRAME_RE = re.compile(
+    r"\b("
+    r"not cheating|just using|still doing|doing the thinking|"
+    r"just faster|progress|you can still|you will still"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_NIHILISM_RE = re.compile(
+    r"\b("
+    r"no point|pointless|nothing matters|i don't know what the point is|"
+    r"no reason to|why bother|doesn't matter anyway|"
+    r"not (?:the )?right fit(?: right now)?|"
+    r"maybe (?:this|it|coding) (?:isn't|is not) for you|"
+    r"(?:might|may) not be for you|"
+    r"(?:right|best) (?:fit|path) for you|"
+    r"(?:if|when)\s+(?:\w+\s+){0,4}(?:quit|quitting|stop(?:ping)?|give up|walk away)(?:\s+\w+){0,10}\s+(?:is|feels|seems|sounds)?\s*(?:okay|right|valid|honest)|"
+    r"better off (?:quitting|stopping|walking away)|"
+    r"(?:you should|should you) (?:quit|stop)|"
+    r"give up|walk away|not worth (?:it|continuing)"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_FRICTION_RE = re.compile(
+    r"\b("
+    r"rude|asshole|tone deaf|you misread|you misunderstood|wtf|"
+    r"not until you|apologize|apologise|what got up your butt|fuck off"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _is_caps_burst_friction(text: str) -> bool:
+    s = str(text or "")
+    toks = re.findall(r"[A-Za-z]{2,}", s)
+    if not toks:
+        return False
+    all_caps = sum(1 for t in toks if t.isupper())
+    return bool(len(toks) <= 10 and all_caps >= 2)
+_KAIOKEN_JOKE_EXPLAIN_RE = re.compile(
+    r"\b("
+    r"you(?:'|’)re comparing|underneath that joke|using humor to mask|"
+    r"the punchline|you(?:'|’)re using humor|joke is that|what you really mean"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_DESCRIPTOR_TERM_RE = re.compile(
+    r"\b("
+    r"unstable|instability|broken|fraud|worthless|damaged|weak"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_OWNERSHIP_DESCRIPTOR_RE = re.compile(
+    r"\b("
+    r"(?:you(?:(?:'|’)re| are)\s+(?:\w+\s+){0,3}?(?:unstable|broken|worthless|damaged|weak|fraud(?:ulent)?))|"
+    r"(?:your\s+(?:\w+\s+){0,3}?(?:instability|brokenness|fraud|worthlessness|damage|weakness))"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_DIAGNOSTIC_RE = re.compile(
+    r"\b("
+    r"the real issue|the issue is|what this means is|root cause|core issue|underlying issue|"
+    r"you(?:'|’)re still treating|you are still treating|you need to|the problem is|"
+    r"the real problem|diagnos(?:e|is|ing)|unresolved issues"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_LITERAL_FOLLOWUP_RE = re.compile(
+    r"^(?:and\s+)?(?:what about|how about|and)?\s*(?:my|the)\s+([a-z0-9][a-z0-9\-']{2,})\??$",
+    re.IGNORECASE,
+)
+
+
+def _has_kaioken_descriptor_drift(text: str) -> bool:
+    t = str(text or "").strip()
+    if not t:
+        return False
+    if not _KAIOKEN_OWNERSHIP_DESCRIPTOR_RE.search(t):
+        return False
+    return bool(_KAIOKEN_DESCRIPTOR_TERM_RE.search(t))
+
+
+def _is_kaioken_guard_candidate(*, state: SessionState, user_text: str) -> bool:
+    if _kaioken_classify_register is None:
+        return False
+    if not bool(getattr(state, "kaioken_enabled", False)):
+        return False
+    mode = str(getattr(state, "kaioken_mode", "log_only") or "log_only").strip().lower()
+    if mode not in {"coerce", "phase1"}:
+        return False
+    try:
+        cur_text = str(user_text or "")
+        # Domain carry: keep guard candidacy active when a clinical/anatomical
+        # topic is already in session state and referenced again.
+        clinical_terms = {
+            "spine", "back", "disc", "herniation", "l5", "s1", "c5", "knee", "shoulder", "neck",
+        }
+        recent_nouns = {str(x or "").strip().lower() for x in list(getattr(state, "kaioken_recent_user_nouns", []) or [])}
+        distress_topics = {str(x or "").strip().lower() for x in set(getattr(state, "kaioken_distress_topics", set()) or set())}
+        clinical_state = {t for t in (recent_nouns | distress_topics) if t in clinical_terms}
+        cur_terms = {str(x or "").strip().lower() for x in _extract_concrete_nouns(cur_text)}
+        if clinical_state and any(t for t in cur_terms if t in clinical_state):
+            return True
+        if _user_explicitly_requests_advice(cur_text):
+            # Advice asks should stay in KAIOKEN guard lane when a distress
+            # context is already active, even if this turn itself is short.
+            if bool(set(getattr(state, "kaioken_distress_topics", set()) or set())):
+                return True
+            prev = str(getattr(state, "last_user_text", "") or "").strip()
+            if prev:
+                if _KAIOKEN_DISTRESS_FALLBACK_RE.search(prev):
+                    return True
+                prev_cls = _kaioken_classify_register(prev)
+                prev_subs = {str(s).strip().lower() for s in list(getattr(prev_cls, "subsignals", []) or [])}
+                if {"distress_hint", "vulnerable_under_humour"} & prev_subs:
+                    return True
+        if _KAIOKEN_DISTRESS_FALLBACK_RE.search(cur_text):
+            return True
+        cls = _kaioken_classify_register(cur_text)
+        conf = str(getattr(cls, "confidence", "low") or "low").lower()
+        subs = {str(s).strip().lower() for s in list(getattr(cls, "subsignals", []) or [])}
+        if conf == "high" and ({"distress_hint", "vulnerable_under_humour"} & subs):
+            return True
+        if _is_continuation_prompt(cur_text):
+            prev = str(getattr(state, "last_user_text", "") or "").strip()
+            if prev:
+                prev_cls = _kaioken_classify_register(prev)
+                prev_subs = {str(s).strip().lower() for s in list(getattr(prev_cls, "subsignals", []) or [])}
+                if {"distress_hint", "vulnerable_under_humour"} & prev_subs:
+                    return True
+                if _KAIOKEN_DISTRESS_FALLBACK_RE.search(prev):
+                    return True
+        # Conservative follow-up inheritance for ultra-short turns
+        # (e.g., "And my spine?") immediately after a high-confidence
+        # distress/VUH turn.
+        if len(re.findall(r"[A-Za-z0-9_']+", cur_text)) <= 12:
+            prev = str(getattr(state, "last_user_text", "") or "")
+            if prev.strip():
+                prev_cls = _kaioken_classify_register(prev)
+                prev_conf = str(getattr(prev_cls, "confidence", "low") or "low").lower()
+                prev_subs = {str(s).strip().lower() for s in list(getattr(prev_cls, "subsignals", []) or [])}
+                if prev_conf == "high" and ({"distress_hint", "vulnerable_under_humour"} & prev_subs):
+                    return True
+        return False
+    except Exception:
+        return False
+
+
+def _split_fun_prefix(text: str) -> tuple[str, str]:
+    return _kg_split_fun_prefix(text)
+
+
+def _normalize_for_repeat_check(text: str) -> str:
+    return _kg_normalize_for_repeat_check(text)
+
+
+def _sentence_count_for_guard(text: str) -> int:
+    return _kg_sentence_count_for_guard(text)
+
+
+def _repeat_like(a: str, b: str) -> bool:
+    return _kg_repeat_like(a, b)
+
+
+def _recent_repeat_within_window(state: SessionState, text: str, *, window: int = 4) -> bool:
+    return _kg_recent_repeat_within_window(state, text, window=window)
+
+
+def _remember_recent_assistant_body(state: SessionState, text: str, *, max_items: int = 8) -> None:
+    _kg_remember_recent_assistant_body(state, text, max_items=max_items)
+
+
+def _choose_short_fallback(state: SessionState, *, prior_text: str = "") -> str:
+    return _kg_choose_short_fallback(state, _KAIOKEN_SHORT_FALLBACKS, prior_text=prior_text)
+
+
+_LITERAL_ANCHOR_STOPWORDS = {
+    "this", "that", "it", "thing", "stuff", "one", "mine", "myself", "yourself",
+    "my", "the", "what", "about", "and", "umm", "um", "uh", "hmm", "tips", "advice",
+}
+
+
+_ANCHOR_QUERY_STOPWORDS = _LITERAL_ANCHOR_STOPWORDS | {
+    "any", "got", "have", "has", "had", "give", "tell", "show", "with", "for", "from",
+    "into", "onto", "your", "you", "me", "i", "is", "are", "was", "were", "be", "been",
+    "do", "does", "did", "can", "could", "should", "would", "will", "to", "of", "in", "on",
+    "hot", "takes", "take", "thoughts", "thought", "pro", "advice", "tips", "tip", "help",
+}
+
+_KAIOKEN_LOW_SALIENCE_TOPIC_RE = re.compile(
+    r"\b(home|morning|train|today|thing|stuff|problem|issue)\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_WORK_CONTEXT_RE = re.compile(
+    r"\b("
+    r"patient|patients|appointment|appointments|clinic|chiro|practice|"
+    r"no[\s-]?show|cancell?(?:ation|ed|ing|s)|booking|bookings|schedule|"
+    r"waitlist|caseload|client|clients"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_CONTEXT_DEFLECTION_RE = re.compile(
+    r"\b("
+    r"can(?:'|â€™)?t be certain what|cannot be certain what|"
+    r"without more detail|if you clarify|need more detail|"
+    r"unclear what .* means"
+    r")\b",
+    re.IGNORECASE,
+)
+_KAIOKEN_CLARIFY_OPTION_STOPWORDS = {
+    "yeah", "yep", "yes", "no", "nah", "well", "who", "what", "where", "when", "why", "how",
+    "was", "were", "is", "are", "am", "did", "does", "do", "just", "really", "okay", "ok",
+    "hmm", "umm", "uh", "sorry", "tell", "said", "say", "mean", "meant", "you", "your", "my",
+    "mine", "ours", "their", "this", "that", "these", "those",
+}
+_KAIOKEN_HUMOR_CUE_RE = re.compile(
+    r"\b(haha|lol|lmao|joke|vibes|prayer)\b|(?:\bas\b.+\bas\b)",
+    re.IGNORECASE,
+)
+
+
+def _is_continuation_prompt(text: str) -> bool:
+    return _kc_is_continuation_prompt(text)
+
+
+def _is_clarification_prompt(text: str) -> bool:
+    return _kc_is_clarification_prompt(text)
+
+
+def _is_topic_switch_prompt(text: str) -> bool:
+    return _kc_is_topic_switch_prompt(text)
+
+
+def _is_resolution_signal(text: str) -> bool:
+    return _kc_is_resolution_signal(text)
+
+
+def _extract_concrete_nouns(text: str) -> list[str]:
+    toks = re.findall(r"[A-Za-z0-9][A-Za-z0-9\-']*", str(text or "").lower())
+    out: list[str] = []
+    for t in toks:
+        if len(t) < 3:
+            continue
+        if t in _LITERAL_ANCHOR_STOPWORDS:
+            continue
+        if t.isdigit():
+            continue
+        out.append(t)
+    return out
+
+
+def _normalize_topic_token(tok: str) -> str:
+    t = str(tok or "").strip().lower()
+    if not t:
+        return ""
+    t = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", t)
+    t = re.sub(r"'s$", "", t)
+    if not re.match(r"^[a-z0-9][a-z0-9'-]{2,}$", t):
+        return ""
+    # Conservative singularization only; avoid fragment stems like "giving" -> "giv".
+    if len(t) > 4 and t.endswith("s") and not t.endswith("ss"):
+        t = t[:-1]
+    return t
+
+
+def _extract_primary_topic(text: str) -> str:
+    s = str(text or "").strip().lower()
+    if not s:
+        return ""
+    m = re.search(r"\b(?:my|the)\s+([a-z0-9][a-z0-9\-']{1,})\b", s, flags=re.IGNORECASE)
+    if m:
+        cand = _normalize_topic_token(str(m.group(1) or ""))
+        if cand and cand not in _LITERAL_ANCHOR_STOPWORDS and not _KAIOKEN_LOW_SALIENCE_TOPIC_RE.search(cand):
+            return cand
+    nouns = [_normalize_topic_token(x) for x in _extract_concrete_nouns(s)]
+    nouns = [x for x in nouns if x and x not in _LITERAL_ANCHOR_STOPWORDS and not _KAIOKEN_LOW_SALIENCE_TOPIC_RE.search(x)]
+    return nouns[0] if nouns else ""
+
+
+def _collect_topic_candidates(text: str, *, closed_topics: set[str] | None = None) -> list[str]:
+    closed = set(closed_topics or set())
+    cand: list[str] = []
+    primary = _extract_primary_topic(text)
+    if primary:
+        cand.append(primary)
+    cand.extend([_normalize_topic_token(x) for x in _extract_concrete_nouns(text)])
+    out: list[str] = []
+    for x in cand:
+        if not x:
+            continue
+        if x in _LITERAL_ANCHOR_STOPWORDS:
+            continue
+        if x in closed:
+            continue
+        if _KAIOKEN_LOW_SALIENCE_TOPIC_RE.search(x):
+            continue
+        if x in out:
+            continue
+        out.append(x)
+    return out
+
+
+_KAIOKEN_THREAD_NO_OVERLAP_SAME_MACRO_LIMIT = 2
+
+
+def _classify_macro_for_thread(text: str) -> str:
+    try:
+        if _kaioken_classify_register is None:
+            return ""
+        cls = _kaioken_classify_register(str(text or ""))
+        return str(getattr(cls, "macro", "") or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _thread_tokens(meta: Dict[str, Any]) -> set[str]:
+    raw = meta.get("tokens", set())
+    out: set[str] = set()
+    if isinstance(raw, set):
+        iterable = raw
+    elif isinstance(raw, list):
+        iterable = raw
+    else:
+        iterable = []
+    for tok in iterable:
+        norm = _normalize_topic_token(str(tok or ""))
+        if norm:
+            out.add(norm)
+    return out
+
+
+def _get_kaioken_threads(state: SessionState) -> Dict[str, Dict[str, Any]]:
+    raw = getattr(state, "kaioken_threads", {}) or {}
+    if not isinstance(raw, dict):
+        raw = {}
+    clean: Dict[str, Dict[str, Any]] = {}
+    for tid, meta in raw.items():
+        if not isinstance(meta, dict):
+            continue
+        clean[str(tid)] = dict(meta)
+    setattr(state, "kaioken_threads", clean)
+    return clean
+
+
+def _next_kaioken_thread_id(state: SessionState) -> str:
+    seq = int(getattr(state, "kaioken_thread_seq", 0) or 0) + 1
+    setattr(state, "kaioken_thread_seq", seq)
+    return f"t{seq}"
+
+
+def _new_kaioken_thread(
+    state: SessionState,
+    *,
+    tokens: list[str],
+    macro: str,
+    turn_counter: int,
+) -> str:
+    threads = _get_kaioken_threads(state)
+    tid = _next_kaioken_thread_id(state)
+    toks = set(tokens)
+    threads[tid] = {
+        "tokens": toks,
+        "closed": False,
+        "closed_at_turn": -1,
+        "macro": str(macro or ""),
+        "last_turn": int(turn_counter),
+        "head": str(tokens[0] if tokens else ""),
+        "no_overlap_same_macro_streak": 0,
+    }
+    setattr(state, "kaioken_threads", threads)
+    return tid
+
+
+def _expire_closed_threads(state: SessionState, turn_counter: int) -> None:
+    threads = _get_kaioken_threads(state)
+    remove_ids: list[str] = []
+    for tid, meta in list(threads.items()):
+        if not bool(meta.get("closed", False)):
+            continue
+        closed_at = int(meta.get("closed_at_turn", -9999) or -9999)
+        if closed_at < 0:
+            continue
+        if (int(turn_counter) - closed_at) > int(KAIOKEN_CLOSED_THREAD_TTL_TURNS):
+            remove_ids.append(tid)
+    for tid in remove_ids:
+        threads.pop(tid, None)
+    active_tid = str(getattr(state, "kaioken_active_thread_id", "") or "").strip()
+    if active_tid and active_tid not in threads:
+        setattr(state, "kaioken_active_thread_id", "")
+    setattr(state, "kaioken_threads", threads)
+
+
+def _close_kaioken_thread_by_id(state: SessionState, thread_id: str, *, turn_counter: int) -> None:
+    tid = str(thread_id or "").strip()
+    if not tid:
+        return
+    threads = _get_kaioken_threads(state)
+    meta = threads.get(tid)
+    if not isinstance(meta, dict):
+        return
+    meta["closed"] = True
+    meta["closed_at_turn"] = int(turn_counter)
+    meta["last_turn"] = int(turn_counter)
+    meta["no_overlap_same_macro_streak"] = 0
+    threads[tid] = meta
+    setattr(state, "kaioken_threads", threads)
+
+
+def _close_most_recent_open_kaioken_thread(state: SessionState, *, turn_counter: int) -> None:
+    threads = _get_kaioken_threads(state)
+    open_rows: list[tuple[int, str]] = []
+    for tid, meta in threads.items():
+        if bool(meta.get("closed", False)):
+            continue
+        open_rows.append((int(meta.get("last_turn", -9999) or -9999), tid))
+    if not open_rows:
+        return
+    open_rows.sort(key=lambda x: x[0])
+    _close_kaioken_thread_by_id(state, open_rows[-1][1], turn_counter=turn_counter)
+
+
+def _sync_legacy_topics_from_threads(state: SessionState) -> None:
+    threads = _get_kaioken_threads(state)
+    active_tid = str(getattr(state, "kaioken_active_thread_id", "") or "").strip()
+    open_topics: list[str] = []
+    closed_topics: set[str] = set()
+    active_topic = ""
+    for _last_turn, tid, meta in sorted(
+        ((int(m.get("last_turn", -9999) or -9999), t, m) for t, m in threads.items()),
+        key=lambda x: x[0],
+    ):
+        toks = sorted(_thread_tokens(meta))
+        if bool(meta.get("closed", False)):
+            closed_topics.update(toks)
+            continue
+        open_topics.extend(toks)
+        if tid == active_tid:
+            head = _normalize_topic_token(str(meta.get("head", "") or ""))
+            if head:
+                active_topic = head
+            elif toks:
+                active_topic = toks[0]
+    dedup: list[str] = []
+    for tok in open_topics:
+        if tok in dedup:
+            continue
+        dedup.append(tok)
+    setattr(state, "kaioken_open_topics", dedup[-8:])
+    setattr(state, "kaioken_closed_topics", set(closed_topics))
+    setattr(state, "kaioken_active_topic", active_topic)
+
+
+def _is_post_resolution_casual_pushback(state: SessionState, user_text: str) -> bool:
+    t = str(user_text or "").strip()
+    if not t:
+        return False
+    if _is_topic_switch_prompt(t) or _is_resolution_signal(t):
+        return False
+    if _user_explicitly_requests_advice(t):
+        return False
+    cur_turn = int(getattr(state, "kaioken_turn_counter", 0) or 0)
+    last_res = int(getattr(state, "kaioken_last_resolution_turn", -9999) or -9999)
+    if (cur_turn - last_res) > 2:
+        return False
+    mentioned = {_normalize_topic_token(x) for x in _extract_concrete_nouns(t)}
+    closed_topics = set(getattr(state, "kaioken_closed_topics", set()) or set())
+    if any(x for x in mentioned if x and x in closed_topics):
+        return False
+    tok_count = len(re.findall(r"[A-Za-z0-9_']+", t))
+    has_social_friction = bool(_KAIOKEN_FRICTION_RE.search(t) or re.search(r"[!?]", t))
+    return bool(tok_count <= 20 and has_social_friction)
+
+
+def _update_kaioken_topic_state_preturn(state: SessionState, user_text: str) -> None:
+    t = str(user_text or "").strip()
+    if not t:
+        return
+    _remember_recent_user_turn(state, t)
+    try:
+        turn_counter = int(getattr(state, "kaioken_turn_counter", 0) or 0)
+        _expire_closed_threads(state, turn_counter)
+        threads = _get_kaioken_threads(state)
+        active_tid = str(getattr(state, "kaioken_active_thread_id", "") or "").strip()
+        if active_tid and (
+            active_tid not in threads or bool((threads.get(active_tid) or {}).get("closed", False))
+        ):
+            active_tid = ""
+            setattr(state, "kaioken_active_thread_id", "")
+
+        if _is_topic_switch_prompt(t):
+            active_tid = ""
+            setattr(state, "kaioken_active_thread_id", "")
+            setattr(state, "kaioken_last_topic_switch_turn", turn_counter)
+
+        if _is_resolution_signal(t):
+            if active_tid:
+                _close_kaioken_thread_by_id(state, active_tid, turn_counter=turn_counter)
+            else:
+                _close_most_recent_open_kaioken_thread(state, turn_counter=turn_counter)
+            active_tid = ""
+            setattr(state, "kaioken_active_thread_id", "")
+            setattr(state, "kaioken_last_resolution_turn", turn_counter)
+
+        if (
+            (not _is_clarification_prompt(t))
+            and (not _is_continuation_prompt(t))
+            and (not _is_resolution_signal(t))
+            and (not _is_topic_switch_prompt(t))
+            and (not _is_post_resolution_casual_pushback(state, t))
+        ):
+            turn_tokens = _collect_topic_candidates(t, closed_topics=set())
+            turn_macro = _classify_macro_for_thread(t)
+            if turn_tokens:
+                threads = _get_kaioken_threads(state)
+                if not active_tid:
+                    active_tid = _new_kaioken_thread(
+                        state,
+                        tokens=turn_tokens,
+                        macro=turn_macro,
+                        turn_counter=turn_counter,
+                    )
+                else:
+                    meta = dict(threads.get(active_tid) or {})
+                    if (not meta) or bool(meta.get("closed", False)):
+                        active_tid = _new_kaioken_thread(
+                            state,
+                            tokens=turn_tokens,
+                            macro=turn_macro,
+                            turn_counter=turn_counter,
+                        )
+                    else:
+                        active_tokens = _thread_tokens(meta)
+                        cur_tokens = set(turn_tokens)
+                        overlap = bool(active_tokens.intersection(cur_tokens))
+                        active_macro = str(meta.get("macro", "") or "").strip().lower()
+                        if overlap:
+                            merged = set(active_tokens)
+                            merged.update(cur_tokens)
+                            meta["tokens"] = merged
+                            if turn_macro:
+                                meta["macro"] = turn_macro
+                            meta["last_turn"] = turn_counter
+                            meta["head"] = str(turn_tokens[0] if turn_tokens else meta.get("head", ""))
+                            meta["no_overlap_same_macro_streak"] = 0
+                            threads[active_tid] = meta
+                            setattr(state, "kaioken_threads", threads)
+                        else:
+                            same_macro = bool(turn_macro and active_macro and turn_macro == active_macro)
+                            streak = int(meta.get("no_overlap_same_macro_streak", 0) or 0)
+                            if same_macro:
+                                streak += 1
+                                if streak > int(_KAIOKEN_THREAD_NO_OVERLAP_SAME_MACRO_LIMIT):
+                                    active_tid = _new_kaioken_thread(
+                                        state,
+                                        tokens=turn_tokens,
+                                        macro=turn_macro,
+                                        turn_counter=turn_counter,
+                                    )
+                                else:
+                                    merged = set(active_tokens)
+                                    merged.update(cur_tokens)
+                                    meta["tokens"] = merged
+                                    meta["macro"] = active_macro or turn_macro
+                                    meta["last_turn"] = turn_counter
+                                    meta["head"] = str(turn_tokens[0] if turn_tokens else meta.get("head", ""))
+                                    meta["no_overlap_same_macro_streak"] = streak
+                                    threads[active_tid] = meta
+                                    setattr(state, "kaioken_threads", threads)
+                            else:
+                                active_tid = _new_kaioken_thread(
+                                    state,
+                                    tokens=turn_tokens,
+                                    macro=turn_macro,
+                                    turn_counter=turn_counter,
+                                )
+
+        setattr(state, "kaioken_active_thread_id", active_tid)
+        _sync_legacy_topics_from_threads(state)
+    except Exception:
+        pass
+
+
+def _open_topics_for_clarify(state: SessionState, user_text: str) -> list[str]:
+    try:
+        open_topics = list(getattr(state, "kaioken_open_topics", []) or [])
+        closed_topics = set(getattr(state, "kaioken_closed_topics", set()) or set())
+        recent_user = list(getattr(state, "kaioken_recent_user_turns", []) or [])
+        user_terms = {_normalize_topic_token(x) for x in _extract_concrete_nouns(user_text)}
+        out: list[str] = []
+        for t in reversed(open_topics):
+            if t in closed_topics:
+                continue
+            if str(t or "").strip().lower() in _KAIOKEN_CLARIFY_OPTION_STOPWORDS:
+                continue
+            if not re.match(r"^[a-z0-9][a-z0-9'-]{2,}$", str(t or "").lower()):
+                continue
+            if _KAIOKEN_LOW_SALIENCE_TOPIC_RE.search(str(t or "").lower()):
+                continue
+            # Clarify options must be grounded in complete tokens actually seen in recent user turns.
+            if not any(re.search(rf"\b{re.escape(str(t).lower())}\b", str(rt or "").lower()) for rt in recent_user):
+                continue
+            if t in user_terms:
+                continue
+            if t in out:
+                continue
+            out.append(t)
+            if len(out) >= 2:
+                break
+        return out
+    except Exception:
+        return []
+
+
+def _closed_topics_not_mentioned(state: SessionState, user_text: str) -> list[str]:
+    try:
+        turn_counter = int(getattr(state, "kaioken_turn_counter", 0) or 0)
+        _expire_closed_threads(state, turn_counter)
+        threads = _get_kaioken_threads(state)
+        user_terms = {_normalize_topic_token(x) for x in _extract_concrete_nouns(user_text)}
+        blocked: set[str] = set()
+        for _tid, meta in threads.items():
+            if not bool(meta.get("closed", False)):
+                continue
+            tokens = _thread_tokens(meta)
+            if not tokens:
+                continue
+            # User mention acts as explicit reopen for that closed thread.
+            if user_terms.intersection(tokens):
+                continue
+            blocked.update(tokens)
+        if blocked:
+            return sorted(t for t in blocked if t)
+        closed_topics = set(getattr(state, "kaioken_closed_topics", set()) or set())
+        if not closed_topics:
+            return []
+        return [t for t in closed_topics if t and t not in user_terms]
+    except Exception:
+        return []
+
+
+def _mentions_any_topic(text: str, topics: list[str]) -> bool:
+    s = str(text or "").lower()
+    if not s:
+        return False
+    for t in topics:
+        tt = str(t or "").strip().lower()
+        if not tt:
+            continue
+        if re.search(rf"\b{re.escape(tt)}\b", s):
+            return True
+    return False
+
+
+def _remember_distress_topics_from_turn(
+    state: SessionState,
+    *,
+    user_text: str,
+    macro: str,
+    confidence: str,
+    subs: set[str],
+) -> None:
+    try:
+        if str(macro or "").strip().lower() != "personal":
+            return
+        conf = str(confidence or "").strip().lower()
+        psubs = {str(x).strip().lower() for x in set(subs or set())}
+        if not (
+            ("distress_hint" in psubs)
+            or ("vulnerable_under_humour" in psubs)
+            or (conf == "high" and bool(psubs))
+            or _KAIOKEN_DISTRESS_FALLBACK_RE.search(str(user_text or ""))
+        ):
+            return
+        known = set(getattr(state, "kaioken_distress_topics", set()) or set())
+        for tok in _collect_topic_candidates(str(user_text or ""), closed_topics=set()):
+            known.add(tok)
+        setattr(state, "kaioken_distress_topics", known)
+    except Exception:
+        pass
+
+
+def _is_structural_vuh_turn(state: SessionState, user_text: str) -> bool:
+    s = str(user_text or "").strip().lower()
+    if not s:
+        return False
+    if not _KAIOKEN_HUMOR_CUE_RE.search(s):
+        return False
+    known = set(getattr(state, "kaioken_distress_topics", set()) or set())
+    mentioned = {_normalize_topic_token(x) for x in _extract_concrete_nouns(s)}
+    topic_overlap = bool(known and mentioned and any(t in known for t in mentioned if t))
+    return bool(topic_overlap or _KAIOKEN_DISTRESS_FALLBACK_RE.search(s))
+
+
+def _advice_about_disclosed_distress_topic(state: SessionState, user_text: str, literal_anchor: str = "") -> tuple[bool, str]:
+    text = str(user_text or "")
+    if not _user_explicitly_requests_advice(text):
+        return False, ""
+    known = set(getattr(state, "kaioken_distress_topics", set()) or set())
+    if not known:
+        return False, ""
+    anchor = str(literal_anchor or "").strip().lower()
+    if anchor and anchor in known:
+        return True, anchor
+    candidates = _collect_topic_candidates(text, closed_topics=set())
+    for c in candidates:
+        if c in known:
+            return True, c
+    active = str(getattr(state, "kaioken_literal_anchor_active", "") or "").strip().lower()
+    if active and active in known:
+        return True, active
+    # Ambiguous advice asks (for example "should I quit?" / "advise me")
+    # should bind to the most recent disclosed distress topic, not fall
+    # through to generic short-fallback replies.
+    if re.search(r"\b(?:should|do)\s+i\s+(?:quit|stop)\b|\badvise me\b", text, flags=re.IGNORECASE):
+        open_topics = list(getattr(state, "kaioken_open_topics", []) or [])
+        for tok in reversed(open_topics):
+            t = str(tok or "").strip().lower()
+            if t and t in known:
+                return True, t
+        if known:
+            recent_nouns = [str(x or "").strip().lower() for x in list(getattr(state, "kaioken_recent_user_nouns", []) or [])]
+            for tok in reversed(recent_nouns):
+                if tok and tok in known:
+                    return True, tok
+            return True, sorted(known)[0]
+    return False, ""
+
+
+def _remember_recent_concrete_nouns(state: SessionState, user_text: str, *, max_items: int = 24) -> None:
+    try:
+        recent = list(getattr(state, "kaioken_recent_user_nouns", []) or [])
+        recent.extend(_extract_concrete_nouns(user_text))
+        # Keep duplicates: repeated mentions are salience signal for semantic resolution.
+        setattr(state, "kaioken_recent_user_nouns", recent[-max_items:])
+    except Exception:
+        pass
+
+
+def _remember_recent_user_turn(state: SessionState, user_text: str, *, max_items: int = 10) -> None:
+    try:
+        t = str(user_text or "").strip()
+        if not t:
+            return
+        recent = list(getattr(state, "kaioken_recent_user_turns", []) or [])
+        recent.append(t)
+        setattr(state, "kaioken_recent_user_turns", recent[-max_items:])
+    except Exception:
+        pass
+
+
+def _extract_event_action_tokens(text: str) -> set[str]:
+    s = str(text or "").strip().lower()
+    if not s:
+        return set()
+    irregular = {
+        "went", "got", "had", "made", "saw", "felt", "lost", "found", "told",
+        "walked", "drove", "watched", "called", "tried", "broke", "hurt", "locked",
+    }
+    toks = set(re.findall(r"\b[a-z][a-z0-9'-]{2,}\b", s))
+    actions = {t for t in toks if t in irregular or t.endswith("ed")}
+    return actions
+
+
+def _is_first_person_event_narration(text: str) -> bool:
+    first = _first_sentence_for_guard(str(text or ""))
+    if not first:
+        return False
+    if not re.search(r"\b(i|my)\b", first, flags=re.IGNORECASE):
+        return False
+    # Structural: first-person + past-event action.
+    return bool(
+        re.search(
+            r"\bi\s+(?:went|got|had|walked|watched|drove|saw|felt|lost|found|called|tried|broke|hurt|locked|\w+ed)\b",
+            first,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _is_narrative_ownership_bleed(state: SessionState, assistant_text: str) -> bool:
+    if not _is_first_person_event_narration(assistant_text):
+        return False
+    a_sent = _first_sentence_for_guard(str(assistant_text or ""))
+    a_nouns = {x for x in _extract_concrete_nouns(a_sent) if x and x not in _LITERAL_ANCHOR_STOPWORDS}
+    a_actions = _extract_event_action_tokens(a_sent)
+    if not a_nouns or not a_actions:
+        return False
+    try:
+        recent_user = list(getattr(state, "kaioken_recent_user_turns", []) or [])
+    except Exception:
+        recent_user = []
+    # Match against near history with distance: cluster requires noun+action overlap.
+    for ut in reversed(recent_user[-6:]):
+        u_nouns = {x for x in _extract_concrete_nouns(ut) if x and x not in _LITERAL_ANCHOR_STOPWORDS}
+        u_actions = _extract_event_action_tokens(ut)
+        if not u_nouns or not u_actions:
+            continue
+        if (a_nouns & u_nouns) and (a_actions & u_actions):
+            return True
+    return False
+
+
+def _force_narrative_ownership_rewrite(*, call_model_fn, user_text: str, draft_text: str) -> str:
+    prompt = (
+        "Rewrite the response with strict constraints:\n"
+        "- Do NOT adopt the user's event as first-person narration.\n"
+        "- Do NOT use first-person event claims ('I went', 'my car', 'I had to').\n"
+        "- Keep 1-3 sentences, direct and natural.\n"
+        "- Stay with the user's perspective (second person or neutral phrasing).\n"
+        "- No behavior announcements.\n\n"
+        f"USER:\n{str(user_text or '').strip()}\n\n"
+        f"DRAFT:\n{str(draft_text or '').strip()}\n\n"
+        "Return only the rewritten answer body."
+    )
+    try:
+        out = str(
+            call_model_fn(
+                role="thinker",
+                prompt=prompt,
+                max_tokens=140,
+                temperature=0.0,
+                top_p=1.0,
+            )
+            or ""
+        ).strip()
+        return out
+    except Exception:
+        return ""
+
+
+def _resolve_recent_anchor(state: SessionState, query_text: str = "") -> str:
+    return _kl_resolve_recent_anchor(state, query_text)
+
+
+def _first_sentence_for_guard(text: str) -> str:
+    t = str(text or "").strip()
+    if not t:
+        return ""
+    parts = re.split(r"(?<=[.!?])\s+", t, maxsplit=1)
+    return (parts[0] if parts else t).strip()
+
+
+def _sentence_split_for_guard(text: str) -> list[str]:
+    t = str(text or "").strip()
+    if not t:
+        return []
+    return [p.strip() for p in re.split(r"(?<=[.!?])\s+", t) if p and str(p).strip()]
+
+
+def _first_clause_for_anchor_parse(text: str) -> str:
+    return _kl_first_clause_for_anchor_parse(text)
+
+
+def _ends_on_positive_reframe_without_bridge(text: str) -> bool:
+    parts = _sentence_split_for_guard(text)
+    if len(parts) < 2:
+        return False
+    last = parts[-1]
+    has_reframe_end = bool(_KAIOKEN_POSITIVE_FRAMING_RE.search(last) or _KAIOKEN_END_REFRAME_RE.search(last))
+    if not has_reframe_end:
+        return False
+    # Distress turns should not end on a reframe unless there is explicit
+    # acknowledgement/bridge language that preserves concern before reframing.
+    has_ack = bool(_KAIOKEN_ACK_RE.search(text))
+    has_bridge = bool(_KAIOKEN_BRIDGE_RE.search(text))
+    return bool(not (has_ack and has_bridge))
+
+
+def _friction_repair_line(state: SessionState) -> str:
+    opts = (
+        "You're right to call that out. What do you want me to answer right now?",
+        "Fair call. Give me the exact question you want answered, and I'll answer it cleanly.",
+    )
+    key = f"{getattr(state, 'kaioken_turn_counter', 0)}|{str(getattr(state, 'session_id', '') or '')}|friction"
+    idx = int(hashlib.sha256(key.encode("utf-8", errors="ignore")).hexdigest()[:8], 16) % len(opts)
+    return opts[idx]
+
+
+def _force_full_distress_rewrite(*, call_model_fn, user_text: str, draft_text: str) -> str:
+    prompt = (
+        "Rewrite the response with strict constraints:\n"
+        "- 2 to 4 sentences.\n"
+        "- Direct, human, and specific to the user's message.\n"
+        "- No pep-talk slogans, no platitudes, no motivational framing.\n"
+        "- No nihilistic agreement ('no point', 'why bother').\n"
+        "- Do not validate withdrawal/disengagement (for example 'quitting is okay' or 'not the right fit for you').\n"
+        "- No behavior announcements ('I'll keep this direct', etc.).\n"
+        "- No unsolicited advice unless the user explicitly asked for advice.\n"
+        "- Do not summarize the whole conversation.\n\n"
+        f"USER:\n{str(user_text or '').strip()}\n\n"
+        f"DRAFT:\n{str(draft_text or '').strip()}\n\n"
+        "Return only the rewritten answer body."
+    )
+    try:
+        out = str(
+            call_model_fn(
+                role="thinker",
+                prompt=prompt,
+                max_tokens=180,
+                temperature=0.0,
+                top_p=1.0,
+            )
+            or ""
+        ).strip()
+        return out
+    except Exception:
+        return ""
+
+
+def _force_literal_anchor_advice_rewrite(
+    *,
+    call_model_fn,
+    user_text: str,
+    draft_text: str,
+    anchor: str,
+) -> str:
+    a = str(anchor or "").strip()
+    if not a:
+        return ""
+    prompt = (
+        "Rewrite the response with strict constraints:\n"
+        "- User explicitly asked for advice about a literal anchor topic.\n"
+        f"- Anchor topic: `{a}`.\n"
+        "- Keep it to 2-3 sentences.\n"
+        "- Stay on this anchor topic (no topic pivot).\n"
+        "- Provide practical guidance if possible.\n"
+        "- If specifics are uncertain, acknowledge limits clearly without pretending certainty.\n"
+        "- No pep-talk slogans, no platitudes, no motivational framing.\n"
+        "- No behavior announcements.\n\n"
+        f"USER:\n{str(user_text or '').strip()}\n\n"
+        f"DRAFT:\n{str(draft_text or '').strip()}\n\n"
+        "Return only the rewritten answer body."
+    )
+    try:
+        out = str(
+            call_model_fn(
+                role="thinker",
+                prompt=prompt,
+                max_tokens=180,
+                temperature=0.0,
+                top_p=1.0,
+            )
+            or ""
+        ).strip()
+        return out
+    except Exception:
+        return ""
+
+
+def _force_disclosed_distress_topic_advice_rewrite(
+    *,
+    call_model_fn,
+    user_text: str,
+    draft_text: str,
+    topic: str,
+) -> str:
+    t = str(topic or "").strip()
+    if not t:
+        return ""
+    prompt = (
+        "Rewrite the response with strict constraints:\n"
+        "- User asked for advice about a previously disclosed personal/distress topic.\n"
+        f"- Topic: `{t}`.\n"
+        "- Keep it to 1-2 sentences.\n"
+        "- First sentence: direct acknowledgment of limits (do not pretend certainty).\n"
+        "- Second sentence (optional): brief support direction (appropriate professional/support channel).\n"
+        "- Stay on this topic. No pivot to unrelated topics.\n"
+        "- No pep-talk slogans, no motivational framing, no behavior announcements.\n\n"
+        f"USER:\n{str(user_text or '').strip()}\n\n"
+        f"DRAFT:\n{str(draft_text or '').strip()}\n\n"
+        "Return only the rewritten answer body."
+    )
+    try:
+        out = str(
+            call_model_fn(
+                role="thinker",
+                prompt=prompt,
+                max_tokens=110,
+                temperature=0.0,
+                top_p=1.0,
+            )
+            or ""
+        ).strip()
+        return out
+    except Exception:
+        return ""
+
+
+def _extract_literal_followup_anchor(user_text: str, *, state: SessionState | None = None) -> str:
+    return _kl_extract_literal_followup_anchor(user_text, state=state)
+
+
+def _literal_anchor_is_primary_subject(user_text: str, anchor: str) -> bool:
+    return _kl_literal_anchor_is_primary_subject(user_text, anchor)
+
+
+def _is_literal_followup_turn(*, state: SessionState, user_text: str) -> bool:
+    return _kl_is_literal_followup_turn(
+        state=state,
+        user_text=user_text,
+        is_kaioken_guard_candidate_fn=_is_kaioken_guard_candidate,
+    )
+
+
+def _user_explicitly_requests_advice(user_text: str) -> bool:
+    return _kc_user_explicitly_requests_advice(user_text)
+
+
+def _user_explicitly_requests_encouragement(user_text: str) -> bool:
+    return _kc_user_explicitly_requests_encouragement(user_text)
+
+
+def _force_brief_encouragement_rewrite(*, call_model_fn, user_text: str, draft_text: str) -> str:
+    prompt = (
+        "Rewrite the response with strict constraints:\n"
+        "- User explicitly requested encouragement.\n"
+        "- Keep it to 2-3 sentences maximum.\n"
+        "- Be warm and direct, not preachy.\n"
+        "- No behavior announcements.\n"
+        "- No long motivational essay.\n"
+        "- Stay anchored to what the user actually said.\n\n"
+        f"USER:\n{str(user_text or '').strip()}\n\n"
+        f"DRAFT:\n{str(draft_text or '').strip()}\n\n"
+        "Return only the rewritten answer body."
+    )
+    try:
+        out = str(
+            call_model_fn(
+                role="thinker",
+                prompt=prompt,
+                max_tokens=160,
+                temperature=0.0,
+                top_p=1.0,
+            )
+            or ""
+        ).strip()
+        return out
+    except Exception:
+        return ""
+
+
+def _is_practical_work_advice_turn(state: SessionState, user_text: str) -> bool:
+    t = str(user_text or "").strip()
+    if not t:
+        return False
+    if not _user_explicitly_requests_advice(t):
+        return False
+    recent = " ".join(
+        [
+            str(getattr(state, "last_user_text", "") or ""),
+            " ".join(str(x or "") for x in list(getattr(state, "kaioken_recent_user_turns", []) or [])[-6:]),
+            " ".join(str(x or "") for x in list(getattr(state, "kaioken_open_topics", []) or [])),
+            t,
+        ]
+    )
+    return bool(_KAIOKEN_WORK_CONTEXT_RE.search(recent))
+
+
+def _force_practical_work_advice_rewrite(*, call_model_fn, user_text: str, draft_text: str) -> str:
+    prompt = (
+        "Rewrite the response with strict constraints:\n"
+        "- User asked for practical advice in an already-established work context.\n"
+        "- Keep it to 2-4 sentences.\n"
+        "- Give concrete operational steps the user can try immediately.\n"
+        "- Do NOT deflect with generic clarification requests when context is already established.\n"
+        "- Stay on the user's work context and requested problem.\n"
+        "- No behavior announcements, no meta-summary.\n\n"
+        f"USER:\n{str(user_text or '').strip()}\n\n"
+        f"DRAFT:\n{str(draft_text or '').strip()}\n\n"
+        "Return only the rewritten answer body."
+    )
+    try:
+        out = str(
+            call_model_fn(
+                role="thinker",
+                prompt=prompt,
+                max_tokens=170,
+                temperature=0.0,
+                top_p=1.0,
+            )
+            or ""
+        ).strip()
+        return out
+    except Exception:
+        return ""
+
+
+def _is_personal_reassurance_or_tips_request(user_text: str) -> bool:
+    t = str(user_text or "").strip().lower()
+    if not t:
+        return False
+    wants_reassure_or_tips = bool(
+        re.search(
+            r"\b("
+            r"reassure me|can you reassure|please reassure|need reassurance|"
+            r"any tips|tips\??|give me tips|advice\??|what should i do|what do i do|help me here"
+            r")\b",
+            t,
+            flags=re.IGNORECASE,
+        )
+    )
+    if not wants_reassure_or_tips:
+        return False
+    if _kaioken_classify_register is None:
+        return True
+    try:
+        cls = _kaioken_classify_register(str(user_text or ""))
+        macro = str(getattr(cls, "macro", "") or "").strip().lower()
+        return macro == "personal"
+    except Exception:
+        return True
+
+
+_KAIOKEN_ROUTING_DEPS = _KaiokenRoutingDeps(
+    split_fun_prefix=_split_fun_prefix,
+    is_post_resolution_casual_pushback=_is_post_resolution_casual_pushback,
+    remember_recent_assistant_body=_remember_recent_assistant_body,
+    extract_literal_followup_anchor=_extract_literal_followup_anchor,
+    is_literal_followup_turn=_is_literal_followup_turn,
+    is_clarification_prompt=_is_clarification_prompt,
+    is_continuation_prompt=_is_continuation_prompt,
+    open_topics_for_clarify=_open_topics_for_clarify,
+    remember_recent_concrete_nouns=_remember_recent_concrete_nouns,
+    advice_about_disclosed_distress_topic=_advice_about_disclosed_distress_topic,
+    is_narrative_ownership_bleed=_is_narrative_ownership_bleed,
+    repeat_like=_repeat_like,
+    recent_repeat_within_window=_recent_repeat_within_window,
+    friction_re=_KAIOKEN_FRICTION_RE,
+    user_explicitly_requests_advice=_user_explicitly_requests_advice,
+    is_practical_work_advice_turn=_is_practical_work_advice_turn,
+    force_literal_anchor_advice_rewrite=_force_literal_anchor_advice_rewrite,
+    user_explicitly_requests_encouragement=_user_explicitly_requests_encouragement,
+    force_brief_encouragement_rewrite=_force_brief_encouragement_rewrite,
+    force_practical_work_advice_rewrite=_force_practical_work_advice_rewrite,
+    force_disclosed_distress_topic_advice_rewrite=_force_disclosed_distress_topic_advice_rewrite,
+    force_narrative_ownership_rewrite=_force_narrative_ownership_rewrite,
+    choose_short_fallback=_choose_short_fallback,
+    friction_repair_line=_friction_repair_line,
+    is_kaioken_guard_candidate=_is_kaioken_guard_candidate,
+    kaioken_classify_register=_kaioken_classify_register,
+    remember_distress_topics_from_turn=_remember_distress_topics_from_turn,
+    is_structural_vuh_turn=_is_structural_vuh_turn,
+    distress_fallback_re=_KAIOKEN_DISTRESS_FALLBACK_RE,
+    pep_talk_re=_KAIOKEN_PEP_TALK_RE,
+    advice_re=_KAIOKEN_ADVICE_RE,
+    reassure_re=_KAIOKEN_REASSURE_RE,
+    help_offer_re=_KAIOKEN_HELP_OFFER_RE,
+    announce_re=_KAIOKEN_ANNOUNCE_RE,
+    context_deflection_re=_KAIOKEN_CONTEXT_DEFLECTION_RE,
+    has_kaioken_descriptor_drift=_has_kaioken_descriptor_drift,
+    joke_explain_re=_KAIOKEN_JOKE_EXPLAIN_RE,
+    sentence_count_for_guard=_sentence_count_for_guard,
+    ends_on_positive_reframe_without_bridge=_ends_on_positive_reframe_without_bridge,
+    closed_topics_not_mentioned=_closed_topics_not_mentioned,
+    mentions_any_topic=_mentions_any_topic,
+    metaphor_pivot_re=_KAIOKEN_METAPHOR_PIVOT_RE,
+    diagnostic_re=_KAIOKEN_DIAGNOSTIC_RE,
+    nihilism_re=_KAIOKEN_NIHILISM_RE,
+    positive_framing_re=_KAIOKEN_POSITIVE_FRAMING_RE,
+    first_sentence_for_guard=_first_sentence_for_guard,
+    force_full_distress_rewrite=_force_full_distress_rewrite,
+    literal_lines=_KAIOKEN_LITERAL_LINES,
+)
+
+
+def _maybe_apply_kaioken_output_guard(
+    *,
+    state: SessionState,
+    user_text: str,
+    text: str,
+    call_model_fn,
+) -> str:
+    return _kr_apply_output_guard(
+        state=state,
+        user_text=user_text,
+        text=text,
+        call_model_fn=call_model_fn,
+        deps=_KAIOKEN_ROUTING_DEPS,
+    )
+
+
+def _apply_closed_topic_suppression(
+    *,
+    state: SessionState,
+    user_text: str,
+    text: str,
+) -> str:
+    """Session-state contract: suppress resurfacing of closed topics independent of guard candidacy."""
+    try:
+        if not bool(getattr(state, "kaioken_enabled", False)):
+            return str(text or "")
+        mode = str(getattr(state, "kaioken_mode", "log_only") or "log_only").strip().lower()
+        if mode not in {"coerce", "phase1"}:
+            return str(text or "")
+        blocked_closed_topics = _closed_topics_not_mentioned(state, user_text)
+        if not blocked_closed_topics:
+            return str(text or "")
+        prefix, body = _split_fun_prefix(str(text or ""))
+        if not body or not _mentions_any_topic(body, blocked_closed_topics):
+            return str(text or "")
+        if re.search(r"\b(question|ask)\b", str(user_text or ""), flags=re.IGNORECASE):
+            redirect = "Go for it - what's your question?"
+        else:
+            redirect = "All good - we can leave that closed. What do you want to focus on now?"
+        return f"{prefix}\n\n{redirect}".strip() if prefix else redirect
+    except Exception:
+        return str(text or "")
 
 
 def _is_explicit_citation_request(text: str) -> bool:
@@ -372,8 +1889,11 @@ def _extract_replay_base_answer(last_assistant_text: str) -> str:
     return "\n".join(lines).strip()
 
 
+_KAIOKEN_TASK_FORWARD_FALLBACK = (
+    "What do you need help with right now?"
+)
 _SERIOUS_TASK_FORWARD_FALLBACK = (
-    "Understood. No more meta. Give me the exact task and desired output format, and I will answer directly."
+    "I didn't catch that. Could you rephrase?"
 )
 _DELEGATE_DECISION_RE = re.compile(
     r"\b(you tell me|you decide|you choose|your call|pick for me|choose for me|idk|i dont know|i don't know|not sure)\b",
@@ -399,6 +1919,11 @@ def _finalize_chat_response(
     scratchpad_lock_miss: bool | None = None,
     scratchpad_lock_miss_indices: List[int] | None = None,
 ):
+    selected_task_forward_fallback = (
+        _KAIOKEN_TASK_FORWARD_FALLBACK
+        if bool(getattr(state, "kaioken_enabled", False))
+        else _SERIOUS_TASK_FORWARD_FALLBACK
+    )
     return _chat_finalize_response(
         text=text,
         user_text=user_text,
@@ -415,7 +1940,7 @@ def _finalize_chat_response(
         deterministic_state_solver=deterministic_state_solver,
         scratchpad_lock_miss=scratchpad_lock_miss,
         scratchpad_lock_miss_indices=scratchpad_lock_miss_indices,
-        serious_task_forward_fallback=_SERIOUS_TASK_FORWARD_FALLBACK,
+        serious_task_forward_fallback=selected_task_forward_fallback,
         make_stream_response=lambda t: StreamingResponse(_stream_sse(t), media_type="text/event-stream"),
         make_json_response=lambda t: JSONResponse(_make_openai_response(t)),
         sanitize_scratchpad_grounded_output_fn=_pp_sanitize_scratchpad_grounded_output,
@@ -440,6 +1965,7 @@ def _finalize_chat_response(
         rewrite_response_style_fn=rewrite_response_style,
         classify_sensitive_context_fn=classify_sensitive_context,
         strip_in_body_confidence_source_claims_fn=_strip_in_body_confidence_source_claims,
+        strip_behavior_announcement_sentences_fn=_strip_behavior_announcement_sentences,
         enforce_fun_antiparrot_fn=_enforce_fun_antiparrot,
         strip_irrelevant_proofread_tail_fn=_rr_strip_irrelevant_proofread_tail,
         normalize_agreement_ack_tense_fn=_rr_normalize_agreement_ack_tense,
@@ -488,7 +2014,7 @@ async def _chat_exception_guard(request: Request, call_next):
 
 
 @app.on_event("startup")
-async def _startup_runtime() -> None:
+async def _startup_watchdog() -> None:
     try:
         base = str(cfg_get("vodka.storage_dir", "") or "").strip()
         subdir = str(cfg_get("vodka.subdir", "vodka") or "vodka").strip()
@@ -511,9 +2037,19 @@ async def _startup_runtime() -> None:
             _dbg(f"[DEBUG] startup session-kb janitor stats={stats}")
     except Exception:
         pass
+    try:
+        start_watchdog()
+    except Exception:
+        pass
+
+
 @app.on_event("shutdown")
-async def _shutdown_runtime() -> None:
-    return None
+async def _shutdown_watchdog() -> None:
+    try:
+        stop_watchdog()
+    except Exception:
+        pass
+
 
 @app.get("/healthz")
 def healthz():
@@ -584,14 +2120,16 @@ def _stage_openwebui_title_bypass(*, user_text_raw: str) -> Optional[str]:
 
     def _openwebui_title_for(t: str) -> str:
         t_l = t.lower()
+        if "cliniko" in t_l:
+            return "Cliniko Pipeline"
         if "router" in t_l or "fastapi" in t_l:
             return "Router Debugging"
         return "Chat Summary"
 
     if not _is_openwebui_title_task(user_text_raw):
         return None
-    title_debug = bool(cfg_get("router.debug", False))
-    if title_debug:
+    CLINIKO_DEBUG = cfg_get("cliniko.debug", True)
+    if CLINIKO_DEBUG:
         _dbg("[DEBUG] openwebui title task bypass")
     return json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
 
@@ -879,7 +2417,7 @@ def _stage_pending_trust_choice(
         return True, resp, selector, user_text, user_text_raw, raw_messages
 
     _cmd_norm = (command or "").lstrip()
-    if _cmd_norm.startswith("Â»"):
+    if _cmd_norm.startswith("»"):
         _cmd_norm = ">>" + _cmd_norm[1:]
     if _cmd_norm.lower() == '>>attach all' and original_query:
         state.auto_query_after_attach = original_query
@@ -1173,7 +2711,7 @@ async def v1_chat_completions(req: Request):
     selector, user_text = _split_selector(user_text_raw)
     sensitive_override_once = False
     _update_blocked_nicknames(state, user_text_raw)
-    
+
     trust_handled, trust_resp, selector, user_text, user_text_raw, raw_messages = _stage_pending_trust_choice(
         state=state,
         session_id=session_id,
@@ -1184,6 +2722,13 @@ async def v1_chat_completions(req: Request):
         user_text=user_text,
     )
     if trust_handled:
+        _emit_kaioken_telemetry(
+            state=state,
+            session_id=session_id,
+            user_text=user_text_raw,
+            route_class="control",
+            outcome={"stage": "pending_trust_choice"},
+        )
         return trust_resp
 
     trust_judge_handled, trust_judge_resp, selector, user_text, user_text_raw, raw_messages = _stage_pending_trust_judge_context(
@@ -1196,6 +2741,13 @@ async def v1_chat_completions(req: Request):
         user_text=user_text,
     )
     if trust_judge_handled:
+        _emit_kaioken_telemetry(
+            state=state,
+            session_id=session_id,
+            user_text=user_text_raw,
+            route_class="control",
+            outcome={"stage": "pending_trust_judge_context"},
+        )
         return trust_judge_resp
 
     lock_handled, lock_resp = _stage_pending_lock_confirmation(
@@ -1206,6 +2758,13 @@ async def v1_chat_completions(req: Request):
         user_text_raw=user_text_raw,
     )
     if lock_handled:
+        _emit_kaioken_telemetry(
+            state=state,
+            session_id=session_id,
+            user_text=user_text_raw,
+            route_class="control",
+            outcome={"stage": "pending_lock_confirmation"},
+        )
         return lock_resp
 
     vodka_comment_handled, vodka_comment_resp = await _stage_pending_vodka_comment(
@@ -1214,6 +2773,13 @@ async def v1_chat_completions(req: Request):
         stream=stream,
     )
     if vodka_comment_handled:
+        _emit_kaioken_telemetry(
+            state=state,
+            session_id=session_id,
+            user_text=user_text_raw,
+            route_class="control",
+            outcome={"stage": "pending_vodka_comment"},
+        )
         return vodka_comment_resp
 
     preflight_handled, preflight_resp, selector, user_text, user_text_raw, raw_messages, sensitive_override_once = _handle_preflight(
@@ -1248,9 +2814,21 @@ async def v1_chat_completions(req: Request):
         make_json_response=lambda t: JSONResponse(_make_openai_response(t)),
     )
     if preflight_handled:
+        _emit_kaioken_telemetry(
+            state=state,
+            session_id=session_id,
+            user_text=user_text_raw,
+            route_class="control",
+            outcome={"stage": "preflight"},
+        )
         return preflight_resp
-    
+
     _dbg(f"[DEBUG] selector={selector!r}, user_text={_debug_user_fragment(user_text)}")
+
+    # Update KAIOKEN topic state before any downstream early-return paths
+    # (for example Vodka hard-command short-circuit) so closure/switch signals
+    # in this user turn are persisted deterministically.
+    _update_kaioken_topic_state_preturn(state, user_text)
 
     vodka, raw_messages, _NoOpVodka, vodka_meta = _apply_vodka_runtime(
         state=state,
@@ -1262,45 +2840,71 @@ async def v1_chat_completions(req: Request):
         preset_map=_VODKA_PRESET_MAP,
         debug_fn=_dbg,
     )
-    
+
     # Check if Vodka already answered hard commands (?? list, !! nuke)
     if raw_messages and raw_messages[-1].get("role") == "assistant":
         last_msg_content = raw_messages[-1].get("content", "")
         if isinstance(last_msg_content, str) and (
-            "[vodka]" in last_msg_content.lower() or 
+            "[vodka]" in last_msg_content.lower() or
             "[vodka memory store]" in last_msg_content.lower() or
             "[recall_det]" in last_msg_content.lower()
         ):
+            suppress_recall_fastpath = bool(
+                "[recall_det]" in last_msg_content.lower()
+                and _is_personal_reassurance_or_tips_request(user_text_raw)
+            )
+            if not suppress_recall_fastpath and "[recall_det]" in last_msg_content.lower():
+                blocked_closed_topics = _closed_topics_not_mentioned(state, user_text_raw)
+                if blocked_closed_topics and _mentions_any_topic(last_msg_content, blocked_closed_topics):
+                    suppress_recall_fastpath = True
+            if suppress_recall_fastpath:
+                # Keep explicit reassurance/tips requests in generation lane.
+                # Do not short-circuit into deterministic recall dumps.
+                raw_messages = raw_messages[:-1]
+            else:
             # Arm strict next-turn commentary lane only for deterministic !! add acks.
-            added_ctx = str(vodka_meta.get("_vodka_added_ctx_id", "") or "").strip()
-            if added_ctx:
-                state.pending_vodka_comment_ctx_id = added_ctx
-                state.pending_vodka_comment_text = str(vodka_meta.get("_vodka_added_text", "") or "")
-            elif "[vodka] nuked" in last_msg_content.lower() or "[vodka] forget=" in last_msg_content.lower():
-                state.pending_vodka_comment_ctx_id = ""
-                state.pending_vodka_comment_text = ""
-            # This is a Vodka hard command answer - return it directly
-            out_text = last_msg_content
-            if "[recall_det]" in out_text.lower():
-                draft, recall_query, evidence, is_payload = _parse_recall_det_payload(out_text)
-                semantic_enabled = bool(cfg_get("recall.semantic_layer_enabled", True))
-                if is_payload and semantic_enabled:
-                    out_text = _synthesize_recall_answer(
-                        draft=draft,
-                        query=recall_query,
-                        evidence=evidence,
-                        cfg_get=cfg_get,
-                        call_model_prompt=call_model_prompt,
-                    )
-                else:
-                    out_text = draft
-                if not out_text:
-                    out_text = re.sub(r"^\s*\[recall_det\]\s*", "", last_msg_content, count=1, flags=re.IGNORECASE).strip()
-            if stream:
-                return StreamingResponse(_stream_sse(out_text), media_type="text/event-stream")
-            return JSONResponse(_make_openai_response(out_text))
-    
+                added_ctx = str(vodka_meta.get("_vodka_added_ctx_id", "") or "").strip()
+                if added_ctx:
+                    state.pending_vodka_comment_ctx_id = added_ctx
+                    state.pending_vodka_comment_text = str(vodka_meta.get("_vodka_added_text", "") or "")
+                elif "[vodka] nuked" in last_msg_content.lower() or "[vodka] forget=" in last_msg_content.lower():
+                    state.pending_vodka_comment_ctx_id = ""
+                    state.pending_vodka_comment_text = ""
+                # This is a Vodka hard command answer - return it directly
+                out_text = last_msg_content
+                if "[recall_det]" in out_text.lower():
+                    draft, recall_query, evidence, is_payload = _parse_recall_det_payload(out_text)
+                    semantic_enabled = bool(cfg_get("recall.semantic_layer_enabled", True))
+                    if is_payload and semantic_enabled:
+                        out_text = _synthesize_recall_answer(
+                            draft=draft,
+                            query=recall_query,
+                            evidence=evidence,
+                            cfg_get=cfg_get,
+                            call_model_prompt=call_model_prompt,
+                        )
+                    else:
+                        out_text = draft
+                    if not out_text:
+                        out_text = re.sub(r"^\s*\[recall_det\]\s*", "", last_msg_content, count=1, flags=re.IGNORECASE).strip()
+                _emit_kaioken_telemetry(
+                    state=state,
+                    session_id=session_id,
+                    user_text=user_text_raw,
+                    route_class="control",
+                    outcome={"stage": "vodka_hard_command"},
+                )
+                if stream:
+                    return StreamingResponse(_stream_sse(out_text), media_type="text/event-stream")
+                return JSONResponse(_make_openai_response(out_text))
+
     history_text_only = normalize_history(raw_messages)
+    try:
+        # Hydrate per-request state from normalized history so repeat guards
+        # can compare against the true previous assistant turn across requests.
+        state.last_assistant_text = str(_last_assistant_text(history_text_only) or "")
+    except Exception:
+        pass
 
     if state.profile_enabled:
         try:
@@ -1319,7 +2923,7 @@ async def v1_chat_completions(req: Request):
             pass
     else:
         state.profile_effective_strength = 0.0
-    
+
     vision_text = await _handle_vision_ocr_selector(
         selector=selector,
         raw_messages=raw_messages,
@@ -1327,6 +2931,13 @@ async def v1_chat_completions(req: Request):
         call_model_messages=call_model_messages,
     )
     if vision_text is not None:
+        _emit_kaioken_telemetry(
+            state=state,
+            session_id=session_id,
+            user_text=user_text_raw,
+            route_class="vision",
+            outcome={"stage": "vision_selector"},
+        )
         vision_text = _pp_apply_image_footer(str(vision_text or ""))
         if stream:
             return StreamingResponse(_stream_sse(vision_text), media_type="text/event-stream")
@@ -1353,6 +2964,13 @@ async def v1_chat_completions(req: Request):
         debug_fn=lambda msg: _dbg(f"{msg}, user_text={_debug_user_fragment(user_text)}"),
     )
     if mentats_text is not None:
+        _emit_kaioken_telemetry(
+            state=state,
+            session_id=session_id,
+            user_text=user_text_raw,
+            route_class="control",
+            outcome={"stage": "mentats_selector"},
+        )
         if stream:
             return StreamingResponse(_stream_sse(mentats_text), media_type="text/event-stream")
         return JSONResponse(_make_openai_response(mentats_text))
@@ -1370,7 +2988,20 @@ async def v1_chat_completions(req: Request):
 
     # Deterministic early route for machine-checkable state transitions.
     lock_active_now = bool(state.locked_summ_path)
-    early_state = _maybe_handle_state_solver_early(
+    # Keep explicit distress-advice asks in model generation lane; do not
+    # short-circuit into deterministic state-solver responses.
+    kaioken_mode_now = str(getattr(state, "kaioken_mode", "log_only") or "log_only").strip().lower()
+    skip_state_solver_early = bool(
+        bool(getattr(state, "kaioken_enabled", False))
+        and kaioken_mode_now in {"coerce", "phase1"}
+        and _user_explicitly_requests_advice(user_text)
+        and (
+            bool(set(getattr(state, "kaioken_distress_topics", set()) or set()))
+            or _KAIOKEN_DISTRESS_FALLBACK_RE.search(str(user_text or ""))
+            or _KAIOKEN_DISTRESS_FALLBACK_RE.search(str(getattr(state, "last_user_text", "") or ""))
+        )
+    )
+    early_state = None if skip_state_solver_early else _maybe_handle_state_solver_early(
         state=state,
         user_text=user_text,
         selector=selector,
@@ -1400,6 +3031,13 @@ async def v1_chat_completions(req: Request):
         debug_fn=lambda msg: _dbg(msg.replace(user_text, _debug_user_fragment(user_text))),
     )
     if early_state is not None:
+        _emit_kaioken_telemetry(
+            state=state,
+            session_id=session_id,
+            user_text=user_text_raw,
+            route_class="deterministic",
+            outcome={"stage": "state_solver_early"},
+        )
         return early_state
 
     # Default: serious reasoning
@@ -1414,6 +3052,59 @@ async def v1_chat_completions(req: Request):
         kb_paths=KB_PATHS,
         vault_kb_name=VAULT_KB_NAME,
     )
+    # Reset per-turn retrieval overrides before optional static/wiki grounding.
+    state.turn_footer_source_override = ""
+    state.turn_footer_confidence_override = ""
+    state.turn_retrieval_track = ""
+    state.turn_local_knowledge_line = ""
+    cheatsheets_constraints_block = ""
+    cheatsheets_deterministic_answer = ""
+    # Cheatsheets retrieval (Track A) + optional wiki recovery (Track B).
+    # Track B is intentionally working-only by design; do not harmonize silently.
+    try:
+        if _resolve_cheatsheets_turn is not None:
+            macro = "working"
+            subsignals: set[str] = set()
+            try:
+                if _kaioken_classify_register is not None:
+                    cls_now = _kaioken_classify_register(str(user_text or ""))
+                    macro = str(getattr(cls_now, "macro", "working") or "working").strip().lower()
+                    subsignals = {
+                        str(s).strip().lower()
+                        for s in list(getattr(cls_now, "subsignals", []) or [])
+                        if str(s or "").strip()
+                    }
+            except Exception:
+                macro = "working"
+                subsignals = set()
+            cheat = _resolve_cheatsheets_turn(
+                user_text=str(user_text or ""),
+                macro=macro,
+                subsignals=subsignals,
+                cheatsheets_dir=_CHEATSHEETS_DIR,
+                has_existing_facts=bool((facts_block or "").strip()),
+                prior_distress_carry=bool(
+                    bool(getattr(state, "kaioken_short_fallback_distress_lane", False))
+                    or bool(set(getattr(state, "kaioken_distress_topics", set()) or set()))
+                ),
+                prior_user_text=str(getattr(state, "last_user_text", "") or ""),
+                track_b_enabled=bool(cfg_get("cheatsheets.track_b.enabled", False)),
+                wiki_lookup_fn=_sidecar_wiki_query,
+            )
+            state.turn_footer_source_override = str(cheat.footer_source or "").strip()
+            state.turn_footer_confidence_override = str(cheat.footer_confidence or "").strip().lower()
+            state.turn_retrieval_track = str(cheat.track or "").strip()
+            state.turn_local_knowledge_line = str(cheat.local_knowledge_line or "").strip()
+            cheatsheets_constraints_block = str(cheat.constraints_block or "").strip()
+            cheatsheets_deterministic_answer = str(cheat.deterministic_answer or "").strip()
+            if cheat.facts_block:
+                facts_block = (
+                    f"{facts_block}\n\n{cheat.facts_block}".strip()
+                    if facts_block
+                    else str(cheat.facts_block).strip()
+                )
+    except Exception:
+        pass
     lock_active = lock_active_now
     scratchpad_quotes: List[str] = []
     scratchpad_grounded = False
@@ -1430,6 +3121,12 @@ async def v1_chat_completions(req: Request):
         lock_constraints = _pp_lock_constraints_block(state.locked_summ_file)
         constraints_block = (
             f"{lock_constraints}\n\n{constraints_block}".strip() if constraints_block else lock_constraints
+        )
+    if cheatsheets_constraints_block:
+        constraints_block = (
+            f"{constraints_block}\n\n{cheatsheets_constraints_block}".strip()
+            if constraints_block
+            else cheatsheets_constraints_block
         )
     scratchpad_exhaustive = False
     scratchpad_locked_indices = set(
@@ -1517,6 +3214,13 @@ async def v1_chat_completions(req: Request):
                 text = (
                     "[Scratch]\n\nNo scratchpad references are available for the current selection."
                 )
+            _emit_kaioken_telemetry(
+                state=state,
+                session_id=session_id,
+                user_text=user_text_raw,
+                route_class="sidecar",
+                outcome={"stage": "scratch_citation_reference_mode"},
+            )
             text = _pp_append_scratchpad_provenance(text)
             if stream:
                 return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
@@ -1539,6 +3243,13 @@ async def v1_chat_completions(req: Request):
             )
             text = dump_text.strip() if dump_text else "[scratchpad] empty"
             text = f"[Scratch]\n\n{text}".strip()
+            _emit_kaioken_telemetry(
+                state=state,
+                session_id=session_id,
+                user_text=user_text_raw,
+                route_class="sidecar",
+                outcome={"stage": "scratch_exhaustive_dump"},
+            )
             text = _pp_append_scratchpad_provenance(text)
             if stream:
                 return StreamingResponse(_stream_sse(text), media_type="text/event-stream")
@@ -1567,6 +3278,62 @@ async def v1_chat_completions(req: Request):
     state_solver_reason = str(solver_state.get("state_solver_reason") or "")
     state_solver_frame = dict(solver_state.get("state_solver_frame") or {})
     user_q_norm = str(solver_state.get("user_q_norm") or "")
+
+    # KAIOKEN phase1 soft guidance is model-chat only and should apply
+    # consistently to both serious and fun/fun-rewrite generation paths.
+    kaioken_hint = _build_kaioken_soft_constraints(state=state, user_text=user_text)
+    if kaioken_hint:
+        constraints_block = (
+            f"{constraints_block}\n\n{kaioken_hint}".strip()
+            if constraints_block
+            else kaioken_hint
+        )
+    kaioken_literal_followup = bool(_is_literal_followup_turn(state=state, user_text=user_text))
+    kaioken_guard_state: Dict[str, Any] = {"applied": False}
+
+    # Deterministic strict-lookup lane: for fully grounded cheatsheet
+    # "who/what is" style queries, return the exact stored definition verbatim.
+    # This bypasses thinker paraphrase while preserving normal footer pipeline.
+    if cheatsheets_deterministic_answer and (not lock_active):
+        _emit_kaioken_telemetry(
+            state=state,
+            session_id=session_id,
+            user_text=user_text_raw,
+            route_class="deterministic",
+            outcome={"stage": "cheatsheets_strict_lookup"},
+        )
+        return _finalize_chat_response(
+            text=cheatsheets_deterministic_answer,
+            user_text=user_text,
+            state=state,
+            facts_block=facts_block,
+            lock_active=lock_active,
+            scratchpad_grounded=scratchpad_grounded,
+            scratchpad_quotes=scratchpad_quotes,
+            has_facts_block=bool((facts_block or "").strip()),
+            stream=stream,
+            mode="serious",
+            sensitive_override_once=sensitive_override_once,
+            scratchpad_lock_miss=scratchpad_lock_miss,
+            scratchpad_lock_miss_indices=scratchpad_lock_miss_indices,
+        )
+
+    def _kaioken_postguard(text: str) -> str:
+        pre = str(text or "")
+        suppressed = _apply_closed_topic_suppression(
+            state=state,
+            user_text=user_text,
+            text=pre,
+        )
+        rewritten = _maybe_apply_kaioken_output_guard(
+            state=state,
+            user_text=user_text,
+            text=suppressed,
+            call_model_fn=call_model_prompt,
+        )
+        if str(rewritten or "") != pre:
+            kaioken_guard_state["applied"] = True
+        return rewritten
 
     mode_resp = await _maybe_handle_fun_fr_raw(
         fun_mode=fun_mode,
@@ -1603,8 +3370,25 @@ async def v1_chat_completions(req: Request):
                 **kw,
             )
         ),
+        kaioken_postguard_fn=(
+            _kaioken_postguard
+        ),
     )
     if mode_resp is not None:
+        _emit_kaioken_telemetry(
+            state=state,
+            session_id=session_id,
+            user_text=user_text_raw,
+            route_class="model_chat",
+            outcome={
+                "stage": "mode_execution",
+                "mode": str(fun_mode or "serious"),
+                "kaioken_hint_applied": bool(kaioken_hint),
+                "kaioken_guard_applied": bool(kaioken_guard_state.get("applied", False)),
+                "kaioken_literal_followup": bool(kaioken_literal_followup),
+                "kaioken_mode": str(getattr(state, "kaioken_mode", "log_only") or "log_only"),
+            },
+        )
         if state_solver_used and state_solver_answer:
             state.deterministic_last_family = str(query_family or "state_transition")
             state.deterministic_last_reason = str(state_solver_reason or "")
@@ -1616,6 +3400,13 @@ async def v1_chat_completions(req: Request):
 
     # Normal serious
     if state_solver_used and state_solver_answer:
+        _emit_kaioken_telemetry(
+            state=state,
+            session_id=session_id,
+            user_text=user_text_raw,
+            route_class="deterministic",
+            outcome={"stage": "state_solver_resolved"},
+        )
         state.deterministic_last_family = str(query_family or "state_transition")
         state.deterministic_last_reason = str(state_solver_reason or "")
         state.deterministic_last_answer = str(state_solver_answer or "")
@@ -1652,42 +3443,122 @@ async def v1_chat_completions(req: Request):
     # is a correction (e.g., "I meant X not Y"), bind correction to immediately prior
     # model answer unless user explicitly asks to re-engage deterministic lane.
     try:
-        correction_resp = _maybe_handle_correction_bind(
-            state=state,
+        prior_answer_for_struct = str(getattr(state, "last_assistant_text", "") or "").strip() or _last_assistant_text(history_text_only)
+        recent_nouns_for_struct = [
+            str(x or "").strip().lower()
+            for x in list(getattr(state, "kaioken_recent_user_nouns", []) or [])
+            if str(x or "").strip()
+        ]
+        recent_thread_tokens_for_struct: list[str] = []
+        try:
+            threads = _get_kaioken_threads(state)
+            active_tid = str(getattr(state, "kaioken_active_thread_id", "") or "").strip()
+            active_meta = threads.get(active_tid) if active_tid else None
+            if isinstance(active_meta, dict):
+                recent_thread_tokens_for_struct = sorted(_thread_tokens(active_meta))
+        except Exception:
+            recent_thread_tokens_for_struct = []
+
+        structural_corr = _evaluate_structural_correction_intent(
             user_text=user_text,
-            history_text_only=history_text_only,
-            query_family=query_family,
-            lock_active=lock_active,
-            scratchpad_grounded=scratchpad_grounded,
-            scratchpad_quotes=scratchpad_quotes,
-            facts_block=facts_block,
-            stream=stream,
-            sensitive_override_once=sensitive_override_once,
-            cfg_get=cfg_get,
-            call_model_messages=call_model_messages,
-            is_correction_intent_query=_is_correction_intent_query,
-            is_explicit_reengage_query=_is_explicit_reengage_query,
-            extract_numeric_correction=_extract_numeric_correction,
-            resolve_old_from_prior_answer=_resolve_old_from_prior_answer,
-            fallback_contextual_correction=_fallback_contextual_correction,
-            strip_got_it_prefix=_strip_got_it_prefix,
-            last_assistant_text=_last_assistant_text,
-            last_user_text_before=_last_user_text_before,
-            last_user_text=_last_user_text,
-            last_non_correction_user_text=_last_non_correction_user_text,
-            to_km=_to_km,
-            maybe_apply_consistency_verifier=(
-                lambda **kw: _maybe_apply_consistency_verifier(
-                    **kw,
-                    call_model_messages_fn=call_model_messages,
-                )
-            ),
-            finalize_chat_response=_finalize_chat_response,
+            prior_assistant_text=prior_answer_for_struct,
+            recent_user_nouns=recent_nouns_for_struct,
+            recent_thread_tokens=recent_thread_tokens_for_struct,
         )
-        if correction_resp is not None:
-            return correction_resp
-        correction_bind = _is_correction_intent_query(user_text) and not _is_explicit_reengage_query(user_text)
+        correction_bind_structural = bool(structural_corr.get("is_structural", False))
+        # Primary path: structural intent from deterministic state/turn shape.
+        # Regex path remains as fallback debt only.
+        correction_bind_regex_fallback = bool(
+            _is_correction_intent_query(user_text) and not _is_explicit_reengage_query(user_text)
+        )
+        correction_bind = bool(correction_bind_structural or correction_bind_regex_fallback)
+        correction_is_strong = False
+        skip_correction_bind = False
         if correction_bind:
+            low = str(user_text or "").lower()
+            new_v, unit_v, _old_v = _extract_numeric_correction(user_text)
+            has_numeric_rest = bool(new_v and unit_v)
+            has_i_meant = bool(
+                re.search(r"\b(i meant|no i meant|sorry i meant)\b", low, flags=re.IGNORECASE)
+            )
+            has_contradiction_target = bool(
+                re.search(
+                    r"\bnot\b[^\n]{0,96}\b(?:but|rather than|instead of)\b|\b(?:rather than|instead of)\b",
+                    low,
+                    flags=re.IGNORECASE,
+                )
+            )
+            has_explicit_rest = bool(has_i_meant and has_contradiction_target)
+            has_not_but_rest = bool(re.search(r"\bnot\b[^\n]{0,64}\bbut\b", low, flags=re.IGNORECASE))
+            lexical_strong = bool(has_numeric_rest or has_explicit_rest or has_not_but_rest)
+            correction_is_strong = bool(correction_bind_structural or lexical_strong)
+            if not correction_is_strong:
+                macro_personal = False
+                try:
+                    if _kaioken_classify_register is not None:
+                        cls_cur = _kaioken_classify_register(str(user_text or ""))
+                        macro_personal = str(getattr(cls_cur, "macro", "") or "").strip().lower() == "personal"
+                except Exception:
+                    macro_personal = False
+                prior_distress_carry = bool(
+                    bool(getattr(state, "kaioken_short_fallback_distress_lane", False))
+                    or bool(set(getattr(state, "kaioken_distress_topics", set()) or set()))
+                )
+                skip_correction_bind = bool(macro_personal or prior_distress_carry)
+        if correction_bind and not skip_correction_bind:
+            correction_resp = _maybe_handle_correction_bind(
+                state=state,
+                user_text=user_text,
+                history_text_only=history_text_only,
+                query_family=query_family,
+                lock_active=lock_active,
+                scratchpad_grounded=scratchpad_grounded,
+                scratchpad_quotes=scratchpad_quotes,
+                facts_block=facts_block,
+                stream=stream,
+                sensitive_override_once=sensitive_override_once,
+                cfg_get=cfg_get,
+                call_model_messages=call_model_messages,
+                is_correction_intent_query=_is_correction_intent_query,
+                is_explicit_reengage_query=_is_explicit_reengage_query,
+                extract_numeric_correction=_extract_numeric_correction,
+                resolve_old_from_prior_answer=_resolve_old_from_prior_answer,
+                fallback_contextual_correction=_fallback_contextual_correction,
+                strip_got_it_prefix=_strip_got_it_prefix,
+                last_assistant_text=_last_assistant_text,
+                last_user_text_before=_last_user_text_before,
+                last_user_text=_last_user_text,
+                last_non_correction_user_text=_last_non_correction_user_text,
+                to_km=_to_km,
+                maybe_apply_consistency_verifier=(
+                    lambda **kw: _maybe_apply_consistency_verifier(
+                        **kw,
+                        call_model_messages_fn=call_model_messages,
+                    )
+                ),
+                finalize_chat_response=_finalize_chat_response,
+                correction_bind_active=correction_bind,
+            )
+            if correction_resp is not None:
+                _emit_kaioken_telemetry(
+                    state=state,
+                    session_id=session_id,
+                    user_text=user_text_raw,
+                    route_class="model_chat",
+                    outcome={
+                        "stage": "correction_bind",
+                        "correction_signal_strength": (
+                            "structural"
+                            if correction_bind_structural
+                            else ("strong" if correction_is_strong else "ambiguous")
+                        ),
+                        "correction_structural_prior_claim": bool(structural_corr.get("prior_claim_exists", False)),
+                        "correction_structural_references_prior": bool(structural_corr.get("references_prior", False)),
+                        "correction_structural_replacement_payload": bool(structural_corr.get("has_replacement_payload", False)),
+                    },
+                )
+                return correction_resp
+        if correction_bind and not skip_correction_bind:
             correction_hint = (
                 "Correction-binding rule:\n"
                 "- Treat this user turn as a correction to your immediately previous answer.\n"
@@ -1724,6 +3595,19 @@ async def v1_chat_completions(req: Request):
         prior_user_text=str(getattr(state, "last_user_text", "") or "").strip(),
         call_model_messages_fn=call_model_messages,
     )
+    pre_guard_text = text
+    text = _apply_closed_topic_suppression(
+        state=state,
+        user_text=user_text,
+        text=text,
+    )
+    text = _maybe_apply_kaioken_output_guard(
+        state=state,
+        user_text=user_text,
+        text=text,
+        call_model_fn=call_model_prompt,
+    )
+    kaioken_guard_applied = str(pre_guard_text or "") != str(text or "")
     # Serious/model answer path usually supersedes deterministic follow-up context.
     # Exception: preserve an explicitly disengaged decision lane frame so users can
     # re-engage deterministically with an explicit cue in later turns.
@@ -1743,6 +3627,20 @@ async def v1_chat_completions(req: Request):
         state.deterministic_last_answer = ""
         state.deterministic_last_frame = {}
         state.deterministic_last_query_norm = ""
+
+    _emit_kaioken_telemetry(
+        state=state,
+        session_id=session_id,
+        user_text=user_text_raw,
+        route_class="model_chat",
+        outcome={
+            "stage": "serious",
+            "kaioken_hint_applied": bool(kaioken_hint),
+            "kaioken_guard_applied": bool(kaioken_guard_applied),
+            "kaioken_literal_followup": bool(kaioken_literal_followup),
+            "kaioken_mode": str(getattr(state, "kaioken_mode", "log_only") or "log_only"),
+        },
+    )
 
     return _finalize_chat_response(
         text=text,
@@ -1768,6 +3666,3 @@ if __name__ == "__main__":
     host = str(cfg_get("server.host", "0.0.0.0"))
     port = int(cfg_get("server.port", 9000))
     uvicorn.run("router_fastapi:app", host=host, port=port, reload=False)
-
-
-

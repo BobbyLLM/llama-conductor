@@ -77,9 +77,11 @@ For install details, see [README Quickstart](README.md#quickstart-first-time-rec
     - [Fun (##fun or >>fun):](#fun-fun-or-fun)
     - [Fun Rewrite (>>fr):](#fun-rewrite-fr)
   - [What do these commands *actually* do?](#what-do-these-commands-actually-do)
+    - [Kaioken (`>>kaioken on|off|status`)](#kaioken-router)
     - [Trust (`>>trust <query>`)](#trust-router)
     - [Judge (`>>judge ...`)](#judge-router)
     - [Sidecars (`>>wiki`/`>>define`/`>>exchange`/`>>weather`)](#sidecars)
+  - [Cheatsheets (JSONL grounding)](#cheatsheets-jsonl-grounding)
   - [Deep Example](#deep-example)
   - [Common workflows](#common-workflows)
     - [Adding new knowledge:](#adding-new-knowledge)
@@ -711,6 +713,37 @@ It does **not** mean:
 
 Use `>>list_kb` to see what exists, then `>>attach <your kb name>`.
 
+<a id="kaioken-router"></a>
+#### `>>kaioken on|off|status` - what does it do?
+
+KAIOKEN is a real-time turn classifier that runs on every human message before generation. It reads the turn, labels it, and injects behavioural instructions into the thinker context accordingly. Those instructions are actual constraints - not metadata, not hints.
+
+KAIOKEN is step 1 of a longer project, called "Claude in a Can".  The goal is to replicate the behavioural sophistication of a frontier model - specifically the kind of turn-aware, context-sensitive response shaping that Claude.ai does implicitly - on hardware that can't run a frontier model. 
+
+Eg: A Qwen3-4B shouldn't behave like a Qwen3-4B. It should behave like a small model with a working prefrontal cortex bolted on externally. 
+
+KAIOKEN is the start of that cortex. It externalises what large models do internally via scale, and implements it as explicit infrastructure. No weight updates. No fine-tuning. Structural constraint and classification, applied at inference time. Bear in mind, this is step 1 of a multistage roadmap. See blog for current roadmap [Claude-in-a-can](https://bobbyllm.github.io/llama-conductor/blog/claude-in-a-can-1/) 
+
+
+**What it classifies:**
+
+- Macro: working / casual / personal
+- Subsignals: playful / friction / distress_hint / vulnerable_under_humour / kb_lookup_candidate
+
+What the labels do: Different labels activate different behavioural contracts. A distress_hint turn suppresses cheatsheet injection and unlocks a different response register. A working turn keeps the thinker in task mode. A vulnerable_under_humour turn means someone is joking about something that isn't funny - the system knows not to play along.
+
+What it does not do:
+
+- Does not replace retrieval or grounding lanes (>>scratch, >>lock, Vault, Cheatsheets, sidecars)
+- Does not make unknown facts true
+- Does not own every route — deterministic and sidecar paths have their own contracts
+
+Good mental model:
+
+- KAIOKEN = behavioural shaping based on turn intent
+- Retrieval lanes = knowledge grounding
+- These are separate systems. Do not conflate them.
+
 <a id="trust-router"></a>
 #### `>>trust <query>` - what does it do?
 
@@ -862,6 +895,50 @@ Scratch lock/unlock quick controls:
   - `lock <n>` / `lock [n,m]` -> scratch lock
   - `unlock <n>` / `unlock [n,m]` -> scratch unlock
 - `unlock` (without index) remains the KB unlock command (`>>unlock`).
+
+---
+
+### Cheatsheets (JSONL grounding)
+
+Cheatsheets are deterministic local fact records loaded from `llama_conductor/cheatsheets/*.jsonl`.
+
+Each non-empty line in a `.jsonl` file is one JSON object.
+Blank lines are allowed for readability.
+
+Required keys per line:
+
+```json
+{
+  "term": "Nibbler",
+  "category": "futurama",
+  "definition": "Futurama character. ...",
+  "source": "static",
+  "confidence": "high",
+  "tags": ["futurama", "pop_culture", "gen_x"]
+}
+```
+
+Field notes:
+
+- `term`: the lookup key users will ask for.
+- `category`: lowercase topic bucket (for indexing/discovery).
+- `definition`: the grounded fact text to return.
+- `source`: usually `"static"` for local curated entries.
+- `confidence`: one of `low|medium|high|top|unverified`.
+- `tags`: extra match signals and grouping labels.
+
+Fast path to add entries:
+
+1. Copy an existing `.jsonl` file in `llama_conductor/cheatsheets/`.
+2. Duplicate a line/object that looks close.
+3. Edit `term`, `category`, `definition`, and tags.
+4. Keep one valid JSON object per line.
+
+Behavior:
+
+- Strict lookup queries (`who/what is ...`) can return deterministic `term: definition`.
+- Broader/open-ended asks may synthesize; footer should downgrade to `Source: Mixed` when not fully grounded.
+- Distress lanes do not inject cheatsheets unless the user is explicitly asking a question.
 
 ---
 
@@ -1051,6 +1128,7 @@ Router uses **Qdrant** (https://github.com/qdrant/qdrant) for vector storage and
 
 **Setup:**
 ```bash
+<a id="docker-recommended"></a>
 ## Docker (recommended)
 docker pull qdrant/qdrant
 docker run -p 6333:6333 qdrant/qdrant

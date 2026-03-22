@@ -6,16 +6,23 @@ __pycache__/
 # Local runtime / personal state
 total_recall/
 *.log
-TEST_ARTIFACTS_VALIDATION/
 
 # Secrets
 .env
 *.key
 *.pem
+.webui*
 
 # OS junk
 Thumbs.db
 .DS_Store
+
+# Root dot-directories (local tooling/state only; not router runtime artifacts)
+/.git/
+/.githooks/
+/.ruff_cache/
+/.sandbox_profile/
+/.vscode/
 
 *.egg-info/
 dist/
@@ -23,35 +30,25 @@ build/
 __pycache__/
 *.pyc
 
-# Personal workspace files/folders
-/WORK-DONE-SO-FAR.md
-/.vscode/
-/ChatGPT/
-
-# Local/private project content
-/llama_conductor/exercise_libraries/
-/llama_conductor/test tools/
-/llama_conductor/__pycache__/
-/docs/
-/.githooks/
-/tests/
-
-# Cliniko-related local/private artifacts
-*cliniko*
-*CLINIKO*
+# Local archive bucket (intentionally not tracked)
+docs/stale/
 docs/PUSH-GUARD-FAQ.md
-
-# Allow pre-publication evidence bundle files even if names match global patterns
-!prepub/
-!prepub/**
+docs/local-only/
 
 # Never track docs truth maps (any location)
 DOCS-TRUTH-MAP.md
 **/DOCS-TRUTH-MAP.md
 
-# Keep local docs index/ops notes off remote
-docs/INDEX.md
-docs/operations/
+# Public-refactor staging hygiene
+PUBLIC REFACTORS/ZZZ_STALE_*/
+PUBLIC REFACTORS/**/__pycache__/
+PUBLIC REFACTORS/**/*.pyc
+
+# Vault patch-note hygiene
+PATCH.md
+PATCH-*.md
+**/PATCH.md
+**/PATCH-*.md
 
 # Local static publish artifacts
 .codeberg_site/

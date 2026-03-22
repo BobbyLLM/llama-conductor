@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional, Set
 from .interaction_profile import InteractionProfile, new_profile
 from .config import cfg_get
 
+KAIOKEN_CLOSED_THREAD_TTL_TURNS = 10
+
 
 @dataclass
 class SessionState:
@@ -83,6 +85,31 @@ class SessionState:
     # Optional 1-based indices scoped to current scratchpad list order.
     # Empty means unlocked (all eligible records).
     scratchpad_locked_indices: Set[int] = field(default_factory=set)
+
+    # KAIOKEN telemetry state (phase 0 sensor-only).
+    kaioken_turn_counter: int = 0
+    kaioken_enabled: bool = field(default_factory=lambda: bool(cfg_get("kaioken.enabled", True)))
+    kaioken_mode: str = field(default_factory=lambda: str(cfg_get("kaioken.mode", "log_only") or "log_only"))
+    # KAIOKEN topic lifecycle (closed/open/active thread hints).
+    kaioken_active_topic: str = ""
+    kaioken_open_topics: List[str] = field(default_factory=list)
+    kaioken_closed_topics: Set[str] = field(default_factory=set)
+    kaioken_threads: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    kaioken_active_thread_id: str = ""
+    kaioken_thread_seq: int = 0
+    kaioken_last_topic_switch_turn: int = 0
+    kaioken_last_resolution_turn: int = -9999
+    # Topics disclosed in personal/distress turns (structural memory, not lexicon).
+    kaioken_distress_topics: Set[str] = field(default_factory=set)
+    # Guard-local recent assistant bodies for short-window repeat suppression.
+    kaioken_recent_assistant_bodies: List[str] = field(default_factory=list)
+    # Recent raw user turns for structural narrative-ownership checks.
+    kaioken_recent_user_turns: List[str] = field(default_factory=list)
+
+    # Per-turn provenance overrides (set by retrieval lanes, consumed in finalize).
+    turn_footer_source_override: str = ""
+    turn_footer_confidence_override: str = ""
+    turn_retrieval_track: str = ""
 
 
 # Global session storage

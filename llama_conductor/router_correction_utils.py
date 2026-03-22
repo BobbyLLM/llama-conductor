@@ -5,9 +5,12 @@ from typing import Any, Dict, List, Optional
 
 
 _CORRECTION_INTENT_RE = re.compile(
-    r"\b(i mean|i meant|no i meant|sorry i meant|rather than|not)\b",
+    r"\b(i mean|i meant|no i meant|sorry i meant|rather than)\b",
     re.IGNORECASE,
 )
+# NOTE(debt): lexical fallback only.
+# Primary correction routing should use `evaluate_structural_correction_intent`
+# so we rely on deterministic turn/state shape, not token whack-a-mole.
 _EXPLICIT_REENGAGE_RE = re.compile(
     r"\b(back to|same decision|that decision|re-?engage|option\s*[123])\b",
     re.IGNORECASE,
@@ -29,9 +32,111 @@ _NUM_UNIT_RE = re.compile(
     re.IGNORECASE,
 )
 
+_CORRECTION_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "any",
+    "are",
+    "as",
+    "at",
+    "be",
+    "but",
+    "by",
+    "for",
+    "from",
+    "have",
+    "i",
+    "if",
+    "in",
+    "is",
+    "it",
+    "just",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "was",
+    "we",
+    "with",
+    "you",
+    "your",
+}
+_CORRECTION_STRUCTURAL_REPLACEMENT_RE = re.compile(
+    r"\b("
+    r"i meant(?: to say)?|no i meant|sorry i meant|"
+    r"not\s+.+\s+but\s+.+|rather than|instead of|"
+    r"actually|correction|to clarify"
+    r")\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9\-']{1,}", re.IGNORECASE)
+
 
 def is_correction_intent_query(text: str) -> bool:
     return bool(_CORRECTION_INTENT_RE.search(str(text or "")))
+
+
+def _token_set(text: str) -> set[str]:
+    out: set[str] = set()
+    for m in _TOKEN_RE.finditer(str(text or "").lower()):
+        tok = str(m.group(0) or "").strip("'-")
+        if not tok or tok in _CORRECTION_STOPWORDS:
+            continue
+        out.add(tok)
+    return out
+
+
+def evaluate_structural_correction_intent(
+    *,
+    user_text: str,
+    prior_assistant_text: str,
+    recent_user_nouns: Optional[List[str]] = None,
+    recent_thread_tokens: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Deterministic correction-intent check using recent state only.
+
+    Shape required:
+    1) prior claim exists
+    2) user references prior claim surface
+    3) user provides replacement payload (new content/contrast)
+    """
+    user = str(user_text or "").strip()
+    prior = str(prior_assistant_text or "").strip()
+    user_toks = _token_set(user)
+    prior_toks = _token_set(prior)
+    topic_surface = {
+        str(x or "").strip().lower()
+        for x in (list(recent_user_nouns or []) + list(recent_thread_tokens or []))
+        if str(x or "").strip()
+    }
+
+    prior_claim_exists = bool(prior and len(prior_toks) >= 4)
+    overlap = user_toks & prior_toks
+    topic_overlap = user_toks & topic_surface if topic_surface else set()
+    references_prior = bool(overlap) and bool(topic_overlap or len(overlap) >= 2)
+
+    novel = user_toks - prior_toks
+    has_novel_payload = len(novel) >= 2
+    has_numeric_delta = bool(re.search(r"\d", user)) and not bool(re.search(r"\d", prior))
+    has_restatement_operator = bool(_CORRECTION_STRUCTURAL_REPLACEMENT_RE.search(user))
+    has_replacement_payload = bool(has_novel_payload or has_numeric_delta or has_restatement_operator)
+
+    is_structural = bool(prior_claim_exists and references_prior and has_replacement_payload)
+    return {
+        "is_structural": is_structural,
+        "prior_claim_exists": prior_claim_exists,
+        "references_prior": references_prior,
+        "has_replacement_payload": has_replacement_payload,
+        "overlap_count": len(overlap),
+        "topic_overlap_count": len(topic_overlap),
+        "novel_count": len(novel),
+    }
 
 
 def is_explicit_reengage_query(text: str) -> bool:
@@ -176,4 +281,3 @@ def last_non_correction_user_text(history: List[Dict[str, Any]], current_user_te
         if not is_correction_intent_query(t):
             return t
     return ""
-

@@ -35,6 +35,7 @@ def maybe_handle_correction_bind(
     to_km: Callable[[str, str], Optional[float]],
     maybe_apply_consistency_verifier: Callable[..., str],
     finalize_chat_response: Callable[..., Any],
+    correction_bind_active: Optional[bool] = None,
 ) -> Optional[Any]:
     """Try correction-bind flow and return finalized router response when handled."""
     try:
@@ -44,8 +45,13 @@ def maybe_handle_correction_bind(
             and str(fr.get("kind") or "") == "option_feasibility"
             and bool(fr.get("decision_lane_disengaged", False))
         )
-        correction_bind = is_correction_intent_query(user_text) and not is_explicit_reengage_query(user_text)
+        if correction_bind_active is None:
+            correction_bind = is_correction_intent_query(user_text) and not is_explicit_reengage_query(user_text)
+        else:
+            correction_bind = bool(correction_bind_active) and not is_explicit_reengage_query(user_text)
         if not correction_bind:
+            return None
+        if lane_disengaged:
             return None
 
         prev_user_turn = str(getattr(state, "last_user_text", "") or "").strip()

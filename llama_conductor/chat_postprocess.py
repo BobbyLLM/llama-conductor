@@ -592,6 +592,12 @@ def apply_deterministic_footer(
     if not normalize_sources_footer_fn:
         return text
     try:
+        source_override = str(getattr(state, "turn_footer_source_override", "") or "").strip()
+        confidence_override = str(getattr(state, "turn_footer_confidence_override", "") or "").strip().lower()
+        # Scratch grounding and lock lanes take precedence over retrieval-only overrides.
+        if scratchpad_grounded or lock_active:
+            source_override = ""
+            confidence_override = ""
         if deterministic_state_solver:
             t = (text or "").strip()
             if t:
@@ -606,14 +612,21 @@ def apply_deterministic_footer(
             else:
                 t = "Source: Contextual"
             text = t
-        return normalize_sources_footer_fn(
+        out = normalize_sources_footer_fn(
             text=text,
             lock_active=lock_active,
             scratchpad_grounded=scratchpad_grounded,
             has_facts_block=has_facts_block,
             rag_hits=int(getattr(state, "rag_last_hits", 0) or 0),
             locked_fact_lines=int(getattr(state, "locked_last_fact_lines", 0) or 0),
+            source_override=source_override,
+            confidence_override=confidence_override,
         )
+        setattr(state, "turn_footer_source_override", "")
+        setattr(state, "turn_footer_confidence_override", "")
+        setattr(state, "turn_retrieval_track", "")
+        setattr(state, "turn_local_knowledge_line", "")
+        return out
     except Exception:
         return text
 

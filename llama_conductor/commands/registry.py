@@ -1,4 +1,4 @@
-﻿"""Declarative command registry and canonical command resolution.
+"""Declarative command registry and canonical command resolution.
 
 This module keeps command identity and contract metadata in one place:
 - aliases
@@ -32,8 +32,10 @@ def command_registry() -> Dict[str, CommandMeta]:
         CommandMeta("preset", ("preset",), ("none",), ("vodka_preset_override",), ">>preset show|set <fast|balanced|max-recall>|reset"),
         CommandMeta("memory", ("memory",), ("vodka available",), ("none",), ">>memory status"),
         CommandMeta("profile", ("profile",), ("none",), ("interaction_profile/session profile state",), ">>profile show|set|reset|on|off"),
+        CommandMeta("kaioken", ("kaioken",), ("none",), ("session kaioken runtime controls",), ">>kaioken status|on|off|log"),
         CommandMeta("scratchpad", ("scratchpad", "scratch"), ("scratchpad sidecar available",), ("scratchpad attach/capture/delete + mode/lock state",), ">>scratch | >>scratch strict|free|lock|unlock | >>scratchpad <subcommand>"),
         CommandMeta("trust", ("trust",), ("trust pipeline available",), ("pending trust recommendation state",), ">>trust <query>"),
+        CommandMeta("cliniko", ("cliniko",), ("cliniko module available",), ("cliniko staged state",), ">>cliniko <subcommand>"),
         CommandMeta("attach", ("attach", "a"), ("kb known",), ("attached_kbs",), ">>attach <kb|all>"),
         CommandMeta("detach", ("detach", "d"), ("kb attached|all",), ("attached_kbs/lock/profile reset on detach all",), ">>detach <kb|all>"),
         CommandMeta("list_files", ("list_files", "list files"), ("filesystem KB attached",), ("none",), ">>list_files"),
@@ -98,4 +100,3 @@ def resolve_command_key(low: str, parts: List[str]) -> str:
 
     first = (parts[0] or "").strip().lower().replace("-", "_")
     return _alias_to_key().get(first, first)
-

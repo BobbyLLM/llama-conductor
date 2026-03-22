@@ -1,4 +1,4 @@
-﻿# router_config.yaml
+# router_config.yaml
 # version 1.6.0
 
 # Backend upstream configuration.
@@ -14,9 +14,9 @@ backend:
   llama_cpp:
     # Personal/local launcher defaults (used by launch_stack.py).
     # CLI args can override any of these at runtime.
-    exe_path: "./llama-server.exe"
-    models_dir: "./models"
-    models_preset_path: "./models/llama-router-models.ini"
+    exe_path: "C:/Users/bobbyp330/Downloads/llamacuda/llama-server.exe"
+    models_dir: "C:/Users/bobbyp330/Downloads/LLMs"
+    models_preset_path: "C:/Users/bobbyp330/Downloads/LLMs/llama-router-models.ini"
     host: "0.0.0.0"
     port: 8010
     ctx_size: 8192
@@ -78,7 +78,8 @@ llama_server:
       c: 8192
     models:
       Qwen3VL-4B-Instruct-Q4_K_M:
-        mmproj: "./models/mmproj.gguf"
+        mmproj: "C:/Users/bobbyp330/Downloads/LLMs/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf"
+
 # Model role mapping (router passes `role=`; call_model resolves to these model IDs).
 roles:
   thinker: "Qwen3-4B-Hivemind-Inst-Q4_K_M-imat"
@@ -147,6 +148,41 @@ vault:
 # >>cliniko generate: LLM generates management plan draft
 # >>cliniko sanitize: Deterministic cleanup (future)
 # >>cliniko review: LLM polish with validation (v2.3)
+cliniko:
+  debug: false
+  debug_payload: false  # keep payloads out of console unless explicitly enabled
+  
+  # Step 1: Compaction settings
+  compact:
+    min_chars_trigger: 1800    # Only compact if input > this
+    max_out_chars: 7000         # Target output size (tested at 6287 chars from 21KB input)
+    max_out_lines: 400          # Hard cap on output lines
+    include_stats_header: true  # Prepend COMPACTED_STATS to user message
+  
+  # Step 2: LLM generation settings (UNCHANGED FROM ORIGINAL)
+  generate:
+    # Role key from `roles:` mapping above (NOT a model name)
+    model_role: "clinical"
+    max_tokens: 2000            # V2.5 SLIM optimized for 8K context window
+    temperature: 0.2            # Low temp for clinical consistency
+    top_p: 0.9
+    # Use forward slashes to avoid YAML escape issues on Windows
+    prompt_path: "C:/moa-router1.1.6 LOCAL/llama_conductor/CLINIKO-prompt.md"
+  
+  # Step 3: Sanitization settings (future)
+  sanitize:
+    enforce_must_not_miss: true
+    strip_structural_claims: true
+    strip_invented_metrics: true
+  
+  # Step 4: LLM review with validation (NEW in v2.3)
+  review:
+    model_role: "clinical"  # Use dedicated clinical role for review
+    max_tokens: 1400
+    temperature: 0.3
+    top_p: 0.9
+
+# Mentats diagnostics (off by default; payload logging opt-in).
 mentats:
   debug: false
   debug_payload: false
@@ -161,5 +197,18 @@ scratchpad:
   max_age_minutes: 60      # hard expiry; pruned on scratchpad access
   exhaustive_response_mode: "raw"  # raw|llm; raw bypasses LLM for "all facts/everything" intents
 
+# KAIOKEN v2 phase 0 (telemetry-only, fail-open).
+kaioken:
+  enabled: true
+  mode: "log_only"          # phase0: log_only (no coercion)
+  log_all_routes: true      # log model + exempt routes with suppression reason
+  session_hash_salt: "kaioken-v1"
+
 # Temporary upstream watchdog (remove later if desired).
 # Writes `total_recall/upstream_watchdog.jsonl` for router/upstream health transitions.
+watchdog:
+  enabled: true
+  interval_seconds: 10
+  heartbeat_seconds: 60
+  http_timeout_seconds: 10
+  tcp_timeout_seconds: 1.5

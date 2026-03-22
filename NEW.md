@@ -1,6 +1,40 @@
 # What's New
 
-*** V1.7.2 (latest)
+*** V1.8.0 (latest)
+TL;DR: Real-time turn classification (KAIOKEN) plus deterministic static grounding (Cheatsheets) — the model now knows what you're doing and has verified facts before it generates a single token.
+
+Two systems shipped in this release. They are separate but complementary.
+
+** KAIOKEN v1 — Behavioural shaping
+
+The model doesn't know what you're doing right now. KAIOKEN teaches it.
+
+Every message gets classified before the model sees it. Macro label: working, casual, or personal. Subsignals: playful, friction, distress_hint, vulnerable_under_humour, kb_lookup_candidate. Those labels map to behavioural instructions injected into the thinker context before generation. Actual constraints — not metadata, not hints.
+
+This is the first piece of the Claude in a Can architecture: externalising what frontier models do implicitly via scale into explicit, inspectable infrastructure. See [FAQ](FAQ.md) and [Claude-in-a-can](https://bobbyllm.github.io/llama-conductor/blog/claude-in-a-can-1/) for more details
+
+** Cheatsheets — Deterministic knowledge grounding**
+
+Cheatsheets is a static knowledge base - JSONL files in llama_conductor/cheatsheets/ - that fires silently on every turn. 
+
+When you mention a known term, the router matches it, injects verified facts into the thinker context before generation, and the footer tells you it happened. 
+
+No vector search, no LLM-generated context, no user invocation required. Drop a new file in the directory, it auto-loads. Remove it, it's gone. No restart.
+
+Fires globally across all chat modes (serious, >>fun, >>fr, >>raw). 
+
+
+**What this is building toward**
+KAIOKEN is the steering wheel. Cheatsheets is the map. >>wiki integration and Swarm will be final pieces. 
+
+The eventual goal of "Claude in a Can" is to achieve model decomposition, behavioural shaping and knowledge grounding on hardware Anthropic wouldn't use to play Tetris on. 
+
+See [FAQ](FAQ.md) and [Claude-in-a-can](https://bobbyllm.github.io/llama-conductor/blog/claude-in-a-can-1/) 
+
+
+---
+
+*** V1.7.2
 
 TL;DR:
 Judge + Trust UX pass: clearer routing text, explicit ungrounded warning, visible winner line, and `>>flush` now clears scratchpad captures too. Plus a BONUS GOODY - see below.
