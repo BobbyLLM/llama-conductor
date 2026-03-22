@@ -1,4 +1,4 @@
-# session_state.py
+﻿# session_state.py
 """Session state management for MoA Router."""
 
 from dataclasses import dataclass, field
@@ -45,12 +45,6 @@ class SessionState:
     auto_detach_after_response: bool = False
     
     # Cliniko sidecar: staged clinical note pipeline
-    cliniko_compacted: Optional[str] = None
-    cliniko_compaction_stats: Dict[str, int] = field(default_factory=dict)
-    cliniko_last_draft: Optional[str] = None
-    cliniko_last_scaffold: str = ""
-    cliniko_last_raw: str = ""
-    cliniko_last_region: str = ""
 
     # Session interaction profile (ephemeral, in-memory only)
     profile_enabled: bool = True
@@ -129,3 +123,4 @@ def get_state(session_id: str) -> SessionState:
             except Exception:
                 pass
     return _SESSIONS[session_id]
+

@@ -1,11 +1,10 @@
-# model_calls.py
+﻿# model_calls.py
 """Model API call functions."""
 
 from typing import Any, Dict, List
 
 import requests
-
-from .config import UPSTREAM_CHAT_URL, ROLES, CLINIKO_DEBUG, CLINIKO_DEBUG_PAYLOAD
+from .config import UPSTREAM_CHAT_URL, ROLES, ROUTER_DEBUG, ROUTER_DEBUG_LOG_USER_TEXT
 from .privacy_utils import safe_preview, short_hash
 
 
@@ -37,9 +36,9 @@ def call_model_prompt(
         "stream": False,
     }
 
-    if CLINIKO_DEBUG and debug_context:
+    if ROUTER_DEBUG and debug_context:
         print(f"\n{'='*70}")
-        print(f"[CLINIKO DEBUG] {debug_context}")
+        print(f"[ROUTER DEBUG] {debug_context}")
         print(f"{'='*70}")
         print(f"Model: {model_name}")
         print(f"Role: {role}")
@@ -48,7 +47,7 @@ def call_model_prompt(
         print(f"Max tokens: {max_tokens}")
         print(f"Temperature: {temperature}")
         print(f"Top-p: {top_p}")
-        if CLINIKO_DEBUG_PAYLOAD:
+        if ROUTER_DEBUG_LOG_USER_TEXT:
             red = safe_preview(prompt, max_len=1200)
             print(f"\nPrompt preview (PII-redacted):")
             print(f"{'-'*70}")
@@ -60,8 +59,8 @@ def call_model_prompt(
         resp.raise_for_status()
         data = resp.json() or {}
         
-        if CLINIKO_DEBUG and debug_context:
-            print(f"\n[CLINIKO DEBUG] Response metadata:")
+        if ROUTER_DEBUG and debug_context:
+            print(f"\n[ROUTER DEBUG] Response metadata:")
             print(f"{'='*70}")
             choices = data.get("choices", [])
             if choices:
@@ -79,7 +78,7 @@ def call_model_prompt(
                 content = msg.get("content", "")
                 print(f"Response length: {len(content)} chars")
                 print(f"Response hash: {short_hash(content)}")
-                if CLINIKO_DEBUG_PAYLOAD:
+                if ROUTER_DEBUG_LOG_USER_TEXT:
                     print(f"\nResponse preview (PII-redacted):")
                     print(f"{'-'*70}")
                     print(safe_preview(content, max_len=1200))
@@ -95,8 +94,8 @@ def call_model_prompt(
             return "Noted."
         return content
     except Exception as e:
-        if CLINIKO_DEBUG and debug_context:
-            print(f"\n[CLINIKO DEBUG] ERROR: {e}\n")
+        if ROUTER_DEBUG and debug_context:
+            print(f"\n[ROUTER DEBUG] ERROR: {e}\n")
         return f"[model '{model_name}' unavailable: {e}]"
 
 
@@ -136,3 +135,4 @@ def call_model_messages(
         return content
     except Exception as e:
         return f"[model '{model_name}' unavailable: {e}]"
+

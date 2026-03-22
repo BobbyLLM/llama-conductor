@@ -1,4 +1,4 @@
-# config.py
+﻿# config.py
 """Configuration management for MoA Router."""
 
 import os
@@ -75,9 +75,8 @@ VAULT_CHUNK_WORDS = int(cfg_get("vault.chunk_words", 600))
 VAULT_OVERLAP_WORDS = int(cfg_get("vault.chunk_overlap_words", 175))
 
 # Runtime debug/privacy flags
-CLINIKO_DEBUG = bool(cfg_get("cliniko.debug", False))
-CLINIKO_DEBUG_PAYLOAD = bool(cfg_get("cliniko.debug_payload", False))
 MENTATS_DEBUG = bool(cfg_get("mentats.debug", False))
 MENTATS_DEBUG_PAYLOAD = bool(cfg_get("mentats.debug_payload", False))
 ROUTER_DEBUG = bool(cfg_get("router.debug", False))
 ROUTER_DEBUG_LOG_USER_TEXT = bool(cfg_get("router.debug_log_user_text", False))
+
