@@ -364,11 +364,9 @@ def _build_list_category_answer(category_norm: str, rows: Sequence[CheatsheetEnt
     for e in rows:
         sub = _norm_text(e.category) or "general"
         by_subcat.setdefault(sub, []).append(str(e.term or "").strip())
-    # If everything is the same subcategory, return one bullet per term for readability.
+    # If everything is the same subcategory, keep single-line output.
     if len(by_subcat) <= 1:
-        one = sorted({t for t in terms if t})
-        bullets = "\n".join(f"- {t}" for t in one)
-        return f"**[{label}]**\n\n{bullets}"
+        return f"**[{label}]**\n\n{', '.join(sorted(set(terms)))}"
     lines: List[str] = [f"**[{label}]**"]
     for sub in sorted(by_subcat.keys()):
         sub_label = _format_topic_label(sub.replace(" ", "_"))
