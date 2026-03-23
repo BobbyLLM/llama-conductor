@@ -32,92 +32,27 @@ For install details, see [README Quickstart](README.md#quickstart-first-time-rec
 - [Frequently Asked Questions (FAQ)](#frequently-asked-questions-faq)
   - [What the hell is this thing and why did you build it?](#what-the-hell-is-this-thing-and-why-did-you-build-it)
   - [What problems does this solve?](#what-problems-does-this-solve)
-    - [1) Context bloat on small hardware](#1-context-bloat-on-small-hardware)
-    - [2) Goldfish memory and confident misremembering](#2-goldfish-memory-and-confident-misremembering)
-    - [3) Lies, damned lies, and statistics](#3-lies-damned-lies-and-statistics)
-    - [4) Grounding drift in normal chat (fixed with >>scratch / >>lock)](#4-grounding-drift-in-normal-chat-fixed-with-scratch--lock)
-    - [5) Modes (get the stick out of your LLMs butt)](#5-modes-get-the-stick-out-of-your-llms-butt)
   - [What is Vodka?](#what-is-vodka)
-    - [Vodka has two jobs:](#vodka-has-two-jobs)
-    - [How it works:](#how-it-works)
   - [How does CTC (Cut The Crap) work?](#how-does-ctc-cut-the-crap-work)
-    - [Config knobs (router_config.yaml):](#config-knobs-router_configyaml)
-    - [What it does:](#what-it-does)
-    - [Effect:](#effect)
   - [What are "breadcrumbs" and why do they matter?](#what-are-breadcrumbs-and-why-do-they-matter)
-    - [How breadcrumbs work:](#how-breadcrumbs-work)
-    - [Why this is powerful:](#why-this-is-powerful)
   - [How does TR (Total Recall) work?](#how-does-tr-total-recall-work)
-    - [Store facts:](#store-facts)
-    - [Recall facts:](#recall-facts)
-    - [TTL + touches (anti-hoarder system):](#ttl-touches-anti-hoarder-system)
   - [What is Mentats?](#what-is-mentats)
-    - [How Mentats works:](#how-mentats-works)
   - [What is the Vault?](#what-is-the-vault)
-    - [How it works:](#how-it-works-1)
-    - [Why Vault vs filesystem KBs?](#why-vault-vs-filesystem-kbs)
-    - [Does Mentats combine older and newer Vault knowledge?](#does-mentats-combine-older-and-newer-vault-knowledge)
-    - [`>>move to vault`](#move-to-vault)
   - [How do I verify answers are not bullshit?](#how-do-i-verify-answers-are-not-bullshit)
-    - [Verify SHA manually:](#verify-sha-manually)
   - [Why is this awesome on potato PCs?](#why-is-this-awesome-on-potato-pcs)
-    - [1) Vodka CTC keeps context small:](#1-vodka-ctc-keeps-context-small)
-    - [2) TR does memory without context:](#2-tr-does-memory-without-context)
-    - [3) Filesystem KBs are just folders:](#3-filesystem-kbs-are-just-folders)
-    - [4) Mentats is efficient:](#4-mentats-is-efficient)
   - [What models do I need?](#what-models-do-i-need)
-    - [Minimum (potato mode):](#minimum-potato-mode)
-    - [Mid-range recommendations:](#mid-range-recommendations)
-    - [Those model reccs are GARBAGE, dude](#those-model-reccs-are-garbage-dude)
-    - [Config (router_config.yaml):](#config-router_configyaml)
   - [What's the difference between modes?](#whats-the-difference-between-modes)
-    - [Serious (default):](#serious-default)
-    - [Mentats (##mentats):](#mentats-mentats)
-    - [Locked SUMM grounding (`>>lock`):](#locked-summ-grounding-lock)
-    - [Fun (##fun or >>fun):](#fun-fun-or-fun)
-    - [Fun Rewrite (>>fr):](#fun-rewrite-fr)
   - [What do these commands *actually* do?](#what-do-these-commands-actually-do)
-    - [Kaioken (`>>kaioken on|off|status`)](#kaioken-router)
-    - [Trust (`>>trust <query>`)](#trust-router)
-    - [Judge (`>>judge ...`)](#judge-router)
-    - [Sidecars (`>>wiki`/`>>define`/`>>exchange`/`>>weather`)](#sidecars)
   - [Cheatsheets (JSONL grounding)](#cheatsheets-jsonl-grounding)
   - [Scratchpad Deep Example](#scratchpad-deep-example)
   - [Common workflows](#common-workflows)
-    - [Adding new knowledge:](#adding-new-knowledge)
-    - [Storing personal facts:](#storing-personal-facts)
-    - [Recalling facts later:](#recalling-facts-later)
   - [What the hell is a shim (and why should you care?)](#what-the-hell-is-a-shim-and-why-should-you-care)
   - [Technical Setup](#technical-setup)
-    - [Architecture Overview](#architecture-overview)
-    - [Model Backend: provider-driven](#model-backend-provider-driven)
-    - [RAG Backend: Qdrant](#rag-backend-qdrant)
-- [Docker (recommended)](#docker-recommended)
-  - [Docker Compose (single-host quickstart)](#docker-compose-single-host-quickstart)
-- [Or install from binaries and run bare-metal like I do](#or-install-from-binaries-and-run-bare-metal-like-i-do)
-    - [Embeddings & Reranking](#embeddings-reranking)
-    - [Launch Script: The Easy Way](#launch-script-the-easy-way)
-    - [Non-Local LLMs (API Keys)](#non-local-llms-api-keys)
   - [Troubleshooting 101](#troubleshooting-101)
-    - [Mentats refuses to answer your question](#mentats-refuses-to-answer-your-question)
-    - [Mentats gives weird answers](#mentats-gives-weird-answers)
-    - [Context too long errors](#context-too-long-errors)
-    - [Qdrant connection failed](#qdrant-connection-failed)
-    - [Models not loading (backend provider)](#models-not-loading-backend-provider)
   - [Config knobs (router_config.yaml) with examples](#config-knobs-router_configyaml-with-examples)
-    - [Vodka (memory + context):](#vodka-memory-context)
-    - [RAG (Vault retrieval):](#rag-vault-retrieval)
-    - [KBs (filesystem folders):](#kbs-filesystem-folders)
-    - [Models (backend endpoints):](#models-backend-endpoints)
   - [Advanced: How does provenance work?](#advanced-how-does-provenance-work)
-    - [SUMM files include metadata:](#summ-files-include-metadata)
-    - [Vault provenance chain (reader version):](#vault-provenance-chain-reader-version)
   - [TIPS](#tips)
-  - [What's new (latest)?](#whats-new-latest)
   - [What does `Profile | Sarc | Snark` mean?](#what-does-profile-sarc-snark-mean)
-    - [How state changes over time](#how-state-changes-over-time)
-    - [Output impact](#output-impact)
-    - [Manual control and shortcuts](#manual-control-and-shortcuts)
   - [What do Confidence and Source mean?](#what-do-confidence-and-source-mean)
   - [Questions and Help](#questions-and-help)
 ---
@@ -603,7 +538,6 @@ Dealer's choice, really.
 	* Critic: Phi-4-mini-instruct-Q4_K_M.gguf
 	* Vision: Qwen3VL-4B-Instruct-Q4_K_M.gguf + mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf
 	* Coder: Same as thinker
-	* 2nd Opinion: Nanbeige4-3B-Thinking-2511  <--- pathway not wired yet into router_fastapi.py. TBD
     ** REMEMBER: I RUN ON A POTATO. If you don't, go hog wild and use what you want.
 
 #### Config (router_config.yaml):
@@ -614,7 +548,7 @@ roles:
   vision: "qwen-3-4B_VISUAL"
 ```
 
-**Note:** Router talks to models via OpenAI-compatible API. See [Technical Setup](#technical-setup) for details.
+**Note:** Router talks to models via OpenAI-compatible API. Full config reference in [Config knobs](#config-knobs-router_configyaml-with-examples).
 
 ---
 
@@ -785,7 +719,7 @@ How to:
 
 Or let `>>trust` walk you through it:
 
-`>>trust` which is healther, apples or pears?
+`>>trust` which is healthier, apples or pears?
 
 - `A) >>scratch --> >>judge [HIGH]` — paste evidence first, then rank from it
 - `B) >>judge [LOW]` — ungrounded pass (warns you this is priors, not verified facts)
@@ -835,6 +769,27 @@ These are deterministic utility tools for common retrieval/conversion tasks:
 
 They reduce token spend and avoid unnecessary model improvisation for utility queries.
 
+#### Other utility commands (the ones nobody told you about)
+
+These get mentioned in tips and troubleshooting but never properly introduced. Here they are:
+
+- `>>help` / `>>help advanced` / `>>help full`: show the command cheat sheet (compact or full). Start here if you forget everything else.
+- `>>status` / `>>status full` / `>>status raw`: inspect session state — what's attached, what's locked, what mode you're in.
+- `>>find <query>`: search attached KB files for matching content.
+- `>>peek <query>`: preview what retrieval chunks would come back for a query, without running the full pipeline. Useful for debugging "why did Mentats refuse my question?"
+- `>>calc <expression>`: deterministic calculator. Supports `+ - * / % **`, parentheses, `sqrt/log/sin/cos`. No LLM involved.
+- `>>flush`: nuclear reset. Clears CTC history, session memory, scratchpad captures, judge audit files, and resets profile/style state. Does NOT detach KBs.
+- `>>detach <kb>` / `>>detach all`: stop grounding against attached KBs. Also clears lock state if the detached KB owns the locked file.
+- `>>memory status`: show session memory pipeline diagnostics (unit count, last update turn, last inject).
+- `>>memory show`: preview current session memory units.
+- `>>memory clear`: wipe session memory units (does not detach KBs).
+- `>>preset fast|balanced|max-recall`: switch memory/context preset on the fly.
+- `>>vision` / `>>vl` / `>>v`: force vision pathway on an attached image. You can also just attach an image and ask naturally — the router auto-detects.
+- `>>ocr` / `>>read`: force OCR text extraction from an attached image.
+- `>>faq` / `>>faq <n>`: browse FAQ sections by number, directly in chat.
+
+Full operator reference: [command_cheat_sheet.md](llama_conductor/command_cheat_sheet.md)
+
 #### `>>summ` - LLM summary or deterministic extract?
 
 Current behavior is deterministic extractive generation using built-in Python text processing (no LLM generation), not free-form LLM summarization.
@@ -848,23 +803,17 @@ That means:
 
 ### But why even use `>>summ`? Why not reason against raw text?
 
-- Less noise = more signal = better answers
-- Speed
+Two reasons: less noise and more speed. Raw text is full of nav bars, boilerplate, formatting junk. `>>summ` distils it down to the bits that matter.
 
-In testing, >>SUMM managed to distil key concepts from raw text, to an *approximate* 85-90% coverage (across multiple test samples). Exact % depends on complexity and how noisy the raw text is. Meaning, >>SUMM  is not flawless, but good enough for government work. 
+In testing across multiple document types (news articles, technical docs, PDFs), `>>summ` retained approximately 85-90% of key concepts from source text. Exact coverage depends on how noisy the raw input is. It's lossy — it's a distillation step — but the losses are consistent and known because this is deterministic extraction (pure Python stdlib), not stochastic LLM generation.
 
-See "proof of concept" above as an example of raw source and generated >>summ thereon, using QWEN3-4B HIVEMIND.
+Proof of concept: compare [Guardian source](https://tinyurl.com/GuardianMuskArticle) vs [SUMM_musk-article.md](SUMM_musk-article.md). That SUMM was generated by Qwen3-4B Hivemind.
 
-Remember, this is deterministic summary (not stochastic LLM magic). There will always be rough edges...but they are consistent and known.
+For the full evidence bundle (8,974 runs, five model families, hallucination floor of 0.00% post-policy), see [PAPER.md](prepub/PAPER.md).
 
-But hey, if you really want to argue against raw, you can!
-- generate the >>summ
-- keep the SHA
-- Delete the actually keypoints and copy back the raw text
-
-This sort of defeats the purpose of SUMM as a distilled artifact. But if that's what you want, go for it
-
-Else...may I suggest looking closely at the >>scratch section? You may like what you see :) 
+**Don't trust the SUMM?** Two options:
+1. Use `>>scratch` instead — paste raw text, reason against it losslessly. No distillation, no coverage questions.
+2. Generate the `>>summ`, keep the SHA for provenance, then swap the keypoints back out for raw text. Defeats the purpose, but it's your stack.
 
 
 
@@ -1088,16 +1037,16 @@ NB:
 
 #### Storing personal facts:
 ```
-!! my API key is sk-abc123xyz
-!! my server is at 203.0.113.42
+!! my sourdough starter is named Greg
 !! project deadline is 2026-02-15
+!! the wifi password at work is taped under Karen's desk
 ```
 
 #### Recalling facts later:
 ```
-?? API key
-?? server
+?? sourdough
 ?? deadline
+?? wifi password
 ```
 
 ### What the hell is a shim (and why should you care?)
@@ -1126,134 +1075,88 @@ If you want full operator details (env vars, endpoints, render modes), see [SHIM
 
 #### Architecture Overview
 
-**The stack:**
+**The stack (in human):**
 ```
-Backend [provider-driven: llama.cpp/vLLM/Ollama/custom] + llama-conductor + Frontend [llama.cpp WebUI (direct or shimmed) / other OpenAI-compatible clients]
+Your model backend (llama.cpp / vLLM / Ollama / whatever) + llama-conductor (the brains) + your frontend (llama.cpp WebUI + shim / OWUI / SillyTavern / raw API)
 ```
 
-**How it flows:**
-1. `router_config.yaml` declares `backend.provider`.
-2. If provider is `llama_cpp`, launcher starts local `llama-server` and uses configured local port.
-3. If provider is `vllm`, `ollama`, or `custom`, launcher skips local llama-server and routes to configured upstream URL(s).
-4. Router sends OpenAI-style requests to configured upstream chat endpoint.
-5. Frontend displays results via direct router path or shimmed WebUI path.
+**How the plumbing works:**
+1. You tell `router_config.yaml` what backend you're using (`backend.provider`).
+2. If it's `llama_cpp`, the launcher fires up `llama-server` for you on the configured port.
+3. If it's anything else (`vllm`, `ollama`, `custom`), the launcher assumes you've already got something running and talks to your upstream URL.
+4. Router speaks OpenAI-compatible API to whatever's listening.
+5. Frontend gets the result either directly or via the shim. You pick.
 
 #### Model Backend: provider-driven
 
-Router communicates with models via the configured upstream endpoint. `llama-swap` is now legacy/fallback only, not required.
-
-**Config:**
-```yaml
-backend:
-  provider: "llama_cpp"  # llama_cpp|vllm|ollama|custom
-  local_llama_port: 8010
-  upstream_base_url: "http://127.0.0.1:8010"
-  upstream_chat_url: "http://127.0.0.1:8010/v1/chat/completions"
-
-# Legacy compatibility fallback only
-llama_swap_url: "http://127.0.0.1:8010/v1/chat/completions"
-```
+Router talks to your models via OpenAI-compatible API. Point it at a URL and go. `llama-swap` is legacy cruft — you don't need it anymore.
 
 **Can I use other backends?**
 
-**Yes!** Any OpenAI-compatible API works:
-- **llama.cpp server** (built-in OpenAI endpoint)
-- **vLLM** (production-grade serving)
-- **Ollama** (if you enable OpenAI compatibility)
-- **LMStudio** (with API server mode)
-- **Text Generation WebUI** (OpenAI extension)
+If it speaks OpenAI-compatible API, it works. llama.cpp, vLLM, Ollama, LMStudio, Text Generation WebUI — all fair game. Just set `backend.upstream_chat_url` to your endpoint and get on with your life.
 
-Set `backend.upstream_chat_url` (and ideally `backend.upstream_base_url`) to your endpoint.
+See [Config knobs](#config-knobs-router_configyaml-with-examples) for the full backend config block.
 
 #### RAG Backend: Qdrant
 
-Router uses **Qdrant** (https://github.com/qdrant/qdrant) for vector storage and retrieval.
+Vault and Mentats need a vector DB. We use **Qdrant** (https://github.com/qdrant/qdrant). It's fast, it's light, it runs in Docker, and it doesn't make me want to throw my PC out the window.
 
-**Setup:**
-## Docker (recommended)
+**Quickest path:**
+
+#### Docker (recommended)
 
 ```bash
 docker pull qdrant/qdrant
 docker run -p 6333:6333 qdrant/qdrant
 ```
 
-### Docker Compose (single-host quickstart)
+Done. That's your vector store running.
 
-If you want an all-in-one local stack, use the bundled compose files:
+##### Docker Compose (single-host quickstart)
+
+Want the whole stack in one go? Use the bundled compose files:
 
 ```bash
 docker compose up -d
 ```
 
-Optional WebUI profile:
+Want the optional WebUI too?
 
 ```bash
 docker compose --profile webui up -d
 ```
 
-What this wiring is for:
-- `qdrant`: vector store for Vault/mentats paths
-- `llama-conductor`: router/shim service
-- `open-webui` (optional profile): UI only, not required
+What each piece does:
+- `qdrant`: vector store for Vault/Mentats
+- `llama-conductor`: the router and shim
+- `open-webui` (optional): a frontend, if you don't want to use llama.cpp's WebUI
 
-Operational commands:
+Useful commands:
 
 ```bash
-# Tail service logs
-docker compose logs -f
-
-# Shut down stack
-docker compose down
+docker compose logs -f     # watch what's happening
+docker compose down        # shut it all down
 ```
 
-Repo files used by this flow:
-- `docker-compose.yml`
-- `docker.env.example`
-- `docker/router_config.docker.yaml`
+Repo files for this flow: `docker-compose.yml`, `docker.env.example`, `docker/router_config.docker.yaml`
 
-## Or install from binaries and run bare-metal like I do
+#### Or install from binaries and run bare-metal like I do
 
-**Config:**
-```yaml
-rag:
-  qdrant_host: "localhost"
-  qdrant_port: 6333
-  collection: "moa_kb_docs"
-```
+See [Config knobs](#config-knobs-router_configyaml-with-examples) for Qdrant host/port settings.
 
-**Can I use other vector DBs?**
+**Can I use a different vector DB?**
 
-**Theoretically yes**, but you'd need to rewrite `rag.py` to use a different client. Qdrant is tightly integrated (collection management, named vectors, reranking). Swapping to Milvus/Weaviate/Pinecone would require non-trivial code changes. You want that? You do it :) 
-
-**Recommendation:** Stick with Qdrant unless you have strong reasons to switch.
+Technically? Sure. Practically? You'd be rewriting `rag.py` from scratch. Qdrant is wired in deep — collection management, named vectors, reranking, the lot. Swapping to Milvus/Weaviate/Pinecone is non-trivial. You want that headache? Knock yourself out. I recommend Qdrant.
 
 #### Embeddings & Reranking
 
-Router downloads these models automatically on first run:
+First time you run the router, it'll download two small models from HuggingFace (~200MB total). After that, cached.
 
-**Embedder (for vector search):**
-- Default: `intfloat/e5-small-v2` (384-dim, fast, good quality)
-- Downloads from HuggingFace to local cache
+**Embedder** (turns text into vectors): `intfloat/e5-small-v2` — 384-dim, fast, good enough for potato hardware.
 
-**Reranker (for result refinement):**
-- Default: `cross-encoder/ms-marco-TinyBERT-L-2-v2` (fast, lightweight)
-- Downloads from HuggingFace to local cache
+**Reranker** (sorts the wheat from the chaff): `cross-encoder/ms-marco-TinyBERT-L-2-v2` — tiny, fast, does its job.
 
-**Config (optional):**
-```yaml
-rag:
-  embed_model_name: "intfloat/e5-small-v2"
-  rerank_model_name: "cross-encoder/ms-marco-TinyBERT-L-2-v2"
-```
-
-**Can I use different models?**
-
-**Yes!** Any sentence-transformers-compatible model works:
-- **Larger embedder:** `intfloat/e5-base-v2` (768-dim, slower, better quality)
-- **No reranker:** Set `rerank_model_name: ""` (disables reranking)
-- **Different reranker:** Any cross-encoder from HuggingFace
-
-**Note:** First run will download models (~200MB total). Subsequent runs use cached versions.
+**Want to swap them?** Any sentence-transformers-compatible model works. Bigger embedder for better quality (`intfloat/e5-base-v2`), disable reranking entirely (`rerank_model_name: ""`), or bring your own cross-encoder. See [Config knobs](#config-knobs-router_configyaml-with-examples) for the settings.
 
 
 **This is *a lot* of moving parts. What's the ABSOLUTE MINIMUM STACK to use as proof of concept?**
@@ -1301,58 +1204,12 @@ python -m llama_conductor.launch_stack doctor --config llama_conductor/router_co
 python -m llama_conductor.launch_stack up --config llama_conductor/router_config.yaml
 ```
 
-**Required `router_config.yaml` example settings for this flow:**
-```yaml
-backend:
-  provider: "llama_cpp"
-  local_llama_port: 8010
-  upstream_base_url: "http://127.0.0.1:8010"
-  upstream_chat_url: "http://127.0.0.1:8010/v1/chat/completions"
-  llama_cpp:
-    exe_path: "C:/path/to/llama-server.exe"
-    models_dir: "C:/path/to/LLMs"
-    models_preset_path: "C:/path/to/LLMs/llama-router-models.ini"
-    host: "0.0.0.0"
-    port: 8010
-    ctx_size: 8192
-    threads: 12
-    threads_batch: 12
-    keep: 96
-    batch_size: 512
-    ubatch_size: 256
+**Required config:** See [Config knobs](#config-knobs-router_configyaml-with-examples) for the full `router_config.yaml` reference. The key things to get right for launch:
 
-frontend:
-  shim:
-    enabled: true
-    host: "0.0.0.0"
-    port: 8088
-    inject_ui: true
-    force_vision: true
-    ui_model_alias: "MOA"
-    router_model_id: "moa-router"
-
-rag:
-  qdrant_host: "localhost"
-  qdrant_port: 6333
-
-launcher:
-  router_host: "0.0.0.0"
-  ready_timeout_s: 22
-  auto_clean_before_start: true
-```
-
-**Model naming in `roles`:**
-- `roles.*` values must match the model ID your backend exposes in `/v1/models`.
-- Define the main roles:
-```yaml
-roles:
-  thinker: "your-model-id"
-  critic: "your-model-id"
-  coder: "your-model-id"
-  second_op: "your-model-id"
-  vision: "your-vl-model-id"
-```
-- nb: for best results, thinker and critic should be TWO DIFFERENT models (eg: Qwen3-4B and Phi-4-mini). See below for suggestions.
+- `backend.provider` must match your setup (`llama_cpp` if you want the launcher to manage llama-server for you)
+- `backend.llama_cpp.exe_path` / `models_dir` / `models_preset_path` must point at real files
+- `roles.*` values must match the model ID your backend exposes in `/v1/models`
+- For best results, thinker and critic should be TWO DIFFERENT models (eg: Qwen3-4B and Phi-4-mini)
 
 **VL gotcha (important):**
 - Most vision models in llama.cpp need `mmproj` configured in `llama_server.models_preset.models`.
@@ -1360,8 +1217,8 @@ roles:
 - Make sure you have both! 
 
 **Alias note:**
-- Router role mapping does not use a separate alias field; it uses the actual model ID string.
-- UI aliases (for display/picker) can exist in shim/frontend layers, but `roles.*` should still target a valid backend model ID.
+- Router role mapping uses the actual model ID string, not a separate alias.
+- UI aliases (for display/picker) can exist in shim/frontend layers, but `roles.*` should target a valid backend model ID.
 
 #### Non-Local LLMs (API Keys)
 
@@ -1423,10 +1280,10 @@ upstream_headers:
 #### Mentats refuses to answer your question 
 - Did you >>add to vault?
 - Run `>>peek <query>` to see what would be retrieved
-- Rememner: the pathways is Add docs to KB, `>>summ new`, `>>move to vault`
+- Remember: the pathway is Add docs to KB, `>>summ new`, `>>move to vault`
 - ##Mentats has STRICT recall schema. Check the mentats.log for failure reason
 
-#### Mentats gives  weird answers
+#### Mentats gives weird answers
 - Check `mentats_debug.log` (all 3 steps logged)
 - May be low-quality source (forum post vs docs)
 
@@ -1587,14 +1444,7 @@ Answer -> Vault chunk -> SUMM file -> source metadata header
 
 ### What's new (latest)?
 
-- Always check `NEW.md` for most recent update 
-
-- NEW: Completely refactored / simplified so that only llama.cpp is needed (add shim to bypass llama.cpp WebUI lock out).
-- NEW: Core router internals were decomposed into focused modules (`chat_*`, `state_*`, `router_*`) to reduce monolith risk and make behavior easier to maintain.
-- IMPROVED: Correction/follow-up handling is more stable on tricky "I meant X not Y" turns, with cleaner pass-through when a query falls outside deterministic scope.
-- IMPROVED: Consistency guardrail now catches obvious state/constraint contradictions before final output.
-- IMPROVED: Public release staging is now standardized, with stricter promotion checks before shipping.
-- STABLE: Existing grounding contracts (`>>lock`, `>>scratch`, Mentats/Vault, confidence/source footer) are preserved.
+Check `NEW.md`. That's where the fresh stuff lives.
 
 ### What does `Profile | Sarc | Snark` mean?
 
@@ -1735,8 +1585,6 @@ What, this wasn't enough? May God have mercy on your soul.
 Submit a ticket. I read and respond once a week (usually Sunday or Mondays) between 11-1pm UTC. 
 
 Else, you can roll the dice: sanding-oink-grant(AT)duck(DOT)com or find me on Lemmy.
-
-Sorry - real life commitments :( 
 
 ## License
 AGPL-3.0-or-later. See `LICENSE`
