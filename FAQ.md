@@ -1128,11 +1128,12 @@ Set `backend.upstream_chat_url` (and ideally `backend.upstream_base_url`) to you
 Router uses **Qdrant** (https://github.com/qdrant/qdrant) for vector storage and retrieval.
 
 **Setup:**
-```bash
-<a id="docker-recommended"></a>
 ## Docker (recommended)
+
+```bash
 docker pull qdrant/qdrant
 docker run -p 6333:6333 qdrant/qdrant
+```
 
 ### Docker Compose (single-host quickstart)
 
@@ -1169,7 +1170,6 @@ Repo files used by this flow:
 - `docker/router_config.docker.yaml`
 
 ## Or install from binaries and run bare-metal like I do
-```
 
 **Config:**
 ```yaml
