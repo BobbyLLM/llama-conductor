@@ -1,13 +1,16 @@
-﻿# docker/router_config.docker.yaml
+# docker/router_config.docker.yaml
 # Provider-driven: switch backend.provider to ollama|custom|vllm|llama_cpp as needed.
 # For this compose stack, qdrant host must be "qdrant" (service name on compose network).
 
-models:
-  thinker: "qwen2.5:3b"
-  critic: "qwen2.5:3b"
-  coder: "qwen2.5:3b"
-  second_op: "qwen2.5:3b"
-  vision: "qwen2.5:3b"
+# Model role mapping.
+# Defaults below mirror your main router_config role mapping.
+# If your backend exposes different IDs (for example Ollama tags), override these values.
+roles:
+  thinker: "Qwen3-4B-Hivemind-Inst-Q4_K_M-imat"
+  critic: "Phi-4-mini-instruct-Q4_K_M"
+  coder: "Qwen3-4B-Hivemind-Inst-Q4_K_M-imat"
+  second_op: "Nanbeige4-3B-Thinking-2511-Q4_K_M"
+  vision: "Qwen3VL-4B-Instruct-Q4_K_M"
 
 backend:
   provider: "ollama"    # llama_cpp|vllm|ollama|custom
@@ -20,6 +23,18 @@ rag:
   qdrant_port: 6333
   collection: "moa_kb_docs"
 
+# If using provider=llama_cpp with vision:
+# - roles.vision must map to a real VL model ID loaded by llama-server
+# - matching mmproj for that same model is required
+llama_server:
+  models_preset:
+    enabled: true
+    defaults:
+      c: 8192
+    models:
+      Qwen3VL-4B-Instruct-Q4_K_M:
+        mmproj: "/models/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf"
+
 launcher:
   router_host: "0.0.0.0"
   ready_timeout_s: 30
@@ -31,6 +46,6 @@ frontend:
     host: "0.0.0.0"
     port: 8088
     inject_ui: true
-    force_vision: false
+    force_vision: true
     ui_model_alias: "MOA"
     router_model_id: "moa-router"
