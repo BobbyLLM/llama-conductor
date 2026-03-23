@@ -305,6 +305,19 @@ def _build_local_knowledge_geo_guard_line(topics: Sequence[str]) -> str:
     return f"I don't have geographic or environmental knowledge. {suffix}"
 
 
+def _escape_markdown_leading_quotes(text: str) -> str:
+    """Escape leading markdown quote markers so literal '>>' doesn't render as blockquote."""
+    out_lines: List[str] = []
+    for line in str(text or "").splitlines():
+        m = re.match(r"^(\s*)(>+)(.*)$", line)
+        if not m:
+            out_lines.append(line)
+            continue
+        indent, marks, rest = m.groups()
+        out_lines.append(f"{indent}{'\\>' * len(marks)}{rest}")
+    return "\n".join(out_lines)
+
+
 def _extract_requested_topic(user_text: str) -> str:
     m = _TOPIC_LOOKUP_RE.match(str(user_text or "").strip())
     if not m:
@@ -702,7 +715,7 @@ def resolve_cheatsheets_turn(
             return CheatsheetsTurnResult(
                 facts_block="",
                 constraints_block="",
-                deterministic_answer=line,
+                deterministic_answer=_escape_markdown_leading_quotes(line),
                 local_knowledge_line="",
                 track="A",
                 footer_source="Cheatsheets",
@@ -721,7 +734,7 @@ def resolve_cheatsheets_turn(
                 return CheatsheetsTurnResult(
                     facts_block="",
                     constraints_block="",
-                    deterministic_answer=f"{e.term}: {e.definition}",
+                    deterministic_answer=_escape_markdown_leading_quotes(f"{e.term}: {e.definition}"),
                     local_knowledge_line="",
                     track="A",
                     footer_source="Cheatsheets",
@@ -734,7 +747,7 @@ def resolve_cheatsheets_turn(
             return CheatsheetsTurnResult(
                 facts_block="",
                 constraints_block="",
-                deterministic_answer=_build_list_category_answer(arg, by_cat),
+                deterministic_answer=_escape_markdown_leading_quotes(_build_list_category_answer(arg, by_cat)),
                 local_knowledge_line="",
                 track="A",
                 footer_source="Cheatsheets",
@@ -753,7 +766,7 @@ def resolve_cheatsheets_turn(
                 return CheatsheetsTurnResult(
                     facts_block="",
                     constraints_block="",
-                    deterministic_answer=_build_summary_answer(arg, [e]),
+                    deterministic_answer=_escape_markdown_leading_quotes(_build_summary_answer(arg, [e])),
                     local_knowledge_line="",
                     track="A",
                     footer_source="Cheatsheets",
@@ -766,7 +779,7 @@ def resolve_cheatsheets_turn(
             return CheatsheetsTurnResult(
                 facts_block="",
                 constraints_block="",
-                deterministic_answer=_build_summary_answer(arg, rows),
+                deterministic_answer=_escape_markdown_leading_quotes(_build_summary_answer(arg, rows)),
                 local_knowledge_line="",
                 track="A",
                 footer_source="Cheatsheets",
@@ -791,7 +804,7 @@ def resolve_cheatsheets_turn(
                 return CheatsheetsTurnResult(
                     facts_block="",
                     constraints_block="",
-                    deterministic_answer=_build_local_knowledge_geo_guard_line(topics),
+                    deterministic_answer=_escape_markdown_leading_quotes(_build_local_knowledge_geo_guard_line(topics)),
                     local_knowledge_line="",
                     track="A",
                     footer_source="Cheatsheets",
@@ -822,7 +835,7 @@ def resolve_cheatsheets_turn(
             return CheatsheetsTurnResult(
                 facts_block=facts,
                 constraints_block=_build_track_a_constraints(strict_lookup=True),
-                deterministic_answer=deterministic_answer,
+                deterministic_answer=_escape_markdown_leading_quotes(deterministic_answer),
                 local_knowledge_line="",
                 track="A",
                 footer_source="Cheatsheets",
@@ -870,7 +883,7 @@ def resolve_cheatsheets_turn(
         return CheatsheetsTurnResult(
             facts_block=facts,
             constraints_block=constraints,
-            deterministic_answer=deterministic_answer,
+            deterministic_answer=_escape_markdown_leading_quotes(deterministic_answer),
             local_knowledge_line="",
             track="A",
             footer_source=source,
