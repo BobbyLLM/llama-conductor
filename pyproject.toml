@@ -1,4 +1,4 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
@@ -49,5 +49,6 @@ where = ["."]
 include = ["llama_conductor*"]
 
 [tool.setuptools.package-data]
-llama_conductor = ["*.yaml", "*.jsonl", "*.md"]
+llama_conductor = ["*.yaml", "*.jsonl", "*.md", "cheatsheets/*.jsonl", "cheatsheets/*.json"]
+
 
