@@ -989,7 +989,7 @@ Footer provenance quick read:
 
 Source article:
 - Original: https://tinyurl.com/GuardianMuskArticle
-- >>scratch then >>add (and copy paste the text in)
+- `>>add` (and copy paste the text in)
 
 `Example prompts this stack can handle when grounded correctly`
 
