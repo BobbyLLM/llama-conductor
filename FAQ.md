@@ -82,7 +82,7 @@ For install details, see [README Quickstart](README.md#quickstart-first-time-rec
     - [Judge (`>>judge ...`)](#judge-router)
     - [Sidecars (`>>wiki`/`>>define`/`>>exchange`/`>>weather`)](#sidecars)
   - [Cheatsheets (JSONL grounding)](#cheatsheets-jsonl-grounding)
-  - [Deep Example](#deep-example)
+  - [Scratchpad Deep Example](#scratchpad-deep-example)
   - [Common workflows](#common-workflows)
     - [Adding new knowledge:](#adding-new-knowledge)
     - [Storing personal facts:](#storing-personal-facts)
@@ -941,9 +941,51 @@ Behavior:
 - Broader/open-ended asks may synthesize; footer should downgrade to `Source: Mixed` when not fully grounded.
 - Distress lanes do not inject cheatsheets unless the user is explicitly asking a question.
 
+How to use it in practice:
+
+1. Discover what is loaded:
+```text
+list index
+```
+Returns deterministic category inventory from local cheatsheets index.
+
+2. List terms inside a category:
+```text
+list pop culture
+list hardware
+list glossary
+```
+Returns deterministic grouped term names.
+
+3. Get deterministic term facts:
+```text
+list nibbler
+list qwen3-4b-hivemind
+```
+Returns deterministic cheatsheet fact output when the term exists.
+
+4. Get deterministic multi-entry summaries:
+```text
+summary pop culture
+summary hardware
+summary nibbler
+```
+Returns formatted local definitions from cheatsheets records.
+
+5. Then chat normally:
+- After using `list`/`summary`, you can continue with normal prompts.
+- Model responses may synthesize beyond local records unless you stay in strict list/summary paths.
+- Footer provenance tells you what happened.
+
+Footer provenance quick read:
+- `Source: Cheatsheets` -> output is deterministic local cheatsheet-grounded.
+- `Source: Mixed` -> partial cheatsheet grounding + model synthesis.
+- `Source: Model` -> no local cheatsheet grounding used.
+
 ---
 
-### Deep Example
+<a id="deep-example"></a>
+### Scratchpad Deep Example
 
 Source article:
 - Original: https://tinyurl.com/GuardianMuskArticle

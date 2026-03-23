@@ -363,7 +363,7 @@ Config pointers:
 ### 🎯 Strict Grounding Paths (>>lock, >>scratch)
 
 - `>>lock` constrains normal answers to one SUMM file. LLM grounds facts to THAT source. If not there? Signals LOUDLY.
-- `>>scratch` As above but used for transient stuff you copy/paste (think: news article you want to mull over. [See FAQ for example](https://codeberg.org/BobbyLLM/llama-conductor/src/branch/main/FAQ.md#deep-example)).
+- `>>scratch` As above but used for transient stuff you copy/paste (think: news article you want to mull over. [See FAQ for example](https://codeberg.org/BobbyLLM/llama-conductor/src/branch/main/FAQ.md#scratchpad-deep-example)).
 - End result: both make provenance behavior explicit when grounded vs fallback
 
 ### 🧰 Deterministic sidecars
