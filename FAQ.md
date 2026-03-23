@@ -93,6 +93,7 @@ For install details, see [README Quickstart](README.md#quickstart-first-time-rec
     - [Model Backend: provider-driven](#model-backend-provider-driven)
     - [RAG Backend: Qdrant](#rag-backend-qdrant)
 - [Docker (recommended)](#docker-recommended)
+  - [Docker Compose (single-host quickstart)](#docker-compose-single-host-quickstart)
 - [Or install from binaries and run bare-metal like I do](#or-install-from-binaries-and-run-bare-metal-like-i-do)
     - [Embeddings & Reranking](#embeddings-reranking)
     - [Launch Script: The Easy Way](#launch-script-the-easy-way)
@@ -1132,6 +1133,40 @@ Router uses **Qdrant** (https://github.com/qdrant/qdrant) for vector storage and
 ## Docker (recommended)
 docker pull qdrant/qdrant
 docker run -p 6333:6333 qdrant/qdrant
+
+### Docker Compose (single-host quickstart)
+
+If you want an all-in-one local stack, use the bundled compose files:
+
+```bash
+docker compose up -d
+```
+
+Optional WebUI profile:
+
+```bash
+docker compose --profile webui up -d
+```
+
+What this wiring is for:
+- `qdrant`: vector store for Vault/mentats paths
+- `llama-conductor`: router/shim service
+- `open-webui` (optional profile): UI only, not required
+
+Operational commands:
+
+```bash
+# Tail service logs
+docker compose logs -f
+
+# Shut down stack
+docker compose down
+```
+
+Repo files used by this flow:
+- `docker-compose.yml`
+- `docker.env.example`
+- `docker/router_config.docker.yaml`
 
 ## Or install from binaries and run bare-metal like I do
 ```

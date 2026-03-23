@@ -1,0 +1,36 @@
+﻿# docker/router_config.docker.yaml
+# Provider-driven: switch backend.provider to ollama|custom|vllm|llama_cpp as needed.
+# For this compose stack, qdrant host must be "qdrant" (service name on compose network).
+
+models:
+  thinker: "qwen2.5:3b"
+  critic: "qwen2.5:3b"
+  coder: "qwen2.5:3b"
+  second_op: "qwen2.5:3b"
+  vision: "qwen2.5:3b"
+
+backend:
+  provider: "ollama"    # llama_cpp|vllm|ollama|custom
+  local_llama_port: 8010
+  upstream_base_url: "http://ollama:11434"
+  upstream_chat_url: "http://ollama:11434/v1/chat/completions"
+
+rag:
+  qdrant_host: "qdrant"
+  qdrant_port: 6333
+  collection: "moa_kb_docs"
+
+launcher:
+  router_host: "0.0.0.0"
+  ready_timeout_s: 30
+  auto_clean_before_start: false
+
+frontend:
+  shim:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8088
+    inject_ui: true
+    force_vision: false
+    ui_model_alias: "MOA"
+    router_model_id: "moa-router"

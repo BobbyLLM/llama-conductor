@@ -15,6 +15,7 @@ TL;DR: "In God we trust. All others bring data." - Deming
 - [FAQ](FAQ.md) - Deep dives on how this actually works
 - [Command Cheat Sheet](llama_conductor/command_cheat_sheet.md) - All the incantations
 - [Quickstart](#quickstart-first-time-recommended) - Get it running in 5 minutes
+- [Docker Compose Quickstart](#step-3a-docker-compose-single-host) - Bring up router+qdrant (+optional OWUI)
 - [Y U DO DIS?](DESIGN.md) - Design fool-osophy and Q&A
 - [BULLSHIT. PROVE IT](prepub/PAPER.md) - Ok, I will (Prepub draft + evidence bundle)
 - [Mom, can we get ChatGPT? Mom: we have ChatGPT at home](https://bobbyllm.github.io/llama-conductor/blog/meme-test/) - A fun meme test that shows the effect of deterministic grounding
@@ -291,6 +292,40 @@ docker start qdrant >/dev/null 2>&1 || docker run --name qdrant -p 6333:6333 -d 
   - start your local Qdrant service/binary (for example from `C:\Qdrant`)
 
 Need more launch variants? See [FAQ: Launch Script: The Easy Way](FAQ.md#launch-script-the-easy-way).
+
+### [Step 3A] Docker Compose (single-host)
+
+If you prefer Docker Compose, this repo ships a ready baseline:
+
+```bash
+docker compose up -d
+```
+
+What it includes by default:
+- `qdrant` (for Vault/mentats paths)
+- `llama-conductor` router service
+- optional `open-webui` profile (only if you enable it)
+
+Useful commands:
+
+```bash
+# Start core stack
+docker compose up -d
+
+# Include optional Open WebUI
+docker compose --profile webui up -d
+
+# See logs
+docker compose logs -f
+
+# Stop stack
+docker compose down
+```
+
+Config pointers:
+- `docker-compose.yml` for service wiring
+- `docker.env.example` for environment defaults
+- `docker/router_config.docker.yaml` for container-friendly router config
 
 ### [Step 4] Open and enjoy
 
