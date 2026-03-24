@@ -113,7 +113,7 @@ Result:
 - Facts have a limited Time To Live (TTL) and can be Touched (to extend life) or Flushed. TL;DR: no silent bloat.
 
 
-### 3) 🧾 Lies, damned lies, and statistics
+### 3) 🧾 Lies, damned lies, and LLM's
 
 WITHOUT llama-conductor:
 
@@ -146,36 +146,31 @@ Examples:
 ### 4) 📌 Grounding drift in normal chat (fixed with >>scratch / >>lock)
 
 WITHOUT llama-conductor:
-
 ```text
-You: Summarise this article and tell me what claim got retracted.
-Model: [blends prior chat junk + generic web priors]
-You: That's not what I asked.
-Model: doubles down anyway
+You: What does the article say the fine cap is?
+Model: Under the AI Act, fines can reach €35 million or 7% of global turnover.
+You: That's not in the article.
+Model: You're right, the article specifies a different amount.
+You: ...what amount?
+Model: The article does not appear to state a specific figure.
+You: FFS. It's *in* the second paragraph. Why do you exist?
 ```
 
 WITH llama-conductor:
-
 ```text
 You: >>scratch
 You: [paste article text]
-You: What claim was retracted? Keep it tight.
-Router: [answers from scratchpad-grounded facts]
+You: What does the article say the fine cap is?
+Router: [answers from article only, not training data]
 Footer: Confidence: high | Source: Scratchpad
-
-# or if using curated docs:
-You: >>attach <your kb name>
-You: >>list_files
-You: >>lock SUMM_<name>.md
-You: Ask question normally
-Router: [answers from locked source or fails loud if missing]
 ```
 
-Result: 
-- You can force the model to argue from the source you gave it, not from vibes.
-- If evidence is missing, provenance/fallback is explicit and LOUD.
-
----
+Result:
+- Model argues from what you gave it, not from what it half-remembers from training.
+- If the answer isn't in the source, it says so. Explicitly. Not "I may have drawn on broader context."
+- You can >> lock up to 12 items and force it to reason across all of them. Ask it to compare - it'll flag contradictions and gaps. 
+- Still loud when evidence is missing.
+- When you're done? Throw it away with >>detach all. If you forget, it auto cleans next boot. 
 
 ### 5) 🎛️ Modes (get the stick out of your LLMs butt)
 
@@ -197,35 +192,68 @@ WITH llama-conductor:
 Result:
 - Modes for when you need serious discussion, fun times or feral chaos. All based on serious core reinforcement.
 - Style profile (`Profile | Sarc | Snark`) affects tone, not grounding contracts.
-- Nb: for best results, pick an abliterated model that hasn't been lobotomised 
+- Nb: for best results, pick an abliterated model that hasn't been lobotomised
 
-### 6) 🧪 Vibes-based answers in deep retrieval (##mentats)
+---
+
+### 6) 🧪 Vibes-based answers (your model is a stochastic idiot)
 
 WITHOUT llama-conductor:
-
 ```text
-You: What's the flag for XYZ in llama.cpp?
-Model: It's --xyz-mode! (confident nonsense)
-You: That fails.
-Model: Sorry, try --enable-xyz! (more nonsense)
-You: You motherf...
+You: What's vibe coding?
+Model: It's a development methodology focused on aesthetic consistency and psychological flow states in team environments. Popularised by Extreme Programming. (confident, authoritative, completely wrong)
+You: WTAF? Dude, no.
+Model: You're right, apologies — it's actually a minimalist approach to code style, inspired by jazz improvisation. (still wrong, still confident)
+You: ...
 ```
 
 WITH llama-conductor:
-
 ```text
-You: ##mentats What's the flag for XYZ in llama.cpp?
-Mentats: REFUSAL - no relevant Vault evidence found.
-
-[after ingesting docs and moving to vault]
-You: ##mentats What's the flag for XYZ in llama.cpp?
-Mentats: --enable-xyz [grounded from ingested docs with provenance]
+You: What's vibe coding?
+Assistant: Contemporary term for AI-assisted coding where the developer describes intent in natural language and accepts AI-generated code without fully understanding it. Named for the workflow feel -- you vibe with the AI rather than write line by line. Distinct from pair programming: vibe coding often involves accepting output you can't fully verify.
+Confidence: high | Source: Cheatsheets
 ```
 
 Result:
-- You have a deep store vault of information you can reference / update.
+- Known terms stop drifting to model priors.
+- Local definitions are deterministic and editable in one file.
+- You tell it once. It stays told. Priority: your definition → wiki → stochastic parrot.
+- Broken or missing row? Fails loud. 
+- Footer provenance makes source path explicit instead of making you guess.
 
-### 7) 🎲 Vibes-based ranking ("trust me bro" but make it stochastic)
+---
+
+### 7) 🏛️ Grounded deep retrieval (##mentats) — grounds or refuses, nothing in between
+
+WITHOUT llama-conductor:
+```text
+You: ##mentats What did the Kaltenborn study say about Grade III mobilisation?
+Model: Kaltenborn recommends Grade III for acute inflammatory conditions. (fabricated, cites nothing)
+You: That's the opposite of what it says.
+Model: You raise a good point.
+You: You useless, motherf...
+```
+
+WITH llama-conductor:
+```text
+You: ##mentats What did the Kaltenborn study say about Grade III mobilisation?
+Mentats: FINAL_ANSWER: No Vault evidence found for this. Sources: Vault | FACTS_USED: NONE [ZARDOZ HATH SPOKEN]
+
+[after ingesting docs and moving to vault]
+You: ##mentats What did the Kaltenborn study say about Grade III mobilisation?
+Mentats: Grade III mobilisation indicated for stiff joints, contraindicated in acute inflammation. [grounded from ingested docs with provenance]
+```
+
+Result:
+- No Vault evidence? Explicit refusal. Not "I think..." — hard stop.
+- Grounded answers from YOUR ingested docs, not model weights cosplaying as a textbook.
+- 3-pass sweep, different LLMs on each pass, strict recall policy. `mentats_debug.log` if you want to see the work.
+- Update your vault, answers update with it. Single source of truth you control.
+- RAG with attitude. No more guessing whether it made that citation up.
+
+---
+
+### 8) 🎲 Vibes-based ranking ("trust me bro" but make it stochastic)
 
 WITHOUT llama-conductor:
 
