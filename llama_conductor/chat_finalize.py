@@ -580,6 +580,20 @@ def finalize_chat_response(
     except Exception:
         pass
 
+    # Non-blocking cheatsheets parse warnings (surface once per warning signature).
+    try:
+        warn_line = str(getattr(state, "turn_cheatsheets_warning_line", "") or "").strip()
+        warn_key = str(getattr(state, "turn_cheatsheets_warning_key", "") or "").strip()
+        last_key = str(getattr(state, "cheatsheets_warning_last_shown_key", "") or "").strip()
+        if warn_line and warn_key and warn_key != last_key:
+            body_scan = str(strip_footer_lines_for_scan_fn(str(text or "")) or "").strip()
+            if warn_line.lower() not in body_scan.lower():
+                prefix = str(text or "").rstrip()
+                text = (prefix + "\n\n" + warn_line).strip() if prefix else warn_line
+            state.cheatsheets_warning_last_shown_key = warn_key
+    except Exception:
+        pass
+
     if scratchpad_grounded:
         if not str(text or "").lstrip().startswith("[Scratch "):
             text = f"[Scratch]\n\n{str(text or '').strip()}".strip()

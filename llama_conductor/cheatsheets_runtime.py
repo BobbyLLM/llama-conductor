@@ -150,6 +150,8 @@ class CheatsheetsTurnResult:
 
 _FILE_META: Dict[Path, Tuple[int, str]] = {}
 _PARSED_BY_SHA: Dict[str, Tuple[CheatsheetEntry, ...]] = {}
+_WARNINGS_BY_SHA: Dict[str, Tuple[str, ...]] = {}
+_LAST_PARSE_WARNINGS: Tuple[str, ...] = ()
 _INDEX_LAST_KEY = ""
 
 
@@ -166,6 +168,14 @@ def _tokens(s: str) -> List[str]:
 
 def _warn(msg: str) -> None:
     print(f"[cheatsheets] warning: {msg}", flush=True)
+
+
+def get_cheatsheets_parse_warnings() -> Tuple[str, ...]:
+    """Return parse/runtime warnings from the latest cheatsheets load.
+
+    Non-empty values indicate malformed JSONL rows/files were skipped.
+    """
+    return tuple(_LAST_PARSE_WARNINGS)
 
 
 def _build_index_payload(entries: Sequence[CheatsheetEntry], files: Sequence[Path]) -> Dict[str, Any]:
@@ -410,12 +420,15 @@ def _build_topic_deterministic_answer(topic_norm: str, topic_entries: Sequence[C
     return f"Local cheatsheets coverage for {topic_label}: {terms_txt}."
 
 
-def _read_jsonl_entries(path: Path) -> Tuple[CheatsheetEntry, ...]:
+def _read_jsonl_entries(path: Path) -> Tuple[Tuple[CheatsheetEntry, ...], Tuple[str, ...]]:
+    warns: List[str] = []
     try:
         raw_text = path.read_text(encoding="utf-8")
     except Exception:
-        _warn(f"read failed for {path.name}; skipping file")
-        return ()
+        msg = f"{path.name}: read failed; skipping file"
+        warns.append(msg)
+        _warn(msg)
+        return (), tuple(warns)
     rows: List[CheatsheetEntry] = []
     for line_no, ln in enumerate(raw_text.splitlines(), start=1):
         s = str(ln or "").strip()
@@ -424,7 +437,9 @@ def _read_jsonl_entries(path: Path) -> Tuple[CheatsheetEntry, ...]:
         try:
             item = json.loads(s)
         except json.JSONDecodeError as e:
-            _warn(f"{path.name}:{line_no}: json decode error: {e.msg}; skipping line")
+            msg = f"{path.name}:{line_no}: json decode error: {e.msg}; skipping line"
+            warns.append(msg)
+            _warn(msg)
             continue
         if not isinstance(item, dict):
             continue
@@ -466,16 +481,19 @@ def _read_jsonl_entries(path: Path) -> Tuple[CheatsheetEntry, ...]:
                 norm_tags=norm_tags,
             )
         )
-    return tuple(rows)
+    return tuple(rows), tuple(warns)
 
 
 def load_cheatsheets_entries(cheatsheets_dir: Path) -> Tuple[CheatsheetEntry, ...]:
+    global _LAST_PARSE_WARNINGS
     files = sorted([p for p in cheatsheets_dir.glob("*.jsonl")])
     if not files:
         _FILE_META.clear()
+        _LAST_PARSE_WARNINGS = ()
         return ()
 
     out: List[CheatsheetEntry] = []
+    load_warns: List[str] = []
     alive = set(files)
     for stale in list(_FILE_META.keys()):
         if stale not in alive:
@@ -489,17 +507,25 @@ def load_cheatsheets_entries(cheatsheets_dir: Path) -> Tuple[CheatsheetEntry, ..
         cached = _FILE_META.get(p)
         if cached and int(cached[0]) == mtime_ns and cached[1] in _PARSED_BY_SHA:
             out.extend(_PARSED_BY_SHA[cached[1]])
+            load_warns.extend(list(_WARNINGS_BY_SHA.get(cached[1], ())))
             continue
         try:
             raw = p.read_bytes()
         except Exception:
+            msg = f"{p.name}: read failed; skipping file"
+            load_warns.append(msg)
+            _warn(msg)
             continue
         sha = hashlib.sha256(raw).hexdigest()
         _FILE_META[p] = (mtime_ns, sha)
         if sha not in _PARSED_BY_SHA:
-            _PARSED_BY_SHA[sha] = _read_jsonl_entries(p)
+            parsed_rows, parsed_warns = _read_jsonl_entries(p)
+            _PARSED_BY_SHA[sha] = parsed_rows
+            _WARNINGS_BY_SHA[sha] = parsed_warns
         out.extend(_PARSED_BY_SHA[sha])
+        load_warns.extend(list(_WARNINGS_BY_SHA.get(sha, ())))
     entries = tuple(out)
+    _LAST_PARSE_WARNINGS = tuple(sorted(set(str(w).strip() for w in load_warns if str(w).strip())))
     index_key = "|".join(
         sorted(
             str(_FILE_META.get(p, (0, ""))[1] or "")

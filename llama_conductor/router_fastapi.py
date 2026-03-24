@@ -1,4 +1,4 @@
-﻿"""FastAPI orchestration layer for llama-conductor.
+"""FastAPI orchestration layer for llama-conductor.
 
 Responsibilities:
 - expose API routes
@@ -53,6 +53,8 @@ from .interaction_profile import (
     update_profile_from_user_turn,
 )
 from .privacy_utils import safe_preview, short_hash
+from .upstream_watchdog import start_watchdog, stop_watchdog
+
 # Required modules
 from .vodka_filter import Filter as VodkaFilter, purge_session_memory_jsonl, purge_vodka_ctx_facts
 from .serious import run_serious
@@ -117,10 +119,12 @@ try:
     from .cheatsheets_runtime import (  # type: ignore
         resolve_cheatsheets_turn as _resolve_cheatsheets_turn,
         load_cheatsheets_entries as _load_cheatsheets_entries,
+        get_cheatsheets_parse_warnings as _get_cheatsheets_parse_warnings,
     )
 except Exception:
     _resolve_cheatsheets_turn = None  # type: ignore
     _load_cheatsheets_entries = None  # type: ignore
+    _get_cheatsheets_parse_warnings = None  # type: ignore
 
 try:
     from .style_adapter import rewrite_response_style, score_output_compliance  # type: ignore
@@ -2012,7 +2016,7 @@ async def _chat_exception_guard(request: Request, call_next):
 
 
 @app.on_event("startup")
-async def _startup_runtime() -> None:
+async def _startup_watchdog() -> None:
     try:
         base = str(cfg_get("vodka.storage_dir", "") or "").strip()
         subdir = str(cfg_get("vodka.subdir", "vodka") or "vodka").strip()
@@ -2035,9 +2039,19 @@ async def _startup_runtime() -> None:
             _dbg(f"[DEBUG] startup session-kb janitor stats={stats}")
     except Exception:
         pass
+    try:
+        start_watchdog()
+    except Exception:
+        pass
+
+
 @app.on_event("shutdown")
-async def _shutdown_runtime() -> None:
-    return None
+async def _shutdown_watchdog() -> None:
+    try:
+        stop_watchdog()
+    except Exception:
+        pass
+
 
 @app.get("/healthz")
 def healthz():
@@ -2108,14 +2122,16 @@ def _stage_openwebui_title_bypass(*, user_text_raw: str) -> Optional[str]:
 
     def _openwebui_title_for(t: str) -> str:
         t_l = t.lower()
+        if "cliniko" in t_l:
+            return "Cliniko Pipeline"
         if "router" in t_l or "fastapi" in t_l:
             return "Router Debugging"
         return "Chat Summary"
 
     if not _is_openwebui_title_task(user_text_raw):
         return None
-    title_debug = bool(cfg_get("router.debug", False))
-    if title_debug:
+    CLINIKO_DEBUG = cfg_get("cliniko.debug", True)
+    if CLINIKO_DEBUG:
         _dbg("[DEBUG] openwebui title task bypass")
     return json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
 
@@ -3043,6 +3059,8 @@ async def v1_chat_completions(req: Request):
     state.turn_footer_confidence_override = ""
     state.turn_retrieval_track = ""
     state.turn_local_knowledge_line = ""
+    state.turn_cheatsheets_warning_line = ""
+    state.turn_cheatsheets_warning_key = ""
     cheatsheets_constraints_block = ""
     cheatsheets_deterministic_answer = ""
     # Cheatsheets retrieval (Track A) + optional wiki recovery (Track B).
@@ -3083,6 +3101,23 @@ async def v1_chat_completions(req: Request):
             state.turn_local_knowledge_line = str(cheat.local_knowledge_line or "").strip()
             cheatsheets_constraints_block = str(cheat.constraints_block or "").strip()
             cheatsheets_deterministic_answer = str(cheat.deterministic_answer or "").strip()
+            # Non-blocking JSONL parse diagnostics: surface exact file/line issue to user
+            # so malformed cheatsheet entries can be fixed quickly.
+            if _get_cheatsheets_parse_warnings is not None:
+                try:
+                    parse_warns = [str(w).strip() for w in list(_get_cheatsheets_parse_warnings() or ()) if str(w).strip()]
+                except Exception:
+                    parse_warns = []
+                if parse_warns:
+                    preview = "; ".join(parse_warns[:2])
+                    if len(parse_warns) > 2:
+                        preview = f"{preview}; +{len(parse_warns) - 2} more"
+                    state.turn_cheatsheets_warning_line = (
+                        f"[cheatsheets warning] {preview}. Fix the JSONL entry and retry."
+                    )
+                    state.turn_cheatsheets_warning_key = hashlib.sha1(
+                        "\n".join(sorted(parse_warns)).encode("utf-8")
+                    ).hexdigest()
             if cheat.facts_block:
                 facts_block = (
                     f"{facts_block}\n\n{cheat.facts_block}".strip()
@@ -3652,4 +3687,3 @@ if __name__ == "__main__":
     host = str(cfg_get("server.host", "0.0.0.0"))
     port = int(cfg_get("server.port", 9000))
     uvicorn.run("router_fastapi:app", host=host, port=port, reload=False)
-
