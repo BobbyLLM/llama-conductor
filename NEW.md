@@ -1,11 +1,14 @@
 # What's New
 
-*** V1.8.0 (latest)
-TL;DR: Real-time turn classification (KAIOKEN) plus deterministic static grounding (Cheatsheets) — the model now knows what you're doing and has verified facts before it generates a single token.
+## *** V1.8.0 (latest)
+
+TL;DR: 
+
+Real-time turn classification (KAIOKEN) plus deterministic static grounding (Cheatsheets). The model now knows what you're doing and has verified facts before it generates a single token.
 
 Two systems shipped in this release. They are separate but complementary.
 
-** KAIOKEN v1 — Behavioural shaping
+**KAIOKEN v1 — Behavioural shaping**
 
 The model doesn't know what you're doing right now. KAIOKEN teaches it.
 
@@ -13,7 +16,7 @@ Every message gets classified before the model sees it. Macro label: working, ca
 
 This is the first piece of the Claude in a Can architecture: externalising what frontier models do implicitly via scale into explicit, inspectable infrastructure. See [FAQ](FAQ.md) and [Claude-in-a-can](https://bobbyllm.github.io/llama-conductor/blog/claude-in-a-can-1/) for more details
 
-** Cheatsheets — Deterministic knowledge grounding**
+**Cheatsheets — Deterministic knowledge grounding**
 
 Cheatsheets is a static knowledge base - JSONL files in llama_conductor/cheatsheets/ - that fires silently on every turn. 
 
@@ -438,9 +441,9 @@ Preserve all existing behavior for >>calc, >>weather, ##mentats, KB attachment, 
 No auto-execution was added. All changes remain recommendation-only and fully explicit.
 
 
-## (v1.1.5)
+*** (v1.1.5)
 
-###  New Feature: >>trust Mode (Tool Recommendation)
+***  New Feature: >>trust Mode (Tool Recommendation)
 
 **Tool recommendation pipeline** `>>trust <query>` analyzes your query and suggests the best tools to use
 - Recommends ranked options (A, B, C) with confidence levels
@@ -491,16 +494,16 @@ Complex reasoning:
 -  No auto-escalation (suggestions only)
 -  Transparent and predictable
 
-### Documentation
+**Documentation
 
 **Updated command cheat sheet** Added >>trust documentation under Help & tool selection
 **Technical specification** Full architecture and design docs included in release
 
 ---
 
-## v1.1.4 (CRITICAL FIX)
+** v1.1.4 (CRITICAL FIX)
 
-### Critical Bugfix
+*** Critical Bugfix
 
 **Vault attachment prevention** Fixed critical bug where `>>attach vault` was allowed but caused silent failures
 - Previously: `>>attach vault` succeeded but Serious mode filtered it out ’ empty FACTS_BLOCK ’ hallucinations
@@ -512,21 +515,21 @@ Complex reasoning:
 
 ---
 
-## v1.1.3
+*** v1.1.3
 
 **Code cleanup** Removed legacy fun.py code and reduced duplicate calls
 
 ---
 
-## v1.1.2
+** v1.1.2
 
 **Streaming keepalive** Added keepalive pings to prevent streaming timeouts in long-running responses
 
 ---
 
-## v1.1.1
+** v1.1.1
 
-### New Sidecars (Deterministic API Tools)
+** New Sidecars (Deterministic API Tools)
 
 **Wikipedia summaries** `>>wiki <topic>` fetches article openings via free Wikipedia JSON API
 - Full paragraph summaries (~500 chars)
@@ -547,15 +550,15 @@ Complex reasoning:
 
 ---
 
-## v1.0.11
+** v1.0.11
 
-###  Core Improvements
+***  Core Improvements
 
 **RAW mode context fix** `>>raw` mode now includes CONTEXT block (conversation history) so queries like "what have we discussed?" work correctly instead of hallucinating. Previously `>>raw` was outputting non-Serious answers but without conversation context, causing it to fabricate topics from training data.
 
 ---
 
-## v1.0.10
+** v1.0.10
 
 **Fun mode quote pool** Fixed fun_pool to include ALL quotes from all tags instead of just one tone. Fun mode now retrieves actual quotes from quotes.md instead of hallucinating.
 
@@ -576,7 +579,7 @@ vault:
 
 ---
 
-## v1.0.9-debug
+** v1.0.9-debug
 
 - Fix: Fun/FR blocks after Mentats (checks only recent 5 turns, not all history)
 - Fix: Images drop Fun/FR sticky modes and auto-route to vision
@@ -585,7 +588,7 @@ vault:
 
 ---
 
-## v1.0.4
+** v1.0.4
 
 - Auto-vision detection: Images automatically trigger vision pipeline
 - Session commands (>>) skip vision even if image is present (prevents UI attachment bugs)
@@ -593,25 +596,25 @@ vault:
 
 ---
 
-## Known Issues / Limitations
+** Known Issues / Limitations
 
-### RAG Semantic Retrieval
+** RAG Semantic Retrieval
 - e5-small-v2 embedding model struggles with broad, abstract queries
 - `##mentats "cultural impact on music"` may return zero facts even if docs contain the info
 - **Workaround:** Use more specific queries or `>>find` for exact text matching
 
-### Chunking Trade-offs
+** Chunking Trade-offs
 - Smaller chunks (250 words) improve semantic matching but increase Qdrant store size
 - Larger chunks (600+ words) reduce storage but hurt retrieval precision
 - Current setting (250) optimized for medical/knowledge domains
 
-### Weather Locations
+** Weather Locations
 - Open-Meteo geocoding works best with city names or "City Country" format
 - Long/complex location strings may not resolve (e.g. "Perth Western Australia" ’ use "Perth")
 
 ---
 
-
+** Older hot-fixes 
 
 **New in v1.1.5:** 
 - Tool recommendation pipeline: `>>trust <query>` helps you choose the best tool
