@@ -26,3 +26,10 @@ defaults:
       layout: default
       title: "I'd like to show you my...ass"
       permalink: /blog/claude-in-a-can-1/
+
+  - scope:
+      path: "blog/i-hate-yaml.md"
+    values:
+      layout: default
+      title: "Attempt 1: \"This should work\" (narrator: it did not, in fact, work)"
+      permalink: /blog/i-hate-yaml/
