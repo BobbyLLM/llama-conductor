@@ -28,7 +28,7 @@ TL;DR: "In God we trust. All others bring data." - Deming
 
 ---
 
-## 🚀 5-Minute Quickstart (Get it running NOW)
+## 🚀 5-Minute Quickstart
 
 Pick one path and go.
 
