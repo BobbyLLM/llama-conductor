@@ -1,7 +1,7 @@
 # I hate YAML.
 
 
-After getting sick of baked-in, pre-trained model priors (No Qwen, that's NOT what vibe-coding means. That's not what abliteration means. That's not what any of this means!) I decided to add in a "clever little feature" Cheatsheets - see: [New](https://codeberg.org/BobbyLLM/llama-conductor/src/branch/main/NEW.md) and [FAQ](https://opper.ai/blog/car-wash-test)
+After getting sick of baked-in, pre-trained model priors (No Qwen, that's NOT what vibe-coding means. That's not what abliteration means. That's not what any of this means!) I decided to add in a "clever little feature" Cheatsheets - see: [New](https://codeberg.org/BobbyLLM/llama-conductor/src/branch/main/NEW.md) and [FAQ](https://github.com/BobbyLLM/llama-conductor/blob/main/FAQ.md#cheatsheets-jsonl-grounding)
 
 that allows users to add in new, high yield information on the fly. Literally, add the info into the file, save it, boom, no more stupid.
 
