@@ -1,4 +1,4 @@
-﻿---
+---
 layout: default
 title: Blog
 permalink: /blog/
@@ -15,4 +15,4 @@ BobbyLLM's field notes on local AI, spite engineering, and teaching a 4B model t
 
 - [I'd like to show you my...ass](/blog/claude-in-a-can-1/)
 
-- [Attempt 1: "This should work" (narrator: it did not, in fact, work)](/blog/i-hate-yaml/)
+- [I hate YAML.](/blog/i-hate-yaml/)
