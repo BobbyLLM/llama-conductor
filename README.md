@@ -3,23 +3,60 @@
 
 LLM harness for people who want trust, consistency, and proof.
 
-llama-conductor is a Python router + memory store + deterministic harness that pushes models to behave like predictable components, not improv actors.
+LLMs hallucinate, forget, and sound confident either way. llama-conductor forces them to bring receipts: grounded answers, deterministic memory, and explicit refusal when evidence is missing
 
 TL;DR: "In God we trust. All others bring data." - Deming
 
 ---
 
-## 🔗 Quick Links
+## Quick Links
 
-- [What's New](NEW.md) - Latest fixes and what I borked along the way
-- [FAQ](FAQ.md) - Deep dives on how this actually works
-- [Command Cheat Sheet](llama_conductor/command_cheat_sheet.md) - All the incantations
-- [Quickstart](#quickstart-first-time-recommended) - Get it running in 5 minutes
-- [Docker Compose Quickstart](#step-3a-docker-compose-single-host) - Bring up router+qdrant (+optional OWUI)
-- [Y U DO DIS?](DESIGN.md) - Design fool-osophy and Q&A
-- [BULLSHIT. PROVE IT](prepub/PAPER.md) - Ok, I will (Prepub draft + evidence bundle)
-- [Mom, can we get ChatGPT? Mom: we have ChatGPT at home](https://bobbyllm.github.io/llama-conductor/blog/meme-test/) - A fun meme test that shows the effect of deterministic grounding
-- [SCP-LLM-121](https://bobbyllm.github.io/llama-conductor/blog/scp-llm-121/) "My God...it got loose?!?" (yeah, I got bored)
+### Start Here
+- 🚀 [5-Minute Quickstart](#5-minute-quickstart) - Get this running now, not next week.
+- 🤨 [Why This Exists](DESIGN.md) - The "why" behind this whole thing.
+- 📖 [What's New](NEW.md) - Latest fixes, updates, and "what I borked along the way".
+
+### Using It
+- ⌨️ [Command Cheat Sheet](llama_conductor/command_cheat_sheet.md) - All the incantations.
+- ❓ [FAQ](FAQ.md) - Everything you wanted to know on how it works...and then some. No secrets. Glass-box, not black box.
+- 🛠️ [Setup + Config Details](FAQ.md#technical-setup) - Full wiring and troubleshooting.
+
+### Evidence and Research
+- 📊 [Prepub Paper](prepub/PAPER.md) - "Bullshit. Prove it". Ok, here then.
+- 🚗 [Meme Test](https://bobbyllm.github.io/llama-conductor/blog/meme-test/) - Mom, can we get ChatGPT? Mom: we have ChatGPT at home.
+- 🧠 [Blog & Updates](https://bobbyllm.github.io/llama-conductor/) - Blog posts, roadmaps, and Deep Thoughts (tm). Also, me swearing at Python code.
+
+---
+
+## 🚀 5-Minute Quickstart (Get it running NOW)
+
+Pick one path and go.
+
+1. Install llama-conductor:
+```bash
+pip install git+https://codeberg.org/BobbyLLM/llama-conductor.git
+```
+
+2. Start the stack (pick one):
+- Bare metal:
+```bash
+python -m llama_conductor.launch_stack up --config llama_conductor/router_config.yaml
+```
+- Docker Compose:
+```bash
+docker compose up -d
+```
+
+3. Open the UI:
+- `http://127.0.0.1:8088`
+
+4. Optional (but nice): Firefox bridge
+- Load from `extras/firefox-extension/` (`moa chat bridge.xpi`)
+
+That’s it. You’re live.
+
+Want the *full* wiring (models, config, Qdrant, troubleshooting)?  
+Jump to [Quickstart (First-Time, Recommended)](#quickstart-first-time-recommended).
 
 ---
 
