@@ -1,4 +1,4 @@
-﻿title: llama-conductor blog
+title: llama-conductor blog
 description: deterministic routing, grounded reasoning, and operator notes
 url: "https://bobbyllm.github.io"
 baseurl: "/llama-conductor"
@@ -31,5 +31,5 @@ defaults:
       path: "blog/i-hate-yaml.md"
     values:
       layout: default
-      title: "Attempt 1: \"This should work\" (narrator: it did not, in fact, work)"
+      title: "I hate YAML."
       permalink: /blog/i-hate-yaml/

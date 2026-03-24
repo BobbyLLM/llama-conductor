@@ -3,9 +3,9 @@
 
 After getting sick of baked-in, pre-trained model priors (No Qwen, that's NOT what vibe-coding means. That's not what abliteration means. That's not what any of this means!) I decided to add in a "clever little feature" Cheatsheets - see: [New](https://codeberg.org/BobbyLLM/llama-conductor/src/branch/main/NEW.md) and [FAQ](https://opper.ai/blog/car-wash-test)
 
-that allows users to add in new, high yield information on the fly. Literally, add the info into the file, save it, boom, no more stupid. 
+that allows users to add in new, high yield information on the fly. Literally, add the info into the file, save it, boom, no more stupid.
 
-Well....I underestimated my own stupid. 
+Well....I underestimated my own stupid.
 
 For the sake of end users, I started this with the perfectly parsable, sensible YAML format.
 
@@ -18,7 +18,7 @@ For the sake of end users, I started this with the perfectly parsable, sensible 
 - `confidence: high`
 - `tags: llm_terminology, contemporary, coding`
 
-Astute readers will notice the issue immediately. The quotes in the definition will probably break the YAML parser. YAML hates inline quotes without escaping. Bad YAML files = YAML file not work = Qwen defaults to stupid. 
+Astute readers will notice the issue immediately. The quotes in the definition will probably break the YAML parser. YAML hates inline quotes without escaping. Bad YAML files = YAML file not work = Qwen defaults to stupid.
 
 **Fine, take 2**
 
@@ -29,87 +29,74 @@ Astute readers will notice the issue immediately. The quotes in the definition w
 - `confidence: high`
 - `tags: llm_terminology, contemporary, coding`
 
-Problem: Now you've got escape backslashes polluting your text. If you want to add or edit the quote later, you have to remember to escape it. Miss one? Parser error. AGAIN! 
+Problem: Now you've got escape backslashes polluting your text. If you want to add or edit the quote later, you have to remember to escape it. Miss one? Parser error. AGAIN!
 
 At this point, I decide; fuck YAML. It's cute but brittle. Turns out, YAML being ass is a [known feature](https://noyaml.com/)
 
-So, what do? 
+So, what do?
 
 **JSONL: It "just works" (ish).**
 
 By all rights, JSONL just works. It's ugly, but it works. One line. Parse or die. No indent hell. Right? Right?
 
-```json
-{
-  "term": "Vibe coding",
-  "category": "glossary",
-  "definition": "Contemporary term for AI-assisted coding ... \"Remember - friends don't let friends Vibe code. Just say no\" ...",
-  "source": "static",
-  "confidence": "high",
-  "tags": ["llm_terminology", "contemporary", "coding"]
-}
-```
+Valid JSONL shape (clean and parseable):
+
+- `term = Vibe coding`
+- `category = glossary`
+- `definition = ... \"Remember - friends don't let friends Vibe code. Just say no\" ...`
+- `source = static`
+- `confidence = high`
+- `tags = llm_terminology, contemporary, coding`
 
 Until Boy Wonder over here did the following:
 
-```json
-{
-  "term": "Vibe coding",
-  "category": "glossary",
-  "definition": "Contemporary term for AI-assisted coding ... "Remember - friends don't let friends Vibe code. Just say no" ...",
-  "source": "static",
-  "confidence": "high",
-  "tags": ["llm_terminology", "contemporary", "coding"]
-}
-```
+Broken JSONL shape (one unescaped quote nukes the row):
 
+- `term = Vibe coding`
+- `category = glossary`
+- `definition = ... "Remember - friends don't let friends Vibe code. Just say no" ...`
+- `source = static`
+- `confidence = high`
+- `tags = llm_terminology, contemporary, coding`
 
-Result?  The JSON parser hits `..."you can't fully verify. "Remember...` it sees that quote and thinks "oh cool, the definition string just ended." Then it expects a comma or closing brace, but instead finds `Remember`, which is... not valid JSON syntax.
+Result? The JSON parser hits `..."you can't fully verify. "Remember...` and assumes the string ended. Then it expects a comma or closing brace, but instead sees `Remember`, which is not valid JSON syntax.
 
 **Parser says:**
-```
-JSONDecodeError: Expecting ',' delimiter: line 1 column 287
-```
+
+> JSONDecodeError: Expecting ',' delimiter: line 1 column 287
 
 The world stops. Cheatsheets stop working. Qwen (silently) reverts to stupid.
 
+Example bad output after that parse fail:
 
-```
-
-User: What is vibe coding?
-
-Assistant: 
-Vibe coding is a lightweight, informal coding style that prioritizes readability and developer comfort over strict conventions. It often involves minimal formatting, personal naming choices, and concise syntax to reduce cognitive load during rapid development.
-
-It’s not a standardized framework but rather a mindset: writing code that feels natural and aligns with your workflow, while still being understandable to others. This can include using personal coding habits, small helper functions, or quick prototypes without over-engineering.
-
-Confidence: unverified | Source: Model
-```
+> User: What is vibe coding?
+>
+> Assistant: Vibe coding is a lightweight, informal coding style that prioritizes readability and developer comfort over strict conventions...
+>
+> Confidence: unverified | Source: Model
 
 FML.
 
 
-**The footer, stupid. Look at the footer** 
+**The footer, stupid. Look at the footer**
 
-I assumed (correctly) that I would break things. So past me had to save present me from stupid. 
+I assumed (correctly) that I would break things. So past me had to save present me from stupid.
 
 In this case, the footer immediately shows the issue.
 
-```Confidence: unverified | Source: Model```
+`Confidence: unverified | Source: Model`
 
-Which is llama-conductor-speak for "yo, your shit's fucked and the JSONL didn't load". 
+Which is llama-conductor-speak for "yo, your shit's fucked and the JSONL didn't load".
 
 Fixing the unescaped `"` gives us:
 
-``` Assistant: 
-Vibe coding: Contemporary term for AI-assisted coding where the developer describes intent in natural language and accepts AI-generated code without fully understanding it. Named for the workflow feel -- you vibe with the AI rather than write line by line. Distinct from pair programming: vibe coding often involves accepting output you can't fully verify. "Remember - friends don't let friends Vibe code. Just say no" - BobbyLLM.
-
-Confidence: high | Source: Cheatsheets
-```
+> Assistant: Vibe coding: Contemporary term for AI-assisted coding where the developer describes intent in natural language and accepts AI-generated code without fully understanding it. Named for the workflow feel -- you vibe with the AI rather than write line by line. Distinct from pair programming: vibe coding often involves accepting output you can't fully verify. "Remember - friends don't let friends Vibe code. Just say no" - BobbyLLM.
+>
+> Confidence: high | Source: Cheatsheets
 
 **The moral of the story**
 
-1) To quote Winter Soldier "Bucky: Don't do anything stupid. Cap: How can I - you're taking all the stupid with you". 
+1) To quote Winter Soldier "Bucky: Don't do anything stupid. Cap: How can I - you're taking all the stupid with you".
 2) Always assume that [PEBKAC](https://en.wikipedia.org/wiki/User_error) is the first fail point
 3) Architect around it
 
@@ -123,10 +110,4 @@ Confidence: high | Source: Cheatsheets
 - If JSONL is borked, it fails loud instead of silently pretending everything is fine.
 - So if local fact exists, it wins. If it doesn't, we hit wiki. If JSONL is borked, we hit wiki.
 
-That's me doing my best to architect around my own stupid. Maybe it helps. 
-
-
-
- 
-
-
+That's me doing my best to architect around my own stupid. Maybe it helps.
