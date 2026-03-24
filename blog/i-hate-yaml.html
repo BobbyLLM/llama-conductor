@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>I hate YAML. | llama-conductor</title>
+  <meta name="google-site-verification" content="X-oVkpKrZtcgUicays4QvguYOmD5x98mby9rVN5yx10" />
+  <link rel="canonical" href="https://bobbyllm.github.io/llama-conductor/blog/i-hate-yaml/">
+  <meta name="robots" content="index,follow">
+  <link rel="stylesheet" href="/llama-conductor/assets/css/site.css?v=1774351130">
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <header class="site-header">
+    <a class="brand" href="/llama-conductor/">llama-conductor</a>
+    <nav>
+      <a href="/llama-conductor/">Home</a>
+      <a href="/llama-conductor/about.html">About</a>
+    </nav>
+  </header>
+  <main class="wrap">
+    <article class="card prose">
+      <h1>I hate YAML.</h1>
+<p>After getting sick of baked-in, pre-trained model priors (No Qwen, that's NOT what vibe-coding means. That's not what abliteration means. That's not what any of this means!) I decided to add in a &quot;clever little feature&quot; Cheatsheets - see: <a href="https://codeberg.org/BobbyLLM/llama-conductor/src/branch/main/NEW.md">New</a> and <a href="https://github.com/BobbyLLM/llama-conductor/blob/main/FAQ.md#cheatsheets-jsonl-grounding">FAQ</a></p>
+<p>that allows users to add in new, high yield information on the fly. Literally, add the info into the file, save it, boom, no more stupid.</p>
+<p>Well....I underestimated my own stupid.</p>
+<p>For the sake of end users, I started this with the perfectly parsable, sensible YAML format.</p>
+<p><strong>Attempt 1: &quot;This should work&quot; (narrator: it did not, in fact, work)</strong></p>
+<ul>
+<li><code>term: Vibe coding</code></li>
+<li><code>category: glossary</code></li>
+<li><code>definition: ... &quot;Remember - friends don't let friends Vibe code. Just say no&quot; ...</code></li>
+<li><code>source: static</code></li>
+<li><code>confidence: high</code></li>
+<li><code>tags: llm_terminology, contemporary, coding</code></li>
+</ul>
+<p>Astute readers will notice the issue immediately. The quotes in the definition will probably break the YAML parser. YAML hates inline quotes without escaping. Bad YAML files = YAML file not work = Qwen defaults to stupid.</p>
+<p><strong>Fine, take 2</strong></p>
+<ul>
+<li><code>term: Vibe coding</code></li>
+<li><code>category: glossary</code></li>
+<li><code>definition: &quot; ... \&quot;Remember - friends don't let friends Vibe code. Just say no\&quot; ... &quot;</code></li>
+<li><code>source: static</code></li>
+<li><code>confidence: high</code></li>
+<li><code>tags: llm_terminology, contemporary, coding</code></li>
+</ul>
+<p>Problem: Now you've got escape backslashes polluting your text. If you want to add or edit the quote later, you have to remember to escape it. Miss one? Parser error. AGAIN!</p>
+<p>At this point, I decide; fuck YAML. It's cute but brittle. Turns out, YAML being ass is a <a href="https://noyaml.com/">known feature</a></p>
+<p>So, what do?</p>
+<p><strong>JSONL: It &quot;just works&quot; (ish).</strong></p>
+<p>By all rights, JSONL just works. It's ugly, but it works. One line. Parse or die. No indent hell. Right? Right?</p>
+<p>Valid JSONL shape (clean and parseable):</p>
+<ul>
+<li><code>term = Vibe coding</code></li>
+<li><code>category = glossary</code></li>
+<li><code>definition = ... \&quot;Remember - friends don't let friends Vibe code. Just say no\&quot; ...</code></li>
+<li><code>source = static</code></li>
+<li><code>confidence = high</code></li>
+<li><code>tags = llm_terminology, contemporary, coding</code></li>
+</ul>
+<p>Until Boy Wonder over here did the following:</p>
+<p>Broken JSONL shape (one unescaped quote nukes the row):</p>
+<ul>
+<li><code>term = Vibe coding</code></li>
+<li><code>category = glossary</code></li>
+<li><code>definition = ... &quot;Remember - friends don't let friends Vibe code. Just say no&quot; ...</code></li>
+<li><code>source = static</code></li>
+<li><code>confidence = high</code></li>
+<li><code>tags = llm_terminology, contemporary, coding</code></li>
+</ul>
+<p>Result? The JSON parser hits <code>...&quot;you can't fully verify. &quot;Remember...</code> and assumes the string ended. Then it expects a comma or closing brace, but instead sees <code>Remember</code>, which is not valid JSON syntax.</p>
+<p><strong>Parser says:</strong></p>
+<blockquote>
+<p>JSONDecodeError: Expecting ',' delimiter: line 1 column 287</p>
+</blockquote>
+<p>The world stops. Cheatsheets stop working. Qwen (silently) reverts to stupid.</p>
+<p>Example bad output after that parse fail:</p>
+<blockquote>
+<p>User: What is vibe coding?</p>
+<p>Assistant: Vibe coding is a lightweight, informal coding style that prioritizes readability and developer comfort over strict conventions...</p>
+<p>Confidence: unverified | Source: Model</p>
+</blockquote>
+<p>FML.</p>
+<p><strong>The footer, stupid. Look at the footer</strong></p>
+<p>I assumed (correctly) that I would break things. So past me had to save present me from stupid.</p>
+<p>In this case, the footer immediately shows the issue.</p>
+<p><code>Confidence: unverified | Source: Model</code></p>
+<p>Which is llama-conductor-speak for &quot;yo, your shit's fucked and the JSONL didn't load&quot;.</p>
+<p>Fixing the unescaped <code>&quot;</code> gives us:</p>
+<blockquote>
+<p>Assistant: Vibe coding: Contemporary term for AI-assisted coding where the developer describes intent in natural language and accepts AI-generated code without fully understanding it. Named for the workflow feel -- you vibe with the AI rather than write line by line. Distinct from pair programming: vibe coding often involves accepting output you can't fully verify. &quot;Remember - friends don't let friends Vibe code. Just say no&quot; - BobbyLLM.</p>
+<p>Confidence: high | Source: Cheatsheets</p>
+</blockquote>
+<p><strong>The moral of the story</strong></p>
+<ol>
+<li>To quote Winter Soldier &quot;Bucky: Don't do anything stupid. Cap: How can I - you're taking all the stupid with you&quot;.</li>
+<li>Always assume that <a href="https://en.wikipedia.org/wiki/User_error">PEBKAC</a> is the first fail point</li>
+<li>Architect around it</li>
+</ol>
+<ul>
+<li>Router now pre-loads cheatsheets on startup (pre-flight load), and the loader records parse errors as structured warnings.</li>
+<li>If a JSONL line is malformed, app still runs, but the user gets a visible warning with exact <code>file:line:error</code> so they can fix it immediately.</li>
+<li>Warning is non-spammy (shown once per warning signature, not every turn forever).</li>
+</ul>
+<p><strong>The way forward</strong></p>
+<ul>
+<li>Resolution order stays: <strong>Cheatsheets (Track A) -&gt; Wiki sidecar (once I get off my ass and cross-link it) -&gt; Model priors</strong>.</li>
+<li>If JSONL is borked, it fails loud instead of silently pretending everything is fine.</li>
+<li>So if local fact exists, it wins. If it doesn't, we hit wiki. If JSONL is borked, we hit wiki.</li>
+</ul>
+<p>That's me doing my best to architect around my own stupid. Maybe it helps.</p>
+
+    </article>
+  </main>
+</body>
+</html>
