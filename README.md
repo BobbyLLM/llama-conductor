@@ -112,36 +112,37 @@ Result:
 - The LLM remembers EXACTLY what you told it, how you told it, and then recalls it EXACTLY.
 - Facts have a limited Time To Live (TTL) and can be Touched (to extend life) or Flushed. TL;DR: no silent bloat.
 
+---
 
 ### 3) 🧾 Lies, damned lies, and LLM's
 
 WITHOUT llama-conductor:
-
 ```text
-Start chatting
-Ask questions
-Model sounds certain.
-No provenance signal.
-You have to guess if it is grounded or making shit up
-Roll the dice and find out each session (stochastic)
+You: Is paracetamol safe to take with ibuprofen?
+Model: Yes, they can be safely combined as they work through different mechanisms.
+You: Is that actually true or are you guessing?
+Model: That is generally accepted medical guidance. (no source, no provenance, vibes all the way down)
 ```
 
 WITH llama-conductor:
-
-You will see:
-
 ```text
 Confidence: <tier> | Source: <path>
 ```
-Result:
-- DETERMINISTIC router-assigned provenance metadata, not model self-confidence.
 
-Examples:
-- `Source: Model` -> fallback to model knowledge | Confidence: unverified (in other words: maybe right, maybe wrong. Proceed with caution)
-- `Source: Docs` -> grounded to attached docs/SUMM facts | Confidence: based on % extracted facts; reported as low-->top
-- `Source: Scratchpad` -> grounded to scratchpad facts | Confidence: based on % extracted facts; reported as low-->top
-- `Source: Locked file (SUMM_*.md)` -> grounded to locked source | Confidence: based on % extracted facts; reported as low-->top
-- `Sources: Vault` -> Mentats/Vault path
+Every response. Every time. Assigned by the router, not the model.
+
+Result:
+- The model doesn't grade its own homework. The router does.
+- You know immediately whether to trust it, verify it, or lock it harder.
+
+Sources:
+- `Source: Model` → fallback to model weights | Confidence: unverified. Maybe right. Maybe not. Proceed accordingly.
+- `Source: Docs` → grounded to attached docs/SUMM facts | Confidence: based on % facts extracted
+- `Source: Scratchpad` → grounded to what you pasted | Confidence: based on % facts extracted
+- `Source: Locked file (SUMM_*.md)` → grounded to locked source | Confidence: based on % facts extracted
+- `Source: Vault` → ##mentats path, grounded or refused
+- `Source: Cheatsheets` → grounded to your definitions | Confidence: high (you told it, it parrots it back)
+- `Source: Mixed` → touched multiple paths. Footer tells you which ones.
 
 ### 4) 📌 Grounding drift in normal chat (fixed with >>scratch / >>lock)
 
@@ -158,8 +159,8 @@ You: FFS. It's *in* the second paragraph. Why do you exist?
 
 WITH llama-conductor:
 ```text
-You: >>scratch
-You: [paste article text]
+You: >>add [paste article text]
+You: >>scratch lock <n>
 You: What does the article say the fine cap is?
 Router: [answers from article only, not training data]
 Footer: Confidence: high | Source: Scratchpad
@@ -175,25 +176,35 @@ Result:
 ### 5) 🎛️ Modes (get the stick out of your LLMs butt)
 
 WITHOUT llama-conductor:
-
 ```text
-One generic answer style.
-Tone and behavior drift by prompt luck.
-Nannybot 9000 kicks in: "Stop. You're not crazy. You're not hallucinating..." (Safety theatre)
+You: stop being so formal, just talk normally
+Model: Of course! So basically the deal is... [casual, this turn only]
+You: ok so what about X?
+Model: Certainly! X is a multifaceted concept that encompasses— [formal again]
+You: dude.
+Model: My apologies! To put it more plainly... [casual, this turn only]
+[repeat forever]
 ```
 
 WITH llama-conductor:
+```text
+You: >>fun
+You: Can you legally fire sentient yeast?
+Assistant: No. The Bread Labor Relations Act of 2024 does not exist. Sentient yeast is not a protected class. Feed it or bin it. That's it.
+Confidence: top | Source: Model
 
-- Serious (default): lowest style impact, strongest factual discipline
-- Fun (`>>fun` / `##fun`): quote-anchored style path. Same reasoning as serious mode, less stick up ass about it.
-- Fun Rewrite (`>>fr`): rewrite-style path over deterministic selector core. Will troll you, but won't make shit up.
-- Raw (`>>raw`): Pure raw mode your LLM ships with. Remember: they tell elegant lies. 
+You: >>fr
+You: Can you legally fire sentient yeast?
+[FUN REWRITE] "I don't want to live on this planet anymore."
+Your sourdough started a union. Cool. Legally? Zero rights. No statute covers sentient yeast. Just... feed it and move on. Or don't. I'm not your union rep.
+Confidence: high | Source: Model
+```
 
 Result:
-- Modes for when you need serious discussion, fun times or feral chaos. All based on serious core reinforcement.
-- Style profile (`Profile | Sarc | Snark`) affects tone, not grounding contracts.
-- Nb: for best results, pick an abliterated model that hasn't been lobotomised
-
+- Set it once. It stays set. Sick of it? Turn it off. Same turn, no need for new chat.
+- Same grounding contracts underneath — style changes delivery, not evidence.
+- TARS sliders (`Profile | Sarc | Snark`) tune the edge. Style adapts to how you talk to it.
+- Nb: for best results, pick an abliterated model that hasn't been lobotomised.
 ---
 
 ### 6) 🧪 Vibes-based answers (your model is a stochastic idiot)
@@ -219,6 +230,7 @@ Result:
 - Local definitions are deterministic and editable in one file.
 - You tell it once. It stays told. Priority: your definition → wiki → stochastic parrot.
 - Broken or missing row? Fails loud. 
+- Term in context window → deterministic re-grounding. Term gone → normal context rules. Don't like that? Pull it again.
 - Footer provenance makes source path explicit instead of making you guess.
 
 ---
