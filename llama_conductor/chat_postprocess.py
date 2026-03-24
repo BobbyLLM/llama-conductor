@@ -234,6 +234,20 @@ def _classify_scratch_provenance(
     return "Scratchpad" if ratio >= threshold else "Mixed"
 
 
+def _scratch_missing_query_tokens(*, user_text: str, facts_block: str, scratchpad_quotes: List[str]) -> List[str]:
+    """Return query tokens that are not supported by scratch evidence spans."""
+    q_tokens = quote_query_tokens(user_text or "")
+    if not q_tokens:
+        return []
+    support = quote_query_tokens(facts_block or "")
+    if not support and scratchpad_quotes:
+        support = quote_query_tokens(" ".join(scratchpad_quotes))
+    if not support:
+        return sorted(q_tokens)
+    missing = sorted(t for t in q_tokens if t not in support)
+    return missing
+
+
 def _clean_evidence_text(text: str) -> str:
     t = (text or "").strip()
     if not t:
@@ -529,6 +543,21 @@ def apply_scratchpad_strict_policy(
         facts_block=facts_block,
         user_text=user_text,
     )
+    missing_tokens = _scratch_missing_query_tokens(
+        user_text=user_text,
+        facts_block=facts_block,
+        scratchpad_quotes=scratchpad_quotes,
+    )
+    if missing_tokens:
+        missing_preview = ", ".join(missing_tokens[:6])
+        note = (
+            "[Not found in scratchpad evidence"
+            + (f" for: {missing_preview}" if missing_preview else "")
+            + ". Answer based on pre-trained data.]"
+        )
+        if note.lower() not in t.lower():
+            t = note + "\n\n" + t
+        return rewrite_source_line(t, "Source: Model (not in scratchpad evidence)")
     if provenance == "Mixed":
         return rewrite_source_line(t, "Source: Mixed")
     return rewrite_source_line(t, "Source: Scratchpad")
