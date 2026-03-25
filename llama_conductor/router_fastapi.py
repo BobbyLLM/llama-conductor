@@ -1,4 +1,4 @@
-"""FastAPI orchestration layer for llama-conductor.
+﻿"""FastAPI orchestration layer for llama-conductor.
 
 Responsibilities:
 - expose API routes
@@ -53,8 +53,6 @@ from .interaction_profile import (
     update_profile_from_user_turn,
 )
 from .privacy_utils import safe_preview, short_hash
-from .upstream_watchdog import start_watchdog, stop_watchdog
-
 # Required modules
 from .vodka_filter import Filter as VodkaFilter, purge_session_memory_jsonl, purge_vodka_ctx_facts
 from .serious import run_serious
@@ -1901,6 +1899,16 @@ _DELEGATE_DECISION_RE = re.compile(
     r"\b(you tell me|you decide|you choose|your call|pick for me|choose for me|idk|i dont know|i don't know|not sure)\b",
     re.IGNORECASE,
 )
+_DEFINITIONAL_QUERY_RE = re.compile(
+    r"^\s*(?:(?:so|but|and|well|ok|okay|right|yeah|yep|uh|um)\s+)*(?:"
+    r"what(?:'s|s|\s+is)\s+[^\n?]{1,96}(?:\s+exactly)?\??|"
+    r"definition\s+of\s+[^\n?]{1,96}\??|"
+    r"define\s+[^\n?]{1,96}\??|"
+    r"what\s+does\s+[^\n?]{1,96}\s+mean\??|"
+    r"[^\n?]{1,96}\s+(?:etymology|origin)\??"
+    r")\s*$",
+    re.IGNORECASE,
+)
 
 
 def _finalize_chat_response(
@@ -2016,7 +2024,7 @@ async def _chat_exception_guard(request: Request, call_next):
 
 
 @app.on_event("startup")
-async def _startup_watchdog() -> None:
+async def _startup_runtime() -> None:
     try:
         base = str(cfg_get("vodka.storage_dir", "") or "").strip()
         subdir = str(cfg_get("vodka.subdir", "vodka") or "vodka").strip()
@@ -2039,19 +2047,9 @@ async def _startup_watchdog() -> None:
             _dbg(f"[DEBUG] startup session-kb janitor stats={stats}")
     except Exception:
         pass
-    try:
-        start_watchdog()
-    except Exception:
-        pass
-
-
 @app.on_event("shutdown")
-async def _shutdown_watchdog() -> None:
-    try:
-        stop_watchdog()
-    except Exception:
-        pass
-
+async def _shutdown_runtime() -> None:
+    return None
 
 @app.get("/healthz")
 def healthz():
@@ -2122,16 +2120,14 @@ def _stage_openwebui_title_bypass(*, user_text_raw: str) -> Optional[str]:
 
     def _openwebui_title_for(t: str) -> str:
         t_l = t.lower()
-        if "cliniko" in t_l:
-            return "Cliniko Pipeline"
         if "router" in t_l or "fastapi" in t_l:
             return "Router Debugging"
         return "Chat Summary"
 
     if not _is_openwebui_title_task(user_text_raw):
         return None
-    CLINIKO_DEBUG = cfg_get("cliniko.debug", True)
-    if CLINIKO_DEBUG:
+    title_debug = bool(cfg_get("router.debug", False))
+    if title_debug:
         _dbg("[DEBUG] openwebui title task bypass")
     return json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
 
@@ -2831,11 +2827,27 @@ async def v1_chat_completions(req: Request):
     # (for example Vodka hard-command short-circuit) so closure/switch signals
     # in this user turn are persisted deterministically.
     _update_kaioken_topic_state_preturn(state, user_text)
+    kaioken_macro_for_vodka = "working"
+    kaioken_confidence_for_vodka = "low"
+    try:
+        if _kaioken_classify_register is not None:
+            cls_now = _kaioken_classify_register(str(user_text or ""))
+            macro_raw = str(getattr(cls_now, "macro", "") or "").strip().lower()
+            conf_raw = str(getattr(cls_now, "confidence", "") or "").strip().lower()
+            if macro_raw in {"working", "casual", "personal"}:
+                kaioken_macro_for_vodka = macro_raw
+            if conf_raw in {"low", "medium", "high", "med"}:
+                kaioken_confidence_for_vodka = "medium" if conf_raw == "med" else conf_raw
+    except Exception:
+        kaioken_macro_for_vodka = "working"
+        kaioken_confidence_for_vodka = "low"
 
     vodka, raw_messages, _NoOpVodka, vodka_meta = _apply_vodka_runtime(
         state=state,
         raw_messages=raw_messages,
         session_id=session_id,
+        kaioken_macro=kaioken_macro_for_vodka,
+        kaioken_confidence=kaioken_confidence_for_vodka,
         cfg_get=cfg_get,
         VodkaFilter=VodkaFilter,
         preset_for_session=(lambda s, c: _vr_preset_for_session(s, c, _VODKA_PRESET_MAP)),
@@ -3497,6 +3509,7 @@ async def v1_chat_completions(req: Request):
         skip_correction_bind = False
         if correction_bind:
             low = str(user_text or "").lower()
+            is_definitional_turn = bool(_DEFINITIONAL_QUERY_RE.search(str(user_text or "")))
             new_v, unit_v, _old_v = _extract_numeric_correction(user_text)
             has_numeric_rest = bool(new_v and unit_v)
             has_i_meant = bool(
@@ -3513,19 +3526,48 @@ async def v1_chat_completions(req: Request):
             has_not_but_rest = bool(re.search(r"\bnot\b[^\n]{0,64}\bbut\b", low, flags=re.IGNORECASE))
             lexical_strong = bool(has_numeric_rest or has_explicit_rest or has_not_but_rest)
             correction_is_strong = bool(correction_bind_structural or lexical_strong)
-            if not correction_is_strong:
-                macro_personal = False
+            if correction_bind_structural:
                 try:
                     if _kaioken_classify_register is not None:
                         cls_cur = _kaioken_classify_register(str(user_text or ""))
-                        macro_personal = str(getattr(cls_cur, "macro", "") or "").strip().lower() == "personal"
+                        macro_cur = str(getattr(cls_cur, "macro", "") or "").strip().lower()
+                        conf_label = str(getattr(cls_cur, "confidence", "low") or "low").strip().lower()
+                        conf_medium_or_higher = conf_label in {"high", "medium", "med"}
+                        if macro_cur == "working" and (not conf_medium_or_higher):
+                            skip_correction_bind = True
+                except Exception:
+                    pass
+            if is_definitional_turn:
+                # Low-blast exemption: definitional pivots should answer directly,
+                # not rewrite the previous assistant turn as a "correction".
+                skip_correction_bind = True
+            if not correction_is_strong:
+                macro_personal = False
+                macro_casual = False
+                conf_label = "low"
+                try:
+                    if _kaioken_classify_register is not None:
+                        cls_cur = _kaioken_classify_register(str(user_text or ""))
+                        macro_cur = str(getattr(cls_cur, "macro", "") or "").strip().lower()
+                        macro_personal = macro_cur == "personal"
+                        macro_casual = macro_cur == "casual"
+                        conf_label = str(getattr(cls_cur, "confidence", "low") or "low").strip().lower()
                 except Exception:
                     macro_personal = False
+                    macro_casual = False
+                    conf_label = "low"
                 prior_distress_carry = bool(
                     bool(getattr(state, "kaioken_short_fallback_distress_lane", False))
                     or bool(set(getattr(state, "kaioken_distress_topics", set()) or set()))
                 )
-                skip_correction_bind = bool(macro_personal or prior_distress_carry)
+                conf_medium_or_higher = conf_label in {"high", "medium", "med"}
+                skip_correction_bind = bool(
+                    skip_correction_bind
+                    or macro_personal
+                    or macro_casual
+                    or (not conf_medium_or_higher)
+                    or prior_distress_carry
+                )
         if correction_bind and not skip_correction_bind:
             correction_resp = _maybe_handle_correction_bind(
                 state=state,
@@ -3687,3 +3729,4 @@ if __name__ == "__main__":
     host = str(cfg_get("server.host", "0.0.0.0"))
     port = int(cfg_get("server.port", 9000))
     uvicorn.run("router_fastapi:app", host=host, port=port, reload=False)
+

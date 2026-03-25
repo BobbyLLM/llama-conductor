@@ -21,7 +21,7 @@ _SRC_RE = re.compile(
 )
 _CONF_PREFIX_RE = re.compile(r"^\s*Confidence:\s*", re.IGNORECASE)
 _INLINE_CONF_RE = re.compile(
-    r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki)\s*",
+    r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki)(?:[\s\.\-:]+[A-Za-z]+){0,3}\s*",
     re.IGNORECASE,
 )
 _SIMPLE_SOURCE_LINE_RE = re.compile(

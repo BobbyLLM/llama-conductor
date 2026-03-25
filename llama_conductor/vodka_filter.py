@@ -1247,7 +1247,15 @@ class Filter:
             "schema_version": 2,
         }
 
-    def _build_matrix_units_for_segment(self, *, role: str, seg: str, turn_marker: int) -> List[Dict[str, Any]]:
+    def _build_matrix_units_for_segment(
+        self,
+        *,
+        role: str,
+        seg: str,
+        turn_marker: int,
+        kaioken_macro: str = "working",
+        kaioken_confidence: str = "low",
+    ) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         tags = self._extract_memory_tags(seg, limit=16)
         s = " ".join((seg or "").split()).strip()
@@ -1366,7 +1374,11 @@ class Filter:
             )
 
         # explicit question capture
-        if "?" in s:
+        if "?" in s and not self._is_low_information_chat_text(
+            s,
+            kaioken_macro=kaioken_macro,
+            kaioken_confidence=kaioken_confidence,
+        ):
             out.append(
                 self._make_matrix_unit(
                     role=role,
@@ -1380,22 +1392,37 @@ class Filter:
                 )
             )
 
-        # factual fallback unit (always keep one canonical text unit)
-        out.append(
-            self._make_matrix_unit(
-                role=role,
-                turn_marker=turn_marker,
-                matrix_type="fact",
-                text=s,
-                tags=tags,
-                subject="user" if role == "user" else role,
-                relation="said",
-                obj="",
+        # Factual fallback unit:
+        # store canonical text only when segment carries recall signal.
+        if not self._is_low_information_chat_text(
+            s,
+            kaioken_macro=kaioken_macro,
+            kaioken_confidence=kaioken_confidence,
+        ):
+            out.append(
+                self._make_matrix_unit(
+                    role=role,
+                    turn_marker=turn_marker,
+                    matrix_type="fact",
+                    text=s,
+                    tags=tags,
+                    subject="user" if role == "user" else role,
+                    relation="said",
+                    obj="",
+                )
             )
-        )
         return out
 
-    def _build_memory_units(self, messages: List[Dict], *, n_user: int, max_segments: int = 3, include_assistant: bool = False) -> List[Dict[str, Any]]:
+    def _build_memory_units(
+        self,
+        messages: List[Dict],
+        *,
+        n_user: int,
+        max_segments: int = 3,
+        include_assistant: bool = False,
+        kaioken_macro: str = "working",
+        kaioken_confidence: str = "low",
+    ) -> List[Dict[str, Any]]:
         ua = [m for m in messages if m.get("role") in ("user", "assistant")]
         tail = ua[-24:]  # wider capture to reduce near-term forgetting on long turns
         users_in_tail = sum(1 for m in tail if m.get("role") == "user")
@@ -1422,7 +1449,17 @@ class Filter:
                 if not bool(self.valves.summary_store_pii):
                     if self._contains_likely_pii(seg):
                         seg = self._sanitize_memory_segment(seg)
-                units.extend(self._build_matrix_units_for_segment(role=role, seg=seg, turn_marker=turn_marker))
+                seg_macro = str(m.get("_kaioken_macro", kaioken_macro) or kaioken_macro).strip().lower()
+                seg_confidence = str(m.get("_kaioken_confidence", kaioken_confidence) or kaioken_confidence).strip().lower()
+                units.extend(
+                    self._build_matrix_units_for_segment(
+                        role=role,
+                        seg=seg,
+                        turn_marker=turn_marker,
+                        kaioken_macro=seg_macro,
+                        kaioken_confidence=seg_confidence,
+                    )
+                )
         return units
 
     def _merge_memory_units(self, existing: List[Dict[str, Any]], fresh: List[Dict[str, Any]], *, max_units: int) -> List[Dict[str, Any]]:
@@ -1531,7 +1568,16 @@ class Filter:
         self._mu_cache[sid] = by_id
         self._mu_index[sid] = idx
 
-    def _maybe_update_session_memory(self, messages: List[Dict], *, session_id: str, every_n: int, debug_enabled: bool) -> None:
+    def _maybe_update_session_memory(
+        self,
+        messages: List[Dict],
+        *,
+        session_id: str,
+        every_n: int,
+        debug_enabled: bool,
+        kaioken_macro: str = "working",
+        kaioken_confidence: str = "low",
+    ) -> None:
         if every_n <= 0:
             return
         n_user = self._count_user_messages(messages)
@@ -1545,6 +1591,8 @@ class Filter:
             n_user=n_user,
             max_segments=int(self.valves.summary_segments_per_message or 3),
             include_assistant=bool(self.valves.summary_include_assistant),
+            kaioken_macro=str(kaioken_macro or "working").strip().lower(),
+            kaioken_confidence=str(kaioken_confidence or "low").strip().lower(),
         )
         write_path = self._session_memory_file(sid)
         read_path = self._session_memory_read_file(sid)
@@ -1650,6 +1698,38 @@ class Filter:
         )
         return any(t.startswith(p) for p in meta_prefixes)
 
+    def _is_low_information_chat_text(
+        self,
+        text: str,
+        *,
+        kaioken_macro: str = "working",
+        kaioken_confidence: str = "low",
+    ) -> bool:
+        t_raw = str(text or "").strip()
+        t = " ".join(t_raw.lower().split())
+        if not t:
+            return True
+
+        words = re.findall(r"[a-zA-Z0-9']+", t)
+        if not words:
+            return True
+
+        # Option B gate: ingestion decision depends on message shape only.
+        # No macro/classifier gating in this path.
+        content_tokens = set(self._tokenize_for_search(t))
+        lexical_density = float(len(content_tokens)) / float(max(1, len(words)))
+        word_count = len(words)
+
+        if word_count <= 4:
+            return True
+        if word_count <= 8:
+            return True
+        if word_count <= 12 and lexical_density < 0.30:
+            return True
+        if word_count <= 14 and lexical_density < 0.22:
+            return True
+        return False
+
     def _is_noise_memory_text(self, text: str) -> bool:
         t = " ".join((text or "").strip().lower().split())
         if not t:
@@ -1669,6 +1749,8 @@ class Filter:
             "no typos detected",
         )
         if any(t.startswith(p) for p in noisy_prefixes):
+            return True
+        if self._is_low_information_chat_text(t, kaioken_macro="working", kaioken_confidence="high"):
             return True
         return False
 
@@ -2635,12 +2717,28 @@ class Filter:
             return self._upsert_memory_message(messages, "", debug_enabled=False)
 
         sid = sid_raw or "global"
+        kaioken_macro = str(body.get("kaioken_macro") or "working").strip().lower()
+        kaioken_confidence = str(body.get("kaioken_confidence") or "low").strip().lower()
+        if kaioken_macro not in {"working", "casual", "personal"}:
+            kaioken_macro = "working"
+        if kaioken_confidence not in {"low", "medium", "high"}:
+            kaioken_confidence = "low"
+        if messages:
+            # Annotate latest user turn with the already-assigned KAIOKEN macro.
+            # No re-classification in Vodka.
+            for i in range(len(messages) - 1, -1, -1):
+                if str(messages[i].get("role") or "").lower() == "user":
+                    messages[i]["_kaioken_macro"] = kaioken_macro
+                    messages[i]["_kaioken_confidence"] = kaioken_confidence
+                    break
         every_n = int(self.valves.summary_every_n_user_msgs or 0)
         self._maybe_update_session_memory(
             messages=messages,
             session_id=sid,
             every_n=every_n,
             debug_enabled=debug_enabled,
+            kaioken_macro=kaioken_macro,
+            kaioken_confidence=kaioken_confidence,
         )
         return self._maybe_inject_session_memory(
             messages=messages,
