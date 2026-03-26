@@ -59,10 +59,18 @@ _REFINEMENT_FOLLOWUP_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_LEXICAL_FOLLOWUP_RE = re.compile(
+    r"\b("
+    r"pluto|etymology|origin|word|means?|definition|defined|related to"
+    r")\b",
+    re.IGNORECASE,
+)
 _REASONING_LEAK_LINE_RE = re.compile(
     r"^\s*(?:\((?:contextual|reasoning|thinking|analysis)\)\s*:|(?:contextual|reasoning|thinking|analysis)\s*:)\s*",
     re.IGNORECASE,
 )
+_FOOTER_META_LINE_RE = re.compile(r"^\s*(?:Confidence:|Source:|Sources:|Profile:)\b", re.IGNORECASE)
+_SENTENCE_SPLIT_RE = re.compile(r"[^.!?\n]+[.!?]*", re.UNICODE)
 _EDS_OWNERSHIP_DESCRIPTOR_RE = re.compile(
     r"\b("
     r"(?:you(?:['’]re| are)\s+(?:\w+\s+){0,3}?(?:unstable|broken|worthless|damaged|weak|fraud(?:ulent)?))|"
@@ -145,6 +153,10 @@ def _repeat_guard_trips(*, prev_sig: str, cur_sig: str, user_text: str, prev_use
         ratio = SequenceMatcher(None, str(prev_sig or "").lower(), str(cur_sig or "").lower()).ratio()
         return ratio >= 0.98
     return True
+
+
+def _is_lexical_followup_turn(user_text: str) -> bool:
+    return bool(_LEXICAL_FOLLOWUP_RE.search(str(user_text or "")))
 
 
 def _normalize_quotes(s: str) -> str:
@@ -243,6 +255,136 @@ def _strip_reasoning_leak_lines(text: str) -> str:
             continue
         kept.append(ln)
     return "\n".join(kept).strip()
+
+
+def _clamp_single_response_sentence_loops(text: str, max_repeats: int = 2) -> str:
+    """Clamp pathological single-response sentence loops.
+
+    Body-only, footer-safe:
+    - Detect repeated normalized sentences in assistant body text.
+    - If any sentence would appear more than `max_repeats`, truncate before that
+      occurrence and close cleanly.
+    - Footer/meta lines are excluded from repetition counting.
+    """
+    raw = str(text or "")
+    if not raw.strip():
+        return raw
+
+    counts: dict[str, int] = {}
+    out_lines: list[str] = []
+    truncated = False
+
+    for ln in raw.splitlines():
+        s = str(ln or "")
+        if _FOOTER_META_LINE_RE.match(s.strip()):
+            out_lines.append(ln)
+            continue
+
+        segs = _SENTENCE_SPLIT_RE.findall(s)
+        if not segs:
+            out_lines.append(ln)
+            continue
+
+        kept_parts: list[str] = []
+        for seg in segs:
+            piece = str(seg or "")
+            norm = re.sub(r"\s+", " ", piece).strip().lower()
+            if not norm:
+                kept_parts.append(piece)
+                continue
+            nxt = int(counts.get(norm, 0)) + 1
+            if nxt > int(max_repeats):
+                truncated = True
+                break
+            counts[norm] = nxt
+            kept_parts.append(piece)
+
+        if kept_parts:
+            out_lines.append("".join(kept_parts).rstrip())
+
+        if truncated:
+            break
+
+    out = "\n".join(out_lines).strip()
+    if truncated and out and (out[-1] not in ".!?"):
+        out = out.rstrip() + "."
+    return out
+
+
+def _apply_user_parrot_guard(text: str, user_text: str, state: Any) -> str:
+    """Generalized user-parrot guard (body-only, footer-safe).
+
+    Single helper with two thresholds:
+    - Threshold A (partial mirror): strip leading short/low-density echo sentence.
+    - Threshold B (full parrot): replace full body only when overlap is high and
+      novelty is near-zero (assistant adds essentially no new content).
+    """
+    raw = str(text or "")
+    if not raw.strip():
+        return raw
+
+    lines = raw.splitlines()
+    body_lines: list[str] = []
+    footer_lines: list[str] = []
+    in_footer = False
+    for ln in lines:
+        if _FOOTER_META_LINE_RE.match(str(ln or "").strip()):
+            in_footer = True
+        if in_footer:
+            footer_lines.append(ln)
+        else:
+            body_lines.append(ln)
+
+    body = "\n".join(body_lines).strip()
+    if not body:
+        return raw
+
+    def _join_with_footer(new_body: str) -> str:
+        parts = [str(new_body or "").strip()]
+        if footer_lines:
+            parts.append("\n".join(footer_lines).strip())
+        return "\n\n".join(p for p in parts if p).strip()
+
+    # Threshold A: leading-echo strip on first sentence.
+    m = _SENTENCE_SPLIT_RE.search(body)
+    if m:
+        first_sentence = str(m.group(0) or "").strip()
+        if first_sentence:
+            first_tokens = re.findall(r"[a-z0-9]+", first_sentence.lower())
+            if first_tokens:
+                short_turn = len(first_tokens) <= 14
+                content_tokens = [t for t in first_tokens if t not in _STOPWORDS and len(t) >= 3]
+                lexical_density = float(len(content_tokens) / max(1, len(first_tokens)))
+                low_density = lexical_density <= 0.45
+                high_overlap = _token_overlap_ratio(first_sentence, user_text) >= 0.70
+                if short_turn and low_density and high_overlap:
+                    stripped_body = body[m.end():].lstrip()
+                    body = stripped_body if stripped_body else "Go on."
+
+    # Threshold B: full-body replacement for near-pure parroting.
+    body_tokens = re.findall(r"[a-z0-9]+", body.lower())
+    if body_tokens:
+        user_tokens = _token_set(user_text)
+        body_token_set = _token_set(body)
+        overlap = _token_overlap_ratio(body, user_text)
+        novel = body_token_set.difference(user_tokens) if user_tokens else body_token_set
+        novelty_ratio = float(len(novel) / max(1, len(body_token_set))) if body_token_set else 1.0
+        content_tokens = [t for t in body_tokens if t not in _STOPWORDS and len(t) >= 3]
+        lexical_density = float(len(content_tokens) / max(1, len(body_tokens)))
+        short_body = len(body_tokens) <= 28
+        high_overlap = overlap >= 0.80
+        very_low_novelty = novelty_ratio <= 0.10
+        low_density = lexical_density <= 0.55
+        if short_body and high_overlap and very_low_novelty and low_density:
+            prof = getattr(state, "interaction_profile", None)
+            ack_style = str(getattr(prof, "ack_reframe_style", "plain") or "plain").lower()
+            snark = str(getattr(prof, "snark_tolerance", "low") or "low").lower()
+            if ack_style == "feral" or snark in ("medium", "high"):
+                body = "Not much on my side. You're the one with skin in the game - what do you want to dig into?"
+            else:
+                body = "Not much on my side. What do you want to dig into?"
+
+    return _join_with_footer(body)
 
 
 def finalize_chat_response(
@@ -556,13 +698,14 @@ def finalize_chat_response(
                 strip_footer_lines_for_scan_fn(str(getattr(state, "last_assistant_text", "") or ""))
             )
             cur_body = normalize_signature_text_fn(strip_footer_lines_for_scan_fn(str(text or "")))
+            lexical_followup_turn = _is_lexical_followup_turn(str(user_text or ""))
             if prev_body and cur_body:
                 if _repeat_guard_trips(
                     prev_sig=prev_body,
                     cur_sig=cur_body,
                     user_text=user_text,
                     prev_user_text=str(getattr(state, "last_user_text", "") or "").strip(),
-                ):
+                ) and (not lexical_followup_turn):
                     text = "I hear you."
         except Exception:
             pass
@@ -623,6 +766,12 @@ def finalize_chat_response(
                 )
         except Exception:
             pass
+
+    # Generalized user-parrot guard (body-only, footer-safe).
+    text = _apply_user_parrot_guard(text, user_text, state)
+
+    # Single-response repetition clamp (body-only, footer-safe).
+    text = _clamp_single_response_sentence_loops(text, max_repeats=2)
 
     text = apply_deterministic_footer_fn(
         text=text,

@@ -1,0 +1,55 @@
+{"term": "shooting the shit", "category": "idiom", "definition": "Casual conversation with no agenda. Not a task, not a question requiring an answer, not a correction. Register: relaxed, informal. Correct response: match the register and roll with it. Do NOT define this phrase literally or explain what it means.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "conversation"]}
+
+{"term": "shoot the shit", "category": "idiom", "definition": "Casual conversation with no agenda. Not a task, not a question requiring an answer, not a correction. Register: relaxed, informal. Correct response: match the register and roll with it. Do NOT define this phrase literally or explain what it means.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "conversation"]}
+
+{"term": "chewing the fat", "category": "idiom", "definition": "Casual, unhurried conversation. Same register as 'shooting the shit'. Implies relaxed back-and-forth with no particular destination. Do NOT define this phrase literally, do NOT explain its etymology unless explicitly asked.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "conversation"]}
+
+{"term": "chew the fat", "category": "idiom", "definition": "Casual, unhurried conversation. Same register as 'shooting the shit'. Implies relaxed back-and-forth with no particular destination. Do NOT define this phrase literally, do NOT explain its etymology unless explicitly asked.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "conversation"]}
+
+{"term": "taking the piss", "category": "idiom", "definition": "Joking around, being sarcastic, or mocking lightly. Can also mean 'are you serious?' when used as a question ('you taking the piss?'). Context-dependent: friendly ribbing vs genuine disbelief. Register: casual, often feral. Do NOT treat as literal.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "australian"]}
+
+{"term": "take the piss", "category": "idiom", "definition": "Joking around, being sarcastic, or mocking lightly. Can also mean 'are you serious?' when used as a question ('you taking the piss?'). Context-dependent: friendly ribbing vs genuine disbelief. Register: casual, often feral. Do NOT treat as literal.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "australian"]}
+
+{"term": "gone pear-shaped", "category": "idiom", "definition": "Something went wrong, broke, or failed unexpectedly. Equivalent to 'borked', 'cooked', or 'fucked'. Technical context: a fix introduced a regression, a pipeline misfired, a canary failed. Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "failure"]}
+
+{"term": "cooked", "category": "idiom", "definition": "Broken, messed up, or in a bad state. Can apply to code, hardware, a plan, or a person who is exhausted. 'The router is cooked' = it's broken. 'I'm cooked' = exhausted. Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "australian"]}
+
+{"term": "borked", "category": "idiom", "definition": "Broken or malfunctioning, usually applied to software, code, or systems. Stronger than 'buggy', implies the thing is meaningfully non-functional right now. 'The classifier is borked' = it's producing wrong outputs. Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "technical"]}
+
+{"term": "yak shaving", "category": "idiom", "definition": "The phenomenon of doing increasingly tangential tasks before you can do the thing you actually needed to do. 'I wanted to fix the classifier but ended up yak shaving for three hours on the regex.' Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "technical", "coding"]}
+
+{"term": "rabbit hole", "category": "idiom", "definition": "A deep, often unexpected chain of investigation or tangents. 'I went down a rabbit hole on correction_bind.' Implies losing track of time and original scope. Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "investigation"]}
+
+{"term": "belt and suspenders", "category": "idiom", "definition": "Adding a redundant second safety mechanism when the first should be sufficient. Usually a sign the primary mechanism isn't trusted. In engineering: over-engineering via layered fallbacks. When you hear this phrase, flag it -- it often means the real fix is being avoided.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "technical", "antipattern"]}
+
+{"term": "spanner in the works", "category": "idiom", "definition": "Something that disrupts or breaks a plan or system unexpectedly. 'The SESSION_MEMORY bug was a spanner in the works.' British/Australian usage. Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "disruption"]}
+
+{"term": "cut to the chase", "category": "idiom", "definition": "Get to the point, skip the preamble. Often a signal the user wants a direct answer without context-setting. Register: direct, impatient. Match with a short, direct response.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "direct"]}
+
+{"term": "bite the bullet", "category": "idiom", "definition": "Accept an unpleasant situation and deal with it anyway. 'We bit the bullet and refactored the whole thing.' Implies reluctant but necessary action. Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "decision"]}
+
+{"term": "in the weeds", "category": "idiom", "definition": "Deep in detail, often to the point of losing the big picture. 'Don't get in the weeds on the regex -- fix the classifier.' Can also mean overwhelmed with work. Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "technical"]}
+
+{"term": "kick the can down the road", "category": "idiom", "definition": "Defer a problem rather than solving it. Usually used critically. 'Adding a keyword blacklist is just kicking the can down the road.' Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "deferral", "antipattern"]}
+
+{"term": "up shit creek", "category": "idiom", "definition": "In serious trouble with no obvious way out. Usually followed by 'without a paddle'. 'If the classifier misfires in production we're up shit creek.' Profanity-inclusive variant -- appropriate for feral/direct profiles. Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "trouble"]}
+
+{"term": "paint yourself into a corner", "category": "idiom", "definition": "Make a series of decisions that leave you with no good options. Architectural context: design choices that make refactoring impossible without breaking everything. Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "technical", "design"]}
+
+{"term": "bike shedding", "category": "idiom", "definition": "Spending disproportionate time on trivial details while ignoring the important ones. Named after Parkinson's law of triviality. 'Stop bike shedding the footer format and fix the classifier.' Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "technical", "antipattern"]}
+
+{"term": "rubber duck debugging", "category": "idiom", "definition": "Explaining a problem out loud (to a rubber duck, or anyone who'll listen) as a method of solving it. The act of articulation forces clarity. Meta-note: this is literally what the user may be doing when they explain bugs to the model. Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "technical", "debugging"]}
+
+{"term": "hit the nail on the head", "category": "idiom", "definition": "Identified or described something exactly correctly. 'You hit the nail on the head with the SESSION_MEMORY diagnosis.' Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "accuracy"]}
+
+{"term": "burn the midnight oil", "category": "idiom", "definition": "Work late into the night. Describes extended late-night work sessions. 'Been burning the midnight oil on this classifier.' Do NOT define literally -- and don't recommend stopping unless explicitly appropriate.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "work"]}
+
+{"term": "back to the drawing board", "category": "idiom", "definition": "Start over from scratch because the current approach failed. 'The blacklist approach failed -- back to the drawing board.' Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "restart"]}
+
+{"term": "throw under the bus", "category": "idiom", "definition": "Blame someone else to avoid taking responsibility yourself. Can apply to code: 'don't throw finalize under the bus when the classifier is the real problem.' Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "blame"]}
+
+{"term": "rip and tear", "category": "idiom", "definition": "Aggressive, relentless forward progress. From DOOM. 'Rip and tear until it's done.' Implies brute-force persistence through problems. Register: feral, high energy. Match accordingly.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "feral", "gaming"]}
+
+{"term": "move needle", "category": "idiom", "definition": "A change or action that produces meaningful, visible improvement. 'Highest-yield needle mover' = the fix that gives the most bang for the effort. Used to prioritise work. Do NOT define literally.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "priority"]}
+
+{"term": "scope creep", "category": "idiom", "definition": "The gradual expansion of a task's requirements beyond the original spec. Common Codex failure mode: asked to fix one thing, starts touching three others. 'Don't let it scope-creep into the classifier' is a standing instruction.", "source": "static", "confidence": "high", "tags": ["idiom", "casual_register", "technical", "antipattern"]}
