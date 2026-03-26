@@ -402,6 +402,8 @@ def _build_kaioken_soft_constraints(*, state: SessionState, user_text: str) -> s
 
     if "directive" in subs:
         hints.append("Follow user constraints/format exactly before adding extra detail.")
+    if "friction" in subs:
+        hints.append("User is pushing back; match energy without escalating or dismissing. Do not lecture.")
 
     if "vulnerable_under_humour" in subs:
         hints.extend([

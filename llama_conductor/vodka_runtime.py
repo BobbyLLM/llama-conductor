@@ -59,6 +59,8 @@ def apply_vodka_runtime(
     state: Any,
     raw_messages: List[Dict[str, Any]],
     session_id: str,
+    kaioken_macro: str,
+    kaioken_confidence: str,
     cfg_get: Callable[[str, Any], Any],
     VodkaFilter: Any,
     preset_for_session: Callable[[Any, Dict[str, Any]], str],
@@ -125,7 +127,12 @@ def apply_vodka_runtime(
     except Exception:
         pass
 
-    vodka_body = {"messages": raw_messages, "session_id": session_id}
+    vodka_body = {
+        "messages": raw_messages,
+        "session_id": session_id,
+        "kaioken_macro": str(kaioken_macro or "").strip().lower(),
+        "kaioken_confidence": str(kaioken_confidence or "").strip().lower(),
+    }
     vodka_meta: Dict[str, Any] = {}
     try:
         vodka_body = vodka.inlet(vodka_body)

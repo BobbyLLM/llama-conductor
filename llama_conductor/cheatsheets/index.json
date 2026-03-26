@@ -1,11 +1,11 @@
 {
-  "generated_at_utc": "2026-03-26T04:19:20.720072+00:00",
-  "entry_count": 127,
+  "generated_at_utc": "2026-03-26T16:28:46.596956+00:00",
+  "entry_count": 128,
   "topic_count": 5,
   "topics": [
     {
       "topic": "glossary",
-      "term_count": 39
+      "term_count": 42
     },
     {
       "topic": "hardware",

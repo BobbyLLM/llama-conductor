@@ -1,6 +1,5 @@
 ﻿# model_calls.py
 """Model API call functions."""
-
 from typing import Any, Dict, List
 
 import requests

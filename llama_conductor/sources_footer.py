@@ -32,6 +32,20 @@ _INLINE_PROFILE_TAIL_RE = re.compile(
     r")\s*$",
     re.IGNORECASE,
 )
+_INLINE_PROFILE_ANY_RE = re.compile(
+    r"(?:"
+    r"(?:\s*(?:\|\s*)?Profile:\s*[^|\n]{1,40}\s*\|\s*Sarc:\s*[^|\n]{1,20}\s*\|\s*Snark:\s*[^|\n]{1,20})"
+    r"|"
+    r"(?:\s*\|\s*Sarc:\s*[^|\n]{1,20}\s*\|\s*Snark:\s*[^|\n]{1,20})"
+    r"|"
+    r"(?:\s*\|\s*Sarc:\s*[^|\n]{1,20})"
+    r"|"
+    r"(?:\s*\|\s*Snark:\s*[^|\n]{1,20})"
+    r"|"
+    r"(?:\bFeral:\s*)"
+    r")",
+    re.IGNORECASE,
+)
 _SIMPLE_SOURCE_LINE_RE = re.compile(
     r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki)\s*$",
     re.IGNORECASE,
@@ -54,6 +68,7 @@ def _strip_confidence_lines(text: str) -> str:
             continue
         ln2 = _INLINE_CONF_RE.sub("", ln).rstrip()
         ln2 = _INLINE_PROFILE_TAIL_RE.sub("", ln2).rstrip()
+        ln2 = _INLINE_PROFILE_ANY_RE.sub("", ln2).rstrip()
         kept.append(ln2)
     return "\n".join(kept).strip()
 

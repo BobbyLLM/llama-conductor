@@ -52,6 +52,7 @@ _VENT_OPENER_RE = re.compile(
     r"\b(hell of a day|rough day|vent|venting|long day|fucking day|hard day)\b",
     re.IGNORECASE,
 )
+
 _REFINEMENT_FOLLOWUP_RE = re.compile(
     r"\b("
     r"specifically|specific|specs?|details?|exactly|which one|which model|version|"
@@ -70,6 +71,20 @@ _REASONING_LEAK_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 _FOOTER_META_LINE_RE = re.compile(r"^\s*(?:Confidence:|Source:|Sources:|Profile:)\b", re.IGNORECASE)
+_INLINE_PROFILE_FRAGMENT_RE = re.compile(
+    r"(?:"
+    r"(?:\s*(?:\|\s*)?Profile:\s*[^|\n]{1,40}\s*\|\s*Sarc:\s*[^|\n]{1,20}\s*\|\s*Snark:\s*[^|\n]{1,20})"
+    r"|"
+    r"(?:\s*\|\s*Sarc:\s*[^|\n]{1,20}\s*\|\s*Snark:\s*[^|\n]{1,20})"
+    r"|"
+    r"(?:\s*\|\s*Sarc:\s*[^|\n]{1,20})"
+    r"|"
+    r"(?:\s*\|\s*Snark:\s*[^|\n]{1,20})"
+    r"|"
+    r"(?:\bFeral:\s*)"
+    r")",
+    re.IGNORECASE,
+)
 _SENTENCE_SPLIT_RE = re.compile(r"[^.!?\n]+[.!?]*", re.UNICODE)
 _EDS_OWNERSHIP_DESCRIPTOR_RE = re.compile(
     r"\b("
@@ -257,6 +272,21 @@ def _strip_reasoning_leak_lines(text: str) -> str:
     return "\n".join(kept).strip()
 
 
+def _strip_inline_profile_fragments(text: str) -> str:
+    raw = str(text or "")
+    if not raw.strip():
+        return raw
+    out: list[str] = []
+    for ln in raw.splitlines():
+        s = str(ln or "")
+        if _FOOTER_META_LINE_RE.match(s.strip()):
+            out.append(s)
+            continue
+        s2 = _INLINE_PROFILE_FRAGMENT_RE.sub("", s).rstrip()
+        out.append(s2)
+    return "\n".join(out).strip()
+
+
 def _clamp_single_response_sentence_loops(text: str, max_repeats: int = 2) -> str:
     """Clamp pathological single-response sentence loops.
 
@@ -345,6 +375,22 @@ def _apply_user_parrot_guard(text: str, user_text: str, state: Any) -> str:
             parts.append("\n".join(footer_lines).strip())
         return "\n\n".join(p for p in parts if p).strip()
 
+    # High-confidence leading verbatim mirror strip (density-independent):
+    # if body starts with the same token sequence as user text, drop that
+    # mirrored prefix regardless of lexical-density heuristics.
+    u_tok_iter = list(re.finditer(r"[a-z0-9]+", str(user_text or "").lower()))
+    b_tok_iter = list(re.finditer(r"[a-z0-9]+", body.lower()))
+    u_toks = [m.group(0) for m in u_tok_iter]
+    b_toks = [m.group(0) for m in b_tok_iter]
+    if len(u_toks) >= 3 and len(b_toks) >= len(u_toks):
+        same_prefix = all(b_toks[i] == u_toks[i] for i in range(len(u_toks)))
+        if same_prefix:
+            cut_idx = int(b_tok_iter[len(u_toks) - 1].end())
+            while cut_idx < len(body) and body[cut_idx] in " \t\r\n.,!?;:'\"-)]}":
+                cut_idx += 1
+            stripped = str(body[cut_idx:] or "").lstrip()
+            body = stripped if stripped else "Go on."
+
     # Threshold A: leading-echo strip on first sentence.
     m = _SENTENCE_SPLIT_RE.search(body)
     if m:
@@ -430,6 +476,7 @@ def finalize_chat_response(
     compute_effective_strength_fn: Callable[..., float],
 ) -> Any:
     text = _strip_reasoning_leak_lines(str(text or ""))
+    text = _strip_inline_profile_fragments(str(text or ""))
 
     def _set_lock_miss_footer(in_text: str) -> str:
         t = str(in_text or "").strip()

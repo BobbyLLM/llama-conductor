@@ -49,6 +49,5 @@ where = ["."]
 include = ["llama_conductor*"]
 
 [tool.setuptools.package-data]
-llama_conductor = ["*.yaml", "*.jsonl", "*.md", "cheatsheets/*.jsonl", "cheatsheets/*.json"]
-
+llama_conductor = ["*.yaml", "*.jsonl", "*.md"]
 

@@ -25,6 +25,7 @@ For a normal install, you need:
 That's it.
 
 For install details, see [README Quickstart](README.md#quickstart-first-time-recommended).
+Need the fastest path? See [README 5-Minute Quickstart](README.md#5-minute-quickstart).
 
 ## Table of contents
 
@@ -1588,7 +1589,6 @@ Else, you can roll the dice: sanding-oink-grant(AT)duck(DOT)com or find me on Le
 
 ## License
 AGPL-3.0-or-later. See `LICENSE`
-
 
 
 
