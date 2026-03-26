@@ -1,8 +1,9 @@
-﻿# commands/handlers.py
+# commands/handlers.py
 """Main command handling logic."""
 
 import os
 import re
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
 from ..config import (
@@ -24,6 +25,7 @@ from ..interaction_profile import (
 from ..helpers import is_command, strip_cmd_prefix, parse_args
 from ..vault_ops import summ_new_in_kb, move_summ_to_vault
 from ..model_calls import call_model_prompt
+from .cliniko import handle_cliniko_command
 from .registry import resolve_command_key
 
 # Optional imports (feature-detected)
@@ -100,6 +102,11 @@ except Exception:
     VodkaFilter = None  # type: ignore
 
 try:
+    from ..cheatsheets_runtime import load_cheatsheets_entries  # type: ignore
+except Exception:
+    load_cheatsheets_entries = None  # type: ignore
+
+try:
     from ..judge_worker import (  # type: ignore
         parse_judge_payload,
         run_judge,
@@ -121,6 +128,118 @@ def _resolve_judge_audit_dir() -> str:
     if not p:
         p = os.path.join("total_recall", "judge")
     return p
+
+
+_SIDECAR_FAIL_TOKENS_RE = re.compile(
+    r"\b(request timeout|timeout|not found|http error|error:|parse failed|blocked request)\b",
+    re.IGNORECASE,
+)
+_INLINE_COMMAND_FOOTER_RE = re.compile(
+    r"^\s*(?:Confidence:|Source:|Profile:).*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_command_footer_lines(text: str) -> str:
+    lines = []
+    for ln in str(text or "").splitlines():
+        if _INLINE_COMMAND_FOOTER_RE.match(str(ln or "").strip()):
+            continue
+        lines.append(ln)
+    return "\n".join(lines).strip()
+
+
+def _append_command_footer(text: str, *, confidence: str, source: str) -> str:
+    body = _strip_command_footer_lines(text)
+    footer = f"Confidence: {confidence} | Source: {source}"
+    return f"{body}\n\n{footer}".strip() if body else footer
+
+
+def _norm_lookup_text(s: str) -> str:
+    t = str(s or "").strip().lower()
+    t = re.sub(r"[^a-z0-9\s]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _cheatsheet_timeout_fallback(term: str) -> Optional[str]:
+    if load_cheatsheets_entries is None:
+        return None
+    try:
+        base = Path(__file__).resolve().parents[1] / "cheatsheets"
+        entries = list(load_cheatsheets_entries(base))
+        qn = _norm_lookup_text(term)
+        if not qn:
+            return None
+        for e in entries:
+            if _norm_lookup_text(getattr(e, "term", "")) == qn:
+                t = str(getattr(e, "term", "") or "").strip()
+                d = str(getattr(e, "definition", "") or "").strip()
+                if t and d:
+                    return f"{t}: {d}"
+                if d:
+                    return d
+                if t:
+                    return t
+        return None
+    except Exception:
+        return None
+
+
+def _is_transient_sidecar_failure(text: str) -> bool:
+    s = str(text or "").lower()
+    if "timeout" in s:
+        return True
+    m = re.search(r"http error:\s*(\d+)", s)
+    if m:
+        try:
+            code = int(m.group(1))
+            return code >= 500 or code in {408, 429}
+        except Exception:
+            return False
+    return False
+
+
+def _is_clean_not_found(text: str) -> bool:
+    s = str(text or "").lower()
+    return "not found" in s and "parse failed" not in s
+
+
+def _is_integrity_failure(text: str) -> bool:
+    s = str(text or "").lower()
+    return bool(
+        "parse failed" in s
+        or "error:" in s
+        or "http error:" in s
+        or "blocked request" in s
+    )
+
+
+def _is_sidecar_success(text: str, prefix: str) -> bool:
+    s = str(text or "").strip()
+    if not s.lower().startswith(prefix.lower()):
+        return False
+    return not bool(_SIDECAR_FAIL_TOKENS_RE.search(s))
+
+
+def _build_model_timeout_fallback_answer(*, cmd_key: str, query: str) -> str:
+    prompt = (
+        f"The upstream >>{cmd_key} sidecar timed out.\n"
+        f"User query: {query}\n\n"
+        "Provide a concise fallback answer from model priors only.\n"
+        "- Keep it to 2-4 sentences.\n"
+        "- Do not mention internal tooling or sidecars.\n"
+        "- Do not add confidence/source/profile lines."
+    )
+    return str(
+        call_model_prompt(
+            role="thinker",
+            prompt=prompt,
+            max_tokens=220,
+            temperature=0.25,
+            top_p=0.9,
+        )
+        or ""
+    ).strip()
 
 
 def _purge_judge_audit_jsonl(audit_dir: str) -> int:
@@ -1251,6 +1370,70 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         # Format and return recommendations
         return format_recommendations(recommendations, query=query)
 
+    # cliniko (DETERMINISTIC clinical note pipeline)
+    if cmd_key == "cliniko":
+        subcommand = parts[1].lower() if len(parts) > 1 else ""
+
+        # Default: treat '>>cliniko' as 'auto' when full note payload is present
+        _known_subcommands = {
+            "auto", "parse", "compact", "review",
+            "help", "status",
+            "sidecar", "generate", "sanitize",
+        }
+        if (not subcommand) or (subcommand not in _known_subcommands):
+            _lead = (cmd_text or "").lstrip()
+            _tail = ""
+            for _prefix in (">>cliniko", "»cliniko", "Â»cliniko"):
+                if _lead.lower().startswith(_prefix):
+                    _tail = _lead[len(_prefix):].lstrip()
+                    break
+            if _tail and ("\n" in _tail or len(_tail) >= 200):
+                return handle_cliniko_command("auto", _tail, state, session_id)
+        
+        # Explicit subcommands
+        if subcommand == "auto":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for auto_prefix in (">>cliniko auto", "»cliniko auto", "Â»cliniko auto"):
+                if auto_prefix in _low:
+                    idx = _low.find(auto_prefix) + len(auto_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        if subcommand == "parse":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for parse_prefix in (">>cliniko parse", "»cliniko parse", "Â»cliniko parse"):
+                if parse_prefix in _low:
+                    idx = _low.find(parse_prefix) + len(parse_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        # Legacy compact (redirect but support for transition)
+        if subcommand == "compact":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for compact_prefix in (">>cliniko compact", "»cliniko compact"):
+                if compact_prefix in _low:
+                    idx = _low.find(compact_prefix) + len(compact_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        # Other subcommands (help, status, legacy generate/sanitize)
+        return handle_cliniko_command(subcommand, "", state, session_id)
+
     # attach/detach/list
     if cmd_key == "attach":
         if len(parts) < 2:
@@ -1602,6 +1785,13 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         state.deterministic_last_reason = ""
         state.deterministic_last_answer = ""
         state.deterministic_last_frame = {}
+        # Cliniko staged state isolation: flush should hard-reset prior case scaffolding.
+        state.cliniko_last_scaffold = ""
+        state.cliniko_last_raw = ""
+        state.cliniko_last_draft = None
+        state.cliniko_last_region = ""
+        state.cliniko_compacted = None
+        state.cliniko_compaction_stats = {}
         purged = 0
         if purge_session_memory_jsonl:
             try:
@@ -1652,7 +1842,23 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         topic = cmd[len(parts[0]):].strip()
         if not topic:
             return "[wiki] usage: >>wiki <topic>\nExample: >>wiki Albert Einstein"
-        return handle_wiki_query(topic)
+        raw = str(handle_wiki_query(topic) or "").strip()
+        if _is_sidecar_success(raw, "[wiki]"):
+            return _append_command_footer(raw, confidence="medium", source="Wiki")
+        if _is_transient_sidecar_failure(raw):
+            hdr = "[wiki timeout: regenerate to try again. Answer below uses model priors.]"
+            cs = _cheatsheet_timeout_fallback(topic)
+            if cs:
+                body = f"{hdr}\n\n{cs}"
+                return _append_command_footer(body, confidence="high", source="Cheatsheets")
+            model_ans = _build_model_timeout_fallback_answer(cmd_key="wiki", query=topic)
+            body = f"{hdr}\n\n{model_ans}".strip()
+            return _append_command_footer(body, confidence="unverified", source="Model (due to timeout)")
+        if _is_clean_not_found(raw):
+            return _append_command_footer(raw, confidence="medium", source="Wiki")
+        if _is_integrity_failure(raw):
+            return _append_command_footer(raw, confidence="unverified", source="Wiki")
+        return _append_command_footer(raw, confidence="unverified", source="Wiki")
 
     # >>define <word> (Etymonline etymology)
     if cmd_key == "define":
@@ -1661,7 +1867,23 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         term = cmd[len(parts[0]):].strip()
         if not term:
             return "[define] usage: >>define <word>\nExample: >>define potable"
-        return handle_define_query(term)
+        raw = str(handle_define_query(term) or "").strip()
+        if _is_sidecar_success(raw, "[define]"):
+            return _append_command_footer(raw, confidence="medium", source="Define")
+        if _is_transient_sidecar_failure(raw):
+            hdr = "[define timeout: regenerate to try again. Answer below uses model priors.]"
+            cs = _cheatsheet_timeout_fallback(term)
+            if cs:
+                body = f"{hdr}\n\n{cs}"
+                return _append_command_footer(body, confidence="high", source="Cheatsheets")
+            model_ans = _build_model_timeout_fallback_answer(cmd_key="define", query=term)
+            body = f"{hdr}\n\n{model_ans}".strip()
+            return _append_command_footer(body, confidence="unverified", source="Model (due to timeout)")
+        if _is_clean_not_found(raw):
+            return _append_command_footer(raw, confidence="medium", source="Define")
+        if _is_integrity_failure(raw):
+            return _append_command_footer(raw, confidence="unverified", source="Define")
+        return _append_command_footer(raw, confidence="unverified", source="Define")
 
     # >>exchange <query> (Currency conversion)
     if cmd_key == "exchange":
@@ -1752,4 +1974,3 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return "[router] raw mode OFF"
 
     return f"[router] unknown command: {cmd}"
-
