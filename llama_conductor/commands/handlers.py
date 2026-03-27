@@ -1,4 +1,4 @@
-﻿# commands/handlers.py
+# commands/handlers.py
 """Main command handling logic."""
 
 import os
@@ -25,6 +25,7 @@ from ..interaction_profile import (
 from ..helpers import is_command, strip_cmd_prefix, parse_args
 from ..vault_ops import summ_new_in_kb, move_summ_to_vault
 from ..model_calls import call_model_prompt
+from .cliniko import handle_cliniko_command
 from .registry import resolve_command_key
 
 # Optional imports (feature-detected)
@@ -602,12 +603,39 @@ def _parse_scratch_lock_indices(arg: str) -> Set[int]:
 
 
 def _render_status_raw(session_id: str, state: SessionState) -> str:
+    # Keep status snapshots truthful on fresh sessions by recomputing on read.
+    state.profile_effective_strength = compute_effective_strength(
+        state.interaction_profile,
+        enabled=state.profile_enabled,
+        output_compliance=state.profile_output_compliance,
+    )
     cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip()
     effective_preset = (state.vodka_preset_override or cfg_preset or "balanced").strip()
+    kaioken_enabled = bool(getattr(state, "kaioken_enabled", bool(cfg_get("kaioken.enabled", True))))
+    p = state.interaction_profile
+    if (
+        str(p.correction_style) == "direct"
+        and str(p.verbosity) == "compact"
+        and str(p.snark_tolerance) == "high"
+        and str(p.sarcasm_level) == "high"
+        and bool(p.profanity_ok)
+    ):
+        profile_mode = "turbo"
+    elif (
+        str(p.correction_style) == "neutral"
+        and str(p.verbosity) == "standard"
+        and str(p.snark_tolerance) == "low"
+        and str(p.sarcasm_level) == "off"
+        and (not bool(p.profanity_ok))
+    ):
+        profile_mode = "default"
+    else:
+        profile_mode = "custom"
     scratch_lock = sorted(int(i) for i in (getattr(state, "scratchpad_locked_indices", set()) or set()) if int(i) > 0)
     return (
         "[status]\n"
         f"session_id={session_id}\n"
+        f"kaioken_enabled={kaioken_enabled}\n"
         f"attached_kbs={sorted(state.attached_kbs)}\n"
         f"locked_summ_file={state.locked_summ_file!r}\n"
         f"locked_summ_kb={state.locked_summ_kb!r}\n"
@@ -618,6 +646,7 @@ def _render_status_raw(session_id: str, state: SessionState) -> str:
         f"profile_enabled={state.profile_enabled}\n"
         f"profile_confidence={state.interaction_profile.confidence:.2f}\n"
         f"profile_effective_strength={state.profile_effective_strength:.2f}\n"
+        f"profile_mode={profile_mode}\n"
         f"profile_output_compliance={state.profile_output_compliance:.2f}\n"
         f"profile_blocked_nicknames={sorted(state.profile_blocked_nicknames)!r}\n"
         f"profile_last_updated_turn={state.interaction_profile.last_updated_turn}\n"
@@ -633,8 +662,34 @@ def _render_status_raw(session_id: str, state: SessionState) -> str:
 
 
 def _render_status(session_id: str, state: SessionState) -> str:
+    # Keep status snapshots truthful on fresh sessions by recomputing on read.
+    state.profile_effective_strength = compute_effective_strength(
+        state.interaction_profile,
+        enabled=state.profile_enabled,
+        output_compliance=state.profile_output_compliance,
+    )
     cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip()
     effective_preset = (state.vodka_preset_override or cfg_preset or "balanced").strip()
+    kaioken_enabled = bool(getattr(state, "kaioken_enabled", bool(cfg_get("kaioken.enabled", True))))
+    p = state.interaction_profile
+    if (
+        str(p.correction_style) == "direct"
+        and str(p.verbosity) == "compact"
+        and str(p.snark_tolerance) == "high"
+        and str(p.sarcasm_level) == "high"
+        and bool(p.profanity_ok)
+    ):
+        profile_mode = "TURBO"
+    elif (
+        str(p.correction_style) == "neutral"
+        and str(p.verbosity) == "standard"
+        and str(p.snark_tolerance) == "low"
+        and str(p.sarcasm_level) == "off"
+        and (not bool(p.profanity_ok))
+    ):
+        profile_mode = "DEFAULT"
+    else:
+        profile_mode = "CUSTOM"
     modes: List[str] = []
     if state.raw_sticky:
         modes.append("raw")
@@ -660,17 +715,44 @@ def _render_status(session_id: str, state: SessionState) -> str:
         "# Router Status\n\n"
         f"- `Session`: `{session_id}`\n"
         f"- `Mode`: `{', '.join(modes)}`\n"
+        f"- `Kaioken`: `{'ON' if kaioken_enabled else 'OFF'}`\n"
         f"- `Grounding`: attached=`{attach_label}` | lock=`{lock_label}`\n"
         f"- `Memory`: preset=`{effective_preset}` | units=`{memory.get('unit_count')}` | last_update_turn=`{memory.get('last_update_turn')}`\n"
         f"- `Retrieval`: fs_hits=`{state.rag_last_hits}` | vault_hits=`{state.vault_last_hits}`\n"
         f"- `Scratchpad`: lock=`{scratch_lock_label}`\n"
-        f"- `Profile`: enabled=`{state.profile_enabled}` | strength=`{state.profile_effective_strength:.2f}`\n"
+        f"- `Profile`: enabled=`{state.profile_enabled}` | strength=`{state.profile_effective_strength:.2f}` | profile mode=`{profile_mode}`\n"
     )
 
 
 def _render_status_full(session_id: str, state: SessionState) -> str:
+    # Keep status snapshots truthful on fresh sessions by recomputing on read.
+    state.profile_effective_strength = compute_effective_strength(
+        state.interaction_profile,
+        enabled=state.profile_enabled,
+        output_compliance=state.profile_output_compliance,
+    )
     cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip()
     effective_preset = (state.vodka_preset_override or cfg_preset or "balanced").strip()
+    kaioken_enabled = bool(getattr(state, "kaioken_enabled", bool(cfg_get("kaioken.enabled", True))))
+    p = state.interaction_profile
+    if (
+        str(p.correction_style) == "direct"
+        and str(p.verbosity) == "compact"
+        and str(p.snark_tolerance) == "high"
+        and str(p.sarcasm_level) == "high"
+        and bool(p.profanity_ok)
+    ):
+        profile_mode = "turbo"
+    elif (
+        str(p.correction_style) == "neutral"
+        and str(p.verbosity) == "standard"
+        and str(p.snark_tolerance) == "low"
+        and str(p.sarcasm_level) == "off"
+        and (not bool(p.profanity_ok))
+    ):
+        profile_mode = "default"
+    else:
+        profile_mode = "custom"
     scratch_lock = sorted(int(i) for i in (getattr(state, "scratchpad_locked_indices", set()) or set()) if int(i) > 0)
     return (
         "# Router Status (Full)\n\n"
@@ -684,11 +766,13 @@ def _render_status_full(session_id: str, state: SessionState) -> str:
         f"- `fun_sticky`: `{state.fun_sticky}`\n"
         f"- `fun_rewrite_sticky`: `{state.fun_rewrite_sticky}`\n"
         f"- `raw_sticky`: `{state.raw_sticky}`\n"
+        f"- `kaioken_enabled`: `{kaioken_enabled}`\n"
         "\n"
         "## Profile\n"
         f"- `profile_enabled`: `{state.profile_enabled}`\n"
         f"- `profile_confidence`: `{state.interaction_profile.confidence:.2f}`\n"
         f"- `profile_effective_strength`: `{state.profile_effective_strength:.2f}`\n"
+        f"- `profile_mode`: `{profile_mode}`\n"
         f"- `profile_output_compliance`: `{state.profile_output_compliance:.2f}`\n"
         f"- `profile_blocked_nicknames`: `{sorted(state.profile_blocked_nicknames)!r}`\n"
         f"- `profile_last_updated_turn`: `{state.interaction_profile.last_updated_turn}`\n"
@@ -1369,6 +1453,70 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         # Format and return recommendations
         return format_recommendations(recommendations, query=query)
 
+    # cliniko (DETERMINISTIC clinical note pipeline)
+    if cmd_key == "cliniko":
+        subcommand = parts[1].lower() if len(parts) > 1 else ""
+
+        # Default: treat '>>cliniko' as 'auto' when full note payload is present
+        _known_subcommands = {
+            "auto", "parse", "compact", "review",
+            "help", "status",
+            "sidecar", "generate", "sanitize",
+        }
+        if (not subcommand) or (subcommand not in _known_subcommands):
+            _lead = (cmd_text or "").lstrip()
+            _tail = ""
+            for _prefix in (">>cliniko", "»cliniko", "Â»cliniko"):
+                if _lead.lower().startswith(_prefix):
+                    _tail = _lead[len(_prefix):].lstrip()
+                    break
+            if _tail and ("\n" in _tail or len(_tail) >= 200):
+                return handle_cliniko_command("auto", _tail, state, session_id)
+        
+        # Explicit subcommands
+        if subcommand == "auto":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for auto_prefix in (">>cliniko auto", "»cliniko auto", "Â»cliniko auto"):
+                if auto_prefix in _low:
+                    idx = _low.find(auto_prefix) + len(auto_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        if subcommand == "parse":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for parse_prefix in (">>cliniko parse", "»cliniko parse", "Â»cliniko parse"):
+                if parse_prefix in _low:
+                    idx = _low.find(parse_prefix) + len(parse_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        # Legacy compact (redirect but support for transition)
+        if subcommand == "compact":
+            _low = (cmd_text or "").lower()
+            user_raw_text = ""
+            for compact_prefix in (">>cliniko compact", "»cliniko compact"):
+                if compact_prefix in _low:
+                    idx = _low.find(compact_prefix) + len(compact_prefix)
+                    user_raw_text = (cmd_text or "")[idx:].lstrip()
+                    break
+            if not user_raw_text:
+                user_raw_text = " ".join(parts[2:]) if len(parts) > 2 else ""
+            
+            return handle_cliniko_command(subcommand, user_raw_text, state, session_id)
+        
+        # Other subcommands (help, status, legacy generate/sanitize)
+        return handle_cliniko_command(subcommand, "", state, session_id)
+
     # attach/detach/list
     if cmd_key == "attach":
         if len(parts) < 2:
@@ -1720,6 +1868,13 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         state.deterministic_last_reason = ""
         state.deterministic_last_answer = ""
         state.deterministic_last_frame = {}
+        # Cliniko staged state isolation: flush should hard-reset prior case scaffolding.
+        state.cliniko_last_scaffold = ""
+        state.cliniko_last_raw = ""
+        state.cliniko_last_draft = None
+        state.cliniko_last_region = ""
+        state.cliniko_compacted = None
+        state.cliniko_compaction_stats = {}
         purged = 0
         if purge_session_memory_jsonl:
             try:
@@ -1902,4 +2057,3 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         return "[router] raw mode OFF"
 
     return f"[router] unknown command: {cmd}"
-
