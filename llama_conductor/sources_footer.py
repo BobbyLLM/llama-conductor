@@ -198,6 +198,18 @@ def normalize_sources_footer(
         and not _has_explicit_docs_marker(t)
     ):
         source = "Model"
+    # Provenance floor: do not keep Mixed on model-only turns.
+    # "Mixed" must come from an evidence lane or explicit override, not from
+    # model-emitted footer/body text.
+    if (
+        source == "Mixed"
+        and not override_source
+        and not lock_active
+        and not scratchpad_grounded
+        and not has_facts_block
+        and max(0, int(rag_hits or 0)) <= 0
+    ):
+        source = "Model"
     model_fallback = source == "Model" and "not found in locked source" in t.lower()
     conf = _compute_confidence(
         source=source,
