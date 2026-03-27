@@ -41,6 +41,9 @@ _QUOTED_TERM_RE = re.compile(r"['\"]([^'\"\n]{2,64})['\"]")
 _CAP_TERM_RE = re.compile(
     r"\b[A-Z][A-Za-z0-9_/-]{2,}(?:\s+[A-Z][A-Za-z0-9_/-]{2,}){0,3}\b"
 )
+_ORDINAL_CAP_TERM_RE = re.compile(
+    r"\b\d{1,3}(?:st|nd|rd|th)\s+[A-Z][A-Za-z0-9_/-]{2,}(?:\s+[A-Z][A-Za-z0-9_/-]{2,}){0,4}\b"
+)
 _STRICT_LOOKUP_RE = re.compile(
     r"^\s*(?:who(?:'s|\s+is)|what(?:'s|\s+is)|define|explain|tell me about)\s+(.+?)\s*[?.!]*\s*$",
     re.IGNORECASE,
@@ -92,6 +95,7 @@ _COMMON_WORDS = {
     "these",
     "those",
     "what",
+    "were",
     "where",
     "when",
     "why",
@@ -655,6 +659,14 @@ def _build_cheatsheets_facts(matches: Sequence[Tuple[CheatsheetEntry, int]]) -> 
 
 def _wiki_candidates(user_text: str, known_norm_terms: set[str]) -> List[str]:
     out: List[str] = []
+    raw_user = str(user_text or "").strip()
+    if raw_user and ("?" in raw_user or re.match(r"^\s*(?:who|what|when|where|why|how)\b", raw_user, flags=re.IGNORECASE)):
+        out.append(raw_user)
+    # Preserve numeric/ordinal specificity first (e.g., "97th Academy Awards").
+    for c in _ORDINAL_CAP_TERM_RE.findall(str(user_text or "")):
+        cand = str(c or "").strip()
+        if cand:
+            out.append(cand)
     for q in _QUOTED_TERM_RE.findall(str(user_text or "")):
         cand = str(q or "").strip()
         if cand:
@@ -675,6 +687,15 @@ def _wiki_candidates(user_text: str, known_norm_terms: set[str]) -> List[str]:
         if n in _COMMON_WORDS:
             continue
         uniq.append(raw)
+
+    def _cand_score(c: str) -> Tuple[int, int, str]:
+        n = _norm_text(c)
+        toks = _TOKEN_RE.findall(n)
+        has_num = 1 if any(re.search(r"\d", t) for t in toks) else 0
+        # Prefer specific candidates: numeric tokens, more tokens, longer string.
+        return (has_num, len(toks), len(n))
+
+    uniq.sort(key=lambda c: _cand_score(c), reverse=True)
     return uniq
 
 
@@ -705,6 +726,66 @@ def _build_wiki_facts(term: str, summary: str) -> str:
             "---",
         ]
     ).strip()
+
+
+def _track_b_query_tokens(text: str) -> List[str]:
+    toks = [t for t in _TOKEN_RE.findall(_norm_text(text)) if t]
+    out: List[str] = []
+    for t in toks:
+        if len(t) < 3:
+            continue
+        if t in _COMMON_WORDS:
+            continue
+        out.append(t)
+    return out
+
+
+def _build_track_b_deterministic_answer(term: str, summary: str, *, user_text: str) -> str:
+    t = str(term or "").strip()
+    s = str(summary or "").strip()
+    if not t or not s:
+        return ""
+    q_tokens = set(_track_b_query_tokens(user_text))
+    s_tokens = set(_TOKEN_RE.findall(_norm_text(s)))
+    # Fail-loud when retrieved summary does not cover requested query tokens.
+    if q_tokens and not q_tokens.intersection(s_tokens):
+        return "Not available in retrieved wiki facts."
+    # Slot-aware guard: require at least one meaningful pre-entity token
+    # (tokens before first numeric anchor like "97th") to appear in summary.
+    q_norm_toks = _TOKEN_RE.findall(_norm_text(user_text))
+    first_num_idx = -1
+    for i, tok in enumerate(q_norm_toks):
+        if re.search(r"\d", tok):
+            first_num_idx = i
+            break
+    if first_num_idx > 0:
+        pre_entity = [
+            tok for tok in q_norm_toks[:first_num_idx]
+            if len(tok) >= 3 and tok not in _COMMON_WORDS
+        ]
+        s_norm = _norm_text(s)
+        if pre_entity and not any(tok in s_tokens for tok in pre_entity):
+            return "Not available in retrieved wiki facts."
+        # Phrase-level slot guard for multi-token asks (e.g., "best picture").
+        if len(pre_entity) >= 2:
+            pre_phrases = [
+                f"{pre_entity[i]} {pre_entity[i+1]}"
+                for i in range(len(pre_entity) - 1)
+            ]
+            if pre_phrases and not any(p in s_norm for p in pre_phrases):
+                return "Not available in retrieved wiki facts."
+    return f"According to Wikipedia summary for {t}: {s}"
+
+
+def _build_track_b_constraints() -> str:
+    return "\n".join(
+        [
+            "Wiki grounding policy:",
+            "- Use WIKI FACTS in this turn as the factual source.",
+            "- If the requested detail is not present in WIKI FACTS, say it is not available.",
+            "- Do not guess or add unsupported details.",
+        ]
+    )
 
 
 def resolve_cheatsheets_turn(
@@ -934,8 +1015,13 @@ def resolve_cheatsheets_turn(
     candidates = _wiki_candidates(user_text, known_norm_terms)
     if not candidates:
         return CheatsheetsTurnResult("", "", "", "", "", "", "", False, tuple(), "")
-    term = candidates[0]
-    ok, title, summary = _parse_wiki_payload(str(wiki_lookup_fn(term) or ""))
+    ok = False
+    title = ""
+    summary = ""
+    for term in candidates:
+        ok, title, summary = _parse_wiki_payload(str(wiki_lookup_fn(term) or ""))
+        if ok:
+            break
     if not ok:
         return CheatsheetsTurnResult("", "", "", "", "", "", "", False, tuple(), "")
     facts = _build_wiki_facts(title, summary)
@@ -943,8 +1029,8 @@ def resolve_cheatsheets_turn(
     conf = "medium"
     return CheatsheetsTurnResult(
         facts_block=facts,
-        constraints_block="",
-        deterministic_answer="",
+        constraints_block=_build_track_b_constraints(),
+        deterministic_answer=_build_track_b_deterministic_answer(title, summary, user_text=user_text),
         local_knowledge_line="",
         track="B",
         footer_source=source,

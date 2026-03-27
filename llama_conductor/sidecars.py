@@ -454,49 +454,196 @@ def flush_ctc_cache(vodka: Optional[object]) -> str:
 
 def _normalize_wiki_topic(topic: str) -> str:
     """Normalize topic for Wikipedia URL: 'Boris Becker' → 'Boris_Becker'."""
-    return (topic or "").strip().replace(" ", "_")
+    t = re.sub(r"\s+", " ", str(topic or "").strip())
+    t = re.sub(r"[?!.,;:]+$", "", t).strip()
+    t = re.sub(
+        r"^(?:who|what|when|where|why|how)\s+(?:is|are|was|were)\s+",
+        "",
+        t,
+        flags=re.IGNORECASE,
+    )
+    t = re.sub(r"^(?:tell\s+me\s+about|explain)\s+", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"^the\s+", "", t, flags=re.IGNORECASE)
+    return t.replace(" ", "_")
 
 
-def handle_wiki_query(topic: str, max_chars: int = 500) -> str:
+def _wiki_search_best_title(query: str, timeout_s: int = 5) -> str:
+    """Resolve a best-effort Wikipedia page title via OpenSearch."""
+    q = re.sub(r"\s+", " ", str(query or "").strip())
+    if not q:
+        return ""
+    try:
+        headers = {"User-Agent": "llama-conductor/1.0.1"}
+        params = {
+            "action": "opensearch",
+            "search": q,
+            "limit": 1,
+            "namespace": 0,
+            "format": "json",
+        }
+        resp = requests.get(
+            "https://en.wikipedia.org/w/api.php",
+            headers=headers,
+            params=params,
+            timeout=timeout_s,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, list) and len(data) >= 2 and isinstance(data[1], list) and data[1]:
+            title = str(data[1][0] or "").strip()
+            return title
+    except Exception:
+        return ""
+    return ""
+
+
+_WIKI_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+_WIKI_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in",
+    "is", "it", "of", "on", "or", "that", "the", "this", "to", "was", "were",
+    "what", "when", "where", "which", "who", "why", "with", "won", "did", "do",
+}
+
+
+def _wiki_query_tokens(query: str) -> list[str]:
+    toks = [t.lower() for t in _WIKI_TOKEN_RE.findall(str(query or ""))]
+    out: list[str] = []
+    for t in toks:
+        if len(t) < 2 or t in _WIKI_STOPWORDS:
+            continue
+        out.append(t)
+    return out
+
+
+def _wiki_sentence_split(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\s+", str(text or "").strip())
+    return [p.strip() for p in parts if str(p or "").strip()]
+
+
+def _wiki_best_extract_sentences(*, query: str, extract_text: str, max_sentences: int = 2) -> str:
+    """Deterministic extraction:
+    score = query-token intersection count + numeric bonus.
+    """
+    q_tokens = _wiki_query_tokens(query)
+    if not q_tokens:
+        return ""
+    sentences = _wiki_sentence_split(extract_text)
+    if not sentences:
+        return ""
+    scored: list[tuple[int, int]] = []
+    q_set = set(q_tokens)
+    for i, s in enumerate(sentences):
+        s_tokens = [t.lower() for t in _WIKI_TOKEN_RE.findall(s)]
+        if not s_tokens:
+            continue
+        s_set = set(s_tokens)
+        inter = len(q_set.intersection(s_set))
+        has_numeric = 1 if any(re.search(r"\d", t) for t in s_tokens) else 0
+        score = int(inter) + int(has_numeric)
+        if score > 0:
+            scored.append((score, i))
+    if not scored:
+        return ""
+    # Tie-break: higher score, then original order.
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    top_i = scored[0][1]
+    picks = [top_i]
+    if len(picks) < max(1, int(max_sentences)):
+        for score, i in scored[1:]:
+            if abs(i - top_i) <= 1:
+                picks.append(i)
+                break
+    picks = sorted(set(picks))
+    return " ".join(sentences[i].rstrip() for i in picks if 0 <= i < len(sentences)).strip()
+
+
+def handle_wiki_query(topic: str, max_chars: int = 800) -> str:
     """
     Fetch Wikipedia summary via JSON API.
     
     Example: >>wiki Albert Einstein
     Returns: "[wiki] Albert Einstein: A German-born theoretical physicist..."
-    Fetches full paragraph (up to 500 chars).
+    Fetches summary/extractive response (up to max_chars chars).
     """
     topic = (topic or "").strip()
     if not topic:
         return "[wiki] No topic provided"
 
-    try:
-        normalized = _normalize_wiki_topic(topic)
-        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{normalized}"
-        
-        # Wikipedia requires User-Agent header (blocks default requests UA)
-        headers = {"User-Agent": "llama-conductor/1.0.1"}
+    headers = {"User-Agent": "llama-conductor/1.0.1"}
+    normalized = _normalize_wiki_topic(topic)
+
+    def _fetch_summary(normalized_topic: str) -> tuple[int, dict]:
+        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{normalized_topic}"
         resp = requests.get(url, headers=headers, timeout=5)
-        resp.raise_for_status()
-        data = resp.json()
-        
+        status = int(resp.status_code or 0)
+        data = resp.json() if status >= 200 and status < 300 else {}
+        return status, data
+
+    def _fetch_extract_by_title(title: str, chars: int = 5000) -> str:
+        try:
+            params = {
+                "action": "query",
+                "format": "json",
+                "prop": "extracts",
+                "explaintext": 1,
+                "exintro": 0,
+                "redirects": 1,
+                "titles": str(title or "").strip(),
+            }
+            resp = requests.get(
+                "https://en.wikipedia.org/w/api.php",
+                headers=headers,
+                params=params,
+                timeout=5,
+            )
+            resp.raise_for_status()
+            data = resp.json() if resp.content else {}
+            pages = (((data or {}).get("query") or {}).get("pages") or {})
+            if isinstance(pages, dict):
+                for _pid, row in pages.items():
+                    if not isinstance(row, dict):
+                        continue
+                    ex = str(row.get("extract", "") or "").strip()
+                    if ex:
+                        ex = re.sub(r"\s+", " ", ex).strip()
+                        if len(ex) > int(chars):
+                            ex = ex[: int(chars)]
+                        return ex
+        except Exception:
+            return ""
+        return ""
+
+    try:
+        status, data = _fetch_summary(normalized)
+        if status == 404:
+            best = _wiki_search_best_title(topic)
+            if best:
+                status, data = _fetch_summary(_normalize_wiki_topic(best))
+        if status == 404:
+            return f"[wiki] '{topic}' not found"
+        if status < 200 or status >= 300:
+            return f"[wiki] HTTP error: {status}"
+
         title = data.get("title") or normalized.replace("_", " ")
         summary = (data.get("extract") or "").strip()
-        
         if not summary:
             return f"[wiki] '{title}' not found"
-        
-        # Trim to context budget
+
+        # Question-shaped asks: deterministic extractive selection from page text.
+        if bool(re.search(r"[?]|^(?:who|what|when|where|why|how)\b", str(topic or "").strip(), flags=re.IGNORECASE)):
+            full_extract = _fetch_extract_by_title(title, chars=5000)
+            picked = _wiki_best_extract_sentences(
+                query=str(topic or ""),
+                extract_text=full_extract,
+                max_sentences=2,
+            )
+            if picked:
+                summary = picked
         if len(summary) > max_chars:
             summary = summary[:max_chars].rsplit(" ", 1)[0] + "…"
-        
         return f"[wiki] {title}: {summary}"
-    
     except requests.exceptions.Timeout:
         return "[wiki] Request timeout"
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-            return f"[wiki] '{topic}' not found"
-        return f"[wiki] HTTP error: {e.response.status_code}"
     except Exception as e:
         return f"[wiki] Error: {e}"
 

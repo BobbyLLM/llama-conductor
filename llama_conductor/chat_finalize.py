@@ -392,20 +392,21 @@ def _apply_user_parrot_guard(text: str, user_text: str, state: Any) -> str:
             body = stripped if stripped else "Go on."
 
     # Threshold A: leading-echo strip on first sentence.
-    m = _SENTENCE_SPLIT_RE.search(body)
-    if m:
-        first_sentence = str(m.group(0) or "").strip()
-        if first_sentence:
-            first_tokens = re.findall(r"[a-z0-9]+", first_sentence.lower())
-            if first_tokens:
-                short_turn = len(first_tokens) <= 14
-                content_tokens = [t for t in first_tokens if t not in _STOPWORDS and len(t) >= 3]
-                lexical_density = float(len(content_tokens) / max(1, len(first_tokens)))
-                low_density = lexical_density <= 0.45
-                high_overlap = _token_overlap_ratio(first_sentence, user_text) >= 0.70
-                if short_turn and low_density and high_overlap:
-                    stripped_body = body[m.end():].lstrip()
-                    body = stripped_body if stripped_body else "Go on."
+    # Use punctuation+whitespace splitting so abbreviations like "U.S." are not
+    # broken into fake sentence fragments ("U." / "S.").
+    first_split = re.split(r"(?<=[.!?])\s+", body, maxsplit=1)
+    first_sentence = str(first_split[0] or "").strip() if first_split else ""
+    if first_sentence:
+        first_tokens = re.findall(r"[a-z0-9]+", first_sentence.lower())
+        if first_tokens:
+            short_turn = len(first_tokens) <= 14
+            content_tokens = [t for t in first_tokens if t not in _STOPWORDS and len(t) >= 3]
+            lexical_density = float(len(content_tokens) / max(1, len(first_tokens)))
+            low_density = lexical_density <= 0.45
+            high_overlap = _token_overlap_ratio(first_sentence, user_text) >= 0.70
+            if short_turn and low_density and high_overlap:
+                stripped_body = first_split[1].lstrip() if len(first_split) > 1 else ""
+                body = stripped_body if stripped_body else "Go on."
 
     # Threshold B: full-body replacement for near-pure parroting.
     body_tokens = re.findall(r"[a-z0-9]+", body.lower())
@@ -448,6 +449,7 @@ def finalize_chat_response(
     sensitive_override_once: bool = False,
     bypass_serious_anti_loop: bool = False,
     deterministic_state_solver: bool = False,
+    deterministic_output_locked: bool = False,
     scratchpad_lock_miss: bool | None = None,
     scratchpad_lock_miss_indices: List[int] | None = None,
     serious_task_forward_fallback: str,
@@ -529,12 +531,16 @@ def finalize_chat_response(
             text = rewrite_source_line_fn(text, "Source: Mixed")
         text = append_scratchpad_provenance_fn(text)
 
+    turn_macro = str(getattr(state, "turn_kaioken_macro", "") or "").strip().lower()
+    suppress_kb_miss_note = turn_macro in {"casual", "personal"}
+
     if (
         state.attached_kbs
         and "Source: Model" in text
         and not scratchpad_grounded
         and not lock_active
         and not bool(scratchpad_lock_miss)
+        and not suppress_kb_miss_note
     ):
         kb_list = ", ".join(sorted(state.attached_kbs))
         disclaimer = (
@@ -585,9 +591,10 @@ def finalize_chat_response(
         if clarify_turn
         else ("I hear you." if distress_turn else "I hear you.")
     )
-    text = strip_behavior_announcement_sentences_fn(text, strip_fallback)
+    if not deterministic_output_locked:
+        text = strip_behavior_announcement_sentences_fn(text, strip_fallback)
 
-    if mode in ("fun", "fun_rewrite"):
+    if mode in ("fun", "fun_rewrite") and (not deterministic_output_locked):
         try:
             text = enforce_fun_antiparrot_fn(text, user_text)
         except Exception:
@@ -613,11 +620,11 @@ def finalize_chat_response(
         except Exception:
             pass
 
-    if mode == "serious":
+    if mode == "serious" and (not deterministic_output_locked):
         text = strip_irrelevant_proofread_tail_fn(text, user_text)
         text = normalize_agreement_ack_tense_fn(text, user_text)
 
-    if mode == "serious":
+    if mode == "serious" and (not deterministic_output_locked):
         try:
             emotional_turn = bool(_EMOTIONAL_TURN_RE.search(str(user_text or "")))
             friction_at_model_turn = bool(_FRICTION_AT_MODEL_RE.search(str(user_text or "")))
@@ -701,7 +708,7 @@ def finalize_chat_response(
                 state.serious_last_body_signature = ""
         except Exception:
             pass
-    if mode == "serious":
+    if mode == "serious" and (not deterministic_output_locked):
         try:
             if bool(_FRICTION_AT_MODEL_RE.search(str(user_text or ""))):
                 if _WRONG_PRONOUN_RE.search(str(text or "")):
@@ -724,7 +731,7 @@ def finalize_chat_response(
                 text = "\n".join(lines)
         except Exception:
             pass
-    if mode == "serious":
+    if mode == "serious" and (not deterministic_output_locked):
         try:
             literal_lane = bool(getattr(state, "kaioken_literal_lane_fired", False))
             if literal_lane:
@@ -739,7 +746,7 @@ def finalize_chat_response(
         except Exception:
             pass
 
-    if mode == "serious":
+    if mode == "serious" and (not deterministic_output_locked):
         try:
             prev_body = normalize_signature_text_fn(
                 strip_footer_lines_for_scan_fn(str(getattr(state, "last_assistant_text", "") or ""))
@@ -814,11 +821,12 @@ def finalize_chat_response(
         except Exception:
             pass
 
-    # Generalized user-parrot guard (body-only, footer-safe).
-    text = _apply_user_parrot_guard(text, user_text, state)
+    if not deterministic_output_locked:
+        # Generalized user-parrot guard (body-only, footer-safe).
+        text = _apply_user_parrot_guard(text, user_text, state)
 
-    # Single-response repetition clamp (body-only, footer-safe).
-    text = _clamp_single_response_sentence_loops(text, max_repeats=2)
+        # Single-response repetition clamp (body-only, footer-safe).
+        text = _clamp_single_response_sentence_loops(text, max_repeats=2)
 
     text = apply_deterministic_footer_fn(
         text=text,

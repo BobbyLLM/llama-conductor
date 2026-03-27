@@ -4,7 +4,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
-from .interaction_profile import InteractionProfile, new_profile
+from .interaction_profile import InteractionProfile, new_profile, profile_set
 from .config import cfg_get
 
 KAIOKEN_CLOSED_THREAD_TTL_TURNS = 10
@@ -114,10 +114,43 @@ class SessionState:
 _SESSIONS: Dict[str, SessionState] = {}
 
 
+def _apply_profile_boot_default(state: SessionState) -> None:
+    """Apply optional startup profile preset from config (session bootstrap only)."""
+    raw = str(cfg_get("profile.default", "") or "").strip().lower()
+    if not raw:
+        return
+
+    # Canonical config values: direct|casual|turbo (turbo == feral runtime preset).
+    if raw == "turbo":
+        profile_set(state.interaction_profile, "correction_style", "direct")
+        profile_set(state.interaction_profile, "verbosity", "compact")
+        profile_set(state.interaction_profile, "snark_tolerance", "high")
+        profile_set(state.interaction_profile, "sarcasm_level", "high")
+        profile_set(state.interaction_profile, "profanity_ok", "true")
+        return
+    if raw == "casual":
+        profile_set(state.interaction_profile, "correction_style", "direct")
+        profile_set(state.interaction_profile, "verbosity", "compact")
+        profile_set(state.interaction_profile, "snark_tolerance", "high")
+        profile_set(state.interaction_profile, "sarcasm_level", "medium")
+        profile_set(state.interaction_profile, "profanity_ok", "false")
+        return
+    if raw == "direct":
+        profile_set(state.interaction_profile, "correction_style", "direct")
+        profile_set(state.interaction_profile, "verbosity", "compact")
+        profile_set(state.interaction_profile, "snark_tolerance", "medium")
+        profile_set(state.interaction_profile, "sarcasm_level", "low")
+        profile_set(state.interaction_profile, "profanity_ok", "false")
+        return
+    # Invalid value: safe fallback to existing baseline behavior (no crash/no mutation).
+    return
+
+
 def get_state(session_id: str) -> SessionState:
     """Get or create session state for given session ID."""
     if session_id not in _SESSIONS:
         _SESSIONS[session_id] = SessionState()
+        _apply_profile_boot_default(_SESSIONS[session_id])
         # Fresh process/session bootstrap: clear any persisted scratchpad
         # for this session id unless explicitly disabled in config.
         if bool(cfg_get("scratchpad.clear_on_session_init", True)):

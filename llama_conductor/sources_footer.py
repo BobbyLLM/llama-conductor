@@ -24,6 +24,10 @@ _INLINE_CONF_RE = re.compile(
     r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki)(?:[\s\.\-:]+[A-Za-z]+){0,3}\s*",
     re.IGNORECASE,
 )
+_INLINE_BROKEN_CONF_RE = re.compile(
+    r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*(?:S(?:o|ou|our|ource)?[^\\n]{0,80})$",
+    re.IGNORECASE,
+)
 _INLINE_PROFILE_TAIL_RE = re.compile(
     r"(?:"
     r"\s*(?:\|\s*)?Profile:\s*[^|\n]{1,40}\s*\|\s*Sarc:\s*[^|\n]{1,20}\s*\|\s*Snark:\s*[^|\n]{1,20}"
@@ -44,6 +48,10 @@ _INLINE_PROFILE_ANY_RE = re.compile(
     r"|"
     r"(?:\bFeral:\s*)"
     r")",
+    re.IGNORECASE,
+)
+_INLINE_TRUNC_SOURCE_TAIL_RE = re.compile(
+    r"\s*\|\s*S(?:o|ou|our|ource)?[:\s\.\-…]*$",
     re.IGNORECASE,
 )
 _SIMPLE_SOURCE_LINE_RE = re.compile(
@@ -67,10 +75,20 @@ def _strip_confidence_lines(text: str) -> str:
                 continue
             continue
         ln2 = _INLINE_CONF_RE.sub("", ln).rstrip()
+        ln2 = _INLINE_BROKEN_CONF_RE.sub("", ln2).rstrip()
         ln2 = _INLINE_PROFILE_TAIL_RE.sub("", ln2).rstrip()
         ln2 = _INLINE_PROFILE_ANY_RE.sub("", ln2).rstrip()
         kept.append(ln2)
     return "\n".join(kept).strip()
+
+
+def _has_explicit_docs_marker(text: str) -> bool:
+    low = str(text or "").lower()
+    return (
+        "source: docs" in low
+        or "source: locked file (" in low
+        or "sources: vault" in low
+    )
 
 
 def _detect_abstract_source(
@@ -165,6 +183,21 @@ def normalize_sources_footer(
     override_source = str(source_override or "").strip().title()
     if override_source in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki"}:
         source = override_source
+    # Structural provenance guard:
+    # "Wiki" source must come from lane override (actual injected wiki facts),
+    # never from model-emitted body/footer text.
+    if source == "Wiki" and override_source != "Wiki":
+        source = "Model"
+    # Provenance floor: do not upgrade to Docs without explicit evidence of a docs lane.
+    if (
+        source == "Docs"
+        and not override_source
+        and not lock_active
+        and not scratchpad_grounded
+        and max(0, int(rag_hits or 0)) <= 0
+        and not _has_explicit_docs_marker(t)
+    ):
+        source = "Model"
     model_fallback = source == "Model" and "not found in locked source" in t.lower()
     conf = _compute_confidence(
         source=source,
@@ -179,4 +212,5 @@ def normalize_sources_footer(
         conf = "medium" if override_conf == "med" else override_conf
 
     base = _strip_confidence_lines(t)
+    base = _INLINE_TRUNC_SOURCE_TAIL_RE.sub("", base).rstrip()
     return f"{base}\n\nConfidence: {conf} | Source: {source}"

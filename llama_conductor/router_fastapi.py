@@ -1928,6 +1928,7 @@ def _finalize_chat_response(
     sensitive_override_once: bool = False,
     bypass_serious_anti_loop: bool = False,
     deterministic_state_solver: bool = False,
+    deterministic_output_locked: bool = False,
     scratchpad_lock_miss: bool | None = None,
     scratchpad_lock_miss_indices: List[int] | None = None,
 ):
@@ -1950,6 +1951,7 @@ def _finalize_chat_response(
         sensitive_override_once=sensitive_override_once,
         bypass_serious_anti_loop=bypass_serious_anti_loop,
         deterministic_state_solver=deterministic_state_solver,
+        deterministic_output_locked=deterministic_output_locked,
         scratchpad_lock_miss=scratchpad_lock_miss,
         scratchpad_lock_miss_indices=scratchpad_lock_miss_indices,
         serious_task_forward_fallback=selected_task_forward_fallback,
@@ -3057,17 +3059,39 @@ async def v1_chat_completions(req: Request):
         return early_state
 
     # Default: serious reasoning
-    facts_block = _cf_build_fs_facts(
-        query=user_text,
-        state=state,
-        build_locked_summ_facts_block_fn=build_locked_summ_facts_block,
-        build_fs_facts_block_fn=build_fs_facts_block,
-        cfg_get_fn=cfg_get,
-        fs_top_k=FS_TOP_K,
-        fs_max_chars=FS_MAX_CHARS,
-        kb_paths=KB_PATHS,
-        vault_kb_name=VAULT_KB_NAME,
-    )
+    # Classify once and carry through this turn for retrieval/guard shaping.
+    turn_macro = "working"
+    turn_subsignals: set[str] = set()
+    try:
+        if _kaioken_classify_register is not None:
+            cls_now = _kaioken_classify_register(str(user_text or ""))
+            turn_macro = str(getattr(cls_now, "macro", "working") or "working").strip().lower()
+            turn_subsignals = {
+                str(s).strip().lower()
+                for s in list(getattr(cls_now, "subsignals", []) or [])
+                if str(s or "").strip()
+            }
+    except Exception:
+        turn_macro = "working"
+        turn_subsignals = set()
+    state.turn_kaioken_macro = str(turn_macro or "").strip().lower()
+
+    # Bug 2b (upstream gate): suppress filesystem KB retrieval on casual/personal turns
+    # unless the user has explicitly locked a source.
+    if turn_macro in {"casual", "personal"} and not bool(lock_active_now):
+        facts_block = ""
+    else:
+        facts_block = _cf_build_fs_facts(
+            query=user_text,
+            state=state,
+            build_locked_summ_facts_block_fn=build_locked_summ_facts_block,
+            build_fs_facts_block_fn=build_fs_facts_block,
+            cfg_get_fn=cfg_get,
+            fs_top_k=FS_TOP_K,
+            fs_max_chars=FS_MAX_CHARS,
+            kb_paths=KB_PATHS,
+            vault_kb_name=VAULT_KB_NAME,
+        )
     # Reset per-turn retrieval overrides before optional static/wiki grounding.
     state.turn_footer_source_override = ""
     state.turn_footer_confidence_override = ""
@@ -3081,20 +3105,8 @@ async def v1_chat_completions(req: Request):
     # Track B is intentionally working-only by design; do not harmonize silently.
     try:
         if _resolve_cheatsheets_turn is not None:
-            macro = "working"
-            subsignals: set[str] = set()
-            try:
-                if _kaioken_classify_register is not None:
-                    cls_now = _kaioken_classify_register(str(user_text or ""))
-                    macro = str(getattr(cls_now, "macro", "working") or "working").strip().lower()
-                    subsignals = {
-                        str(s).strip().lower()
-                        for s in list(getattr(cls_now, "subsignals", []) or [])
-                        if str(s or "").strip()
-                    }
-            except Exception:
-                macro = "working"
-                subsignals = set()
+            macro = turn_macro
+            subsignals = set(turn_subsignals)
             cheat = _resolve_cheatsheets_turn(
                 user_text=str(user_text or ""),
                 macro=macro,
@@ -3113,6 +3125,7 @@ async def v1_chat_completions(req: Request):
             state.turn_footer_confidence_override = str(cheat.footer_confidence or "").strip().lower()
             state.turn_retrieval_track = str(cheat.track or "").strip()
             state.turn_local_knowledge_line = str(cheat.local_knowledge_line or "").strip()
+            state.turn_kaioken_macro = str(macro or "").strip().lower()
             cheatsheets_constraints_block = str(cheat.constraints_block or "").strip()
             cheatsheets_deterministic_answer = str(cheat.deterministic_answer or "").strip()
             # Non-blocking JSONL parse diagnostics: surface exact file/line issue to user
@@ -3349,6 +3362,7 @@ async def v1_chat_completions(req: Request):
             stream=stream,
             mode="serious",
             sensitive_override_once=sensitive_override_once,
+            deterministic_output_locked=True,
             scratchpad_lock_miss=scratchpad_lock_miss,
             scratchpad_lock_miss_indices=scratchpad_lock_miss_indices,
         )

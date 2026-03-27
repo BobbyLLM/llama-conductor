@@ -128,6 +128,11 @@ footer:
     # always|non_default|debug
     mode: "non_default"
 
+profile:
+  # startup default for new sessions: direct|casual|turbo
+  # turbo maps to the existing feral-equivalent runtime preset.
+  default: "direct"
+
 # Deterministic state-transition reasoning router.
 # Phase 1 scope: bounded capacity / transfer family.
 state_solver:
@@ -156,15 +161,15 @@ scratchpad:
 
 # KAIOKEN v2 phase 0 (telemetry-only, fail-open).
 kaioken:
-  enabled: true
+  enabled: false
   mode: "log_only"          # phase0: log_only (no coercion)
   log_all_routes: true      # log model + exempt routes with suppression reason
   session_hash_salt: "kaioken-v1"
 
 # Temporary upstream watchdog (remove later if desired).
 # Writes `total_recall/upstream_watchdog.jsonl` for router/upstream health transitions.
-
 cheatsheets:
   track_b:
     enabled: true
+
 
