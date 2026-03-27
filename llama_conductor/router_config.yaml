@@ -163,3 +163,8 @@ kaioken:
 
 # Temporary upstream watchdog (remove later if desired).
 # Writes `total_recall/upstream_watchdog.jsonl` for router/upstream health transitions.
+
+cheatsheets:
+  track_b:
+    enabled: true
+
