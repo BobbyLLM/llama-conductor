@@ -766,7 +766,13 @@ def _parse_wiki_payload(raw: str) -> Tuple[bool, str, str]:
         return False, "", ""
     # Treat disambiguation-like stubs as misses so they do not hijack routing.
     low = summary.lower()
-    if (" may refer to" in low) or ("can refer to" in low) or ("disambiguation" in low):
+    if (
+        (" may refer to" in low)
+        or ("can refer to" in low)
+        or (" refers to:" in low)
+        or (" commonly refers to:" in low)
+        or ("disambiguation" in low)
+    ):
         return False, "", ""
     return True, term, summary
 
@@ -1003,6 +1009,41 @@ def _needs_bare_reference_clarification(user_text: str) -> bool:
     if re.match(r"(?i)^\s*(?:who|what|when|where)\s+\w+\s+(?:that|this|it)\s*[?.!]*\s*$", q):
         return True
     return False
+
+
+def _is_pronoun_person_eval_followup(user_text: str) -> bool:
+    q = str(user_text or "").strip()
+    if not q:
+        return False
+    # Examples:
+    # - "Is he good?"
+    # - "Is she any good"
+    # - "Are they trustworthy?"
+    if not re.match(r"(?i)^\s*(?:is|are|was|were|does|do)\s+(?:he|she|they)\b", q):
+        return False
+    return bool(
+        re.search(
+            r"(?i)\b(good|any\s+good|trustworthy|reliable|safe|legit|credible|decent)\b",
+            q,
+        )
+    )
+
+
+def _extract_named_person_from_prior(prior_user_text: str) -> str:
+    prev = str(prior_user_text or "").strip()
+    if not prev:
+        return ""
+    # Primary pattern: "Who is <Name>"
+    m = re.match(
+        r"(?i)^\s*who\s+(?:is|was)\s+(.+?)\s*[?.!]*\s*$",
+        prev,
+    )
+    if m:
+        cand = re.sub(r"[\"']", "", str(m.group(1) or "")).strip()
+        # Keep only reasonably name-like strings.
+        if cand and len(cand.split()) <= 6 and re.search(r"[A-Za-z]", cand):
+            return cand
+    return ""
 
 
 def _wiki_term_to_url(term: str) -> str:
@@ -1721,6 +1762,25 @@ def resolve_cheatsheets_turn(
     subs = {str(s).strip().lower() for s in (subsignals or []) if str(s or "").strip()}
     macro_l = str(macro or "").strip().lower()
     q_framing = _question_framing(user_text)
+    if _is_pronoun_person_eval_followup(user_text):
+        referent = _extract_named_person_from_prior(prior_user_text)
+        if referent:
+            msg = f"If you mean {referent}, I can't assess whether they're \"good\" from retrieved facts alone."
+        else:
+            msg = "Can you name who you mean?"
+        return CheatsheetsTurnResult(
+            facts_block="",
+            constraints_block="",
+            deterministic_answer=msg,
+            local_knowledge_line="",
+            track="A",
+            footer_source="Model",
+            footer_confidence="unverified",
+            kb_lookup_candidate=False,
+            matched_terms=tuple(),
+            wiki_term="",
+            source_url="",
+        )
     if _needs_bare_reference_clarification(user_text):
         return CheatsheetsTurnResult(
             facts_block="",
