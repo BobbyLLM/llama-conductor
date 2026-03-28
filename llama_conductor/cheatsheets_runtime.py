@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 import re
 import requests
-from urllib.parse import quote as _url_quote
+from urllib.parse import quote as _url_quote, unquote as _url_unquote
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
@@ -1209,6 +1209,35 @@ def _extract_winner_from_web(evidence: Dict[str, Any], *, thing_phrase: str = ""
                     return near[0][1]
         return ""
 
+    def _winner_from_url_slug(url: str) -> str:
+        u = str(url or "").strip()
+        if not u:
+            return ""
+        try:
+            path = _url_unquote(u).split("://", 1)[-1]
+            path = path.split("/", 1)[1] if "/" in path else path
+        except Exception:
+            path = u
+        slug = str(path or "").lower()
+        if not slug:
+            return ""
+        slug = re.sub(r"[^a-z0-9/_\\-]", "-", slug)
+        # High-signal pattern observed in news slugs:
+        # ".../anora-has-won-best-picture-..."
+        m = re.search(r"/([a-z0-9][a-z0-9\\-]{1,80})-has-won-best-picture(?:-|/|$)", slug)
+        if not m:
+            m = re.search(r"/([a-z0-9][a-z0-9\\-]{1,80})-wins-best-picture(?:-|/|$)", slug)
+        if not m:
+            return ""
+        raw = str(m.group(1) or "").strip("-")
+        if not raw:
+            return ""
+        words = [w for w in raw.split("-") if w and w not in {"the", "a", "an"}]
+        if not words:
+            return ""
+        cand = " ".join(w.capitalize() for w in words)
+        return cand if _valid_name(cand) else ""
+
     for t in texts:
         m = was_re.search(str(t))
         if m:
@@ -1227,6 +1256,18 @@ def _extract_winner_from_web(evidence: Dict[str, Any], *, thing_phrase: str = ""
             cand = _clean_name(m.group(1))
             if _valid_name(cand):
                 return cand
+    # Fallback (high priority): mine stable URL slugs when snippets are noisy.
+    rows = evidence.get("rows", None)
+    if isinstance(rows, list):
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            cand = _winner_from_url_slug(str(r.get("url", "") or ""))
+            if cand:
+                return cand
+    cand0 = _winner_from_url_slug(str(evidence.get("url", "") or ""))
+    if cand0:
+        return cand0
     for t in texts:
         s = str(t or "")
         if not award_phrase_re.search(s):
