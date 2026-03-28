@@ -1077,6 +1077,13 @@ def _build_track_b_deterministic_answer(term: str, summary: str, *, user_text: s
     # Fail-loud when retrieved summary does not cover requested query tokens.
     if q_tokens and not q_tokens.intersection(s_tokens):
         return "Not available in retrieved wiki facts."
+    # Global relevance refinement:
+    # entity/title overlap confirms "right page";
+    # detail-token overlap confirms "answers this question".
+    term_tokens = set(_TOKEN_RE.findall(_norm_text(t)))
+    detail_tokens = {tok for tok in q_tokens if tok not in term_tokens}
+    if detail_tokens and not detail_tokens.intersection(s_tokens):
+        return "Not available in retrieved wiki facts."
     # Slot-aware guard: require at least one meaningful pre-entity token
     # (tokens before first numeric anchor like "97th") to appear in summary.
     q_norm_toks = _TOKEN_RE.findall(_norm_text(user_text))
