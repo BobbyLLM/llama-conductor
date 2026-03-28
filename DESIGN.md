@@ -101,35 +101,3 @@ I hope it’s something and I didn’t GIGO myself into stupid. But no promises 
 
 For more (including me answering some pointed question about this router) please view  https://lemmy.world/post/41992574  
 
----
-
-## KAIOKEN Mode Interaction
-
-KAIOKEN turn classification and behavioral shaping are mode-agnostic in the core chat path.
-
-Execution flow:
-
-1. Mode decision (`fun`/`serious`) resolves early via `_resolve_fun_mode`.
-2. KAIOKEN classification runs and contributes macro/subsignal context used by retrieval and guards.
-3. Cheatsheets retrieval uses KAIOKEN signals (`macro`, `subsignals`) to gate Track A/B behavior.
-4. KAIOKEN soft constraints are appended to `constraints_block`.
-5. Both `fun` and `serious` execution paths receive the same shaped inputs:
-   - `facts_block`
-   - `constraints_block`
-   - KAIOKEN postguard hook
-6. Mode-specific behavior executes on top:
-   - `>>fun`: decoration/styling
-   - `>>fun_rewrite`: rewrite path
-   - `serious`: default structured generation
-7. KAIOKEN postguard runs on generated output regardless of mode path.
-
-Caveat:
-
-- Some late finalization logic in `chat_finalize.py` is still `mode == "serious"` gated (for example selected cleanup/anti-loop branches).
-- This caveat affects late-stage cleanup behavior, not the shared pre-generation KAIOKEN shaping layer.
-
-Result:
-
-- No separate fun-mode KAIOKEN pipeline is required.
-- Behavioral shaping is shared; mode mostly changes output style/execution flavor.
-
