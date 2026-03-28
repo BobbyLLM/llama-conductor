@@ -44,6 +44,7 @@ Need the fastest path? See [README 5-Minute Quickstart](README.md#5-minute-quick
   - [What models do I need?](#what-models-do-i-need)
   - [What's the difference between modes?](#whats-the-difference-between-modes)
   - [What do these commands *actually* do?](#what-do-these-commands-actually-do)
+  - [>>web (web retrieval sidecar)](#web-web-retrieval-sidecar)
   - [Cheatsheets (JSONL grounding)](#cheatsheets-jsonl-grounding)
   - [Scratchpad Deep Example](#scratchpad-deep-example)
   - [Common workflows](#common-workflows)
@@ -759,7 +760,7 @@ Confidence tiers:
 ---
 
 <a id="sidecars"></a>
-#### Sidecars (`>>wiki`, `>>define`, `>>exchange`, `>>weather`) - what are they for?
+#### Sidecars (`>>wiki`, `>>define`, `>>exchange`, `>>weather`, `>>web`) - what are they for?
 
 These are deterministic utility tools for common retrieval/conversion tasks:
 
@@ -767,8 +768,56 @@ These are deterministic utility tools for common retrieval/conversion tasks:
 - `>>define <word>`: word-origin/etymology lookup (deterministic Etymonline sidecar)
 - `>>exchange <query>`: live currency conversion (Frankfurter API)
 - `>>weather <location>`: live weather lookup (Open-Meteo API)
+- `>>web <query>`: live web search with deterministic relevance gating (provider-agnostic; ships with DuckDuckGo, supports Tavily/SearxNG/custom)
 
 They reduce token spend and avoid unnecessary model improvisation for utility queries.
+
+### `>>web` (web retrieval sidecar)
+
+`>>web` is a deterministic web search sidecar with strict relevance scoring.
+
+**Two modes of operation:**
+
+1. **Manual command:** `>>web <query>` - search the web for anything. Returns ranked results with `Source: Web` provenance and a `See: <url>` link.
+
+2. **Automatic cascade:** When cheatsheets and wiki can't answer a retrievable-fact query, `>>web` fires automatically before model fallback. No command needed. Retrieval order: `Cheatsheets → Wiki → Web → Model`.
+
+**Relevance scoring (deterministic, no model involvement):**
+
+Every web result is scored before the router will accept it as evidence:
+- exact phrase match in snippet/title: big bonus
+- token overlap between query and result: scaled contribution
+- result from a trusted domain (Wikipedia, IMDB, etc.): small boost
+- combined score must pass a hard threshold or the result is discarded
+
+If nothing passes the gate, the system cascades to the next step or fails loud. No "close enough" vibes.
+
+**Provider abstraction:**
+
+Ships with `ddg_lite` (DuckDuckGo Lite HTML parse - no API key, no account, no cloud dependency). Also supports:
+- `tavily` (API)
+- `searxng` (self-hosted)
+- `custom` (generic adapter)
+
+`ddg_lite` has strict HTML shape validation. If DuckDuckGo changes their page structure, the parser fails loud instead of returning garbage. You'll know immediately.
+
+**User trust domains:**
+
+Add your own trusted domains in `router_config.yaml`:
+
+```yaml
+web_search:
+  user_trust_domains:
+    - bbc.co.uk
+    - reuters.com
+```
+
+These get the same relevance scoring boost as built-in domains. Ships empty. Built-in defaults stay active regardless.
+
+**Footer provenance:**
+- `Source: Web` -> real web evidence passed the relevance gate.
+- `See: <url>` -> the actual source URL, injected deterministically from retrieval metadata. Never model-generated.
+- If web retrieval fails or all results are rejected: cascades to model with `Confidence: unverified | Source: Model`.
 
 #### Other utility commands (the ones nobody told you about)
 
@@ -1344,6 +1393,15 @@ rag:
   max_chars: 1200              # Max chars in FACTS block
 ```
 
+#### Web search sidecar:
+```yaml
+web_search:
+  provider: "ddg_lite"            # ddg_lite|tavily|searxng|custom
+  max_results: 3                  # top N results after relevance gate
+  relevance_threshold: 3.0        # minimum score to accept a result
+  user_trust_domains: []          # your trusted domains (appended to built-ins)
+```
+
 #### KBs (filesystem folders):
 ```yaml
 kb_paths:
@@ -1541,6 +1599,9 @@ They show how grounded an answer is, not how confident the model sounds.
   - No grounded evidence was found. This is pre-trained model knowledge.
 - `Source: Docs`
   - Grounded to attached filesystem docs / SUMM facts.
+- `Source: Web`
+  - Grounded to live web retrieval that passed deterministic relevance scoring.
+  - Includes `See: <url>` link to source.
 - `Source: Scratchpad`
   - Grounded to attached scratchpad content.
 - `Source: Locked file (SUMM_*.md)`
@@ -1589,6 +1650,3 @@ Else, you can roll the dice: sanding-oink-grant(AT)duck(DOT)com or find me on Le
 
 ## License
 AGPL-3.0-or-later. See `LICENSE`
-
-
-

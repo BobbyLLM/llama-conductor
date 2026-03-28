@@ -103,6 +103,7 @@ _APPROVED_FOOTER_SOURCES = {
     "Docs",
     "Cheatsheets",
     "Wiki",
+    "Web",
 }
 _FOOTER_CONF_SRC_RE = re.compile(
     r"^\s*Confidence:\s*([^|]+?)\s*\|\s*Source:\s*(.+?)\s*$",
@@ -203,6 +204,40 @@ def _sanitize_footer_source_values(text: str) -> str:
             continue
         out.append(ln)
     return "\n".join(out).strip()
+
+
+def _append_source_see_line(*, text: str, source: str, source_url: str) -> str:
+    src = str(source or "").strip().lower()
+    url = str(source_url or "").strip()
+    if src not in {"web", "wiki"}:
+        return str(text or "")
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return str(text or "")
+
+    raw = str(text or "")
+    lines = raw.splitlines()
+    filtered: List[str] = []
+    for ln in lines:
+        if re.match(r"^\s*See:\s*https?://\S+\s*$", str(ln or "").strip(), flags=re.IGNORECASE):
+            continue
+        filtered.append(ln)
+    lines = filtered
+
+    footer_idx: Optional[int] = None
+    for i, ln in enumerate(lines):
+        if re.match(r"^\s*(?:Confidence:|Source:|Sources:|Profile:)\s*", str(ln or "").strip(), flags=re.IGNORECASE):
+            footer_idx = i
+            break
+    see_line = f"See: {url}"
+    if footer_idx is None:
+        body = "\n".join(lines).rstrip()
+        return f"{body}\n\n{see_line}".strip() if body else see_line
+
+    head = "\n".join(lines[:footer_idx]).rstrip()
+    tail = "\n".join(lines[footer_idx:]).lstrip()
+    if head:
+        return f"{head}\n\n{see_line}\n{tail}".strip()
+    return f"{see_line}\n{tail}".strip()
 
 
 def _has_eds_descriptor_drift(text: str) -> bool:
@@ -828,6 +863,8 @@ def finalize_chat_response(
         # Single-response repetition clamp (body-only, footer-safe).
         text = _clamp_single_response_sentence_loops(text, max_repeats=2)
 
+    source_override_snapshot = str(getattr(state, "turn_footer_source_override", "") or "")
+    source_url_snapshot = str(getattr(state, "turn_source_url_override", "") or "")
     text = apply_deterministic_footer_fn(
         text=text,
         state=state,
@@ -835,6 +872,11 @@ def finalize_chat_response(
         scratchpad_grounded=scratchpad_grounded,
         has_facts_block=has_facts_block,
         deterministic_state_solver=deterministic_state_solver,
+    )
+    text = _append_source_see_line(
+        text=text,
+        source=source_override_snapshot,
+        source_url=source_url_snapshot,
     )
     if bool(scratchpad_lock_miss) and not scratchpad_grounded:
         idx_str = ", ".join(str(i) for i in (scratchpad_lock_miss_indices or []))

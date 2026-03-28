@@ -52,6 +52,7 @@ Minimal examples:
 - `>>preset reset` clear runtime override and use config default
 - `>>calc <expression>` calculator (`+ - * / %`, `**` = power), parentheses, functions (`sqrt/log/sin/cos`)
 - `>>wiki <topic>` encyclopedia summary lookup (Wikipedia)
+- `>>web <query>` web search sidecar (provider-agnostic)
 - `>>define <word>` word-origin/etymology lookup (deterministic Etymonline sidecar)
 - `>>exchange <query>` live currency conversion (Frankfurter API)
 - `>>weather <location>` live weather lookup (Open-Meteo API)
@@ -61,7 +62,7 @@ Minimal examples:
 - `>>flush` clear CTC history cache, reset session profile/style identity, and delete session-memory, scratchpad session captures, plus judge-audit JSONL files (does not detach KBs)
 Tips:
 - Use these when you want a direct tool result rather than a free-form chat answer.
-- API-backed commands (`wiki`, `define`, `exchange`, `weather`) can fail if upstream services are unavailable.
+- API-backed commands (`wiki`, `web`, `define`, `exchange`, `weather`) can fail if upstream services are unavailable.
 - `>>judge` is deterministic ranking orchestration over model pairwise verdicts (`A|B|TIE`) with fail-loud parse behavior.
 - Each pair is evaluated in both directions (`A,B` then `B,A`) to reduce simple positional bias toward option A.
 - Soft aliases are supported: `profile show|set|reset|on|off`.

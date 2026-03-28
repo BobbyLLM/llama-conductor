@@ -1,6 +1,61 @@
 # What's New
 
-## *** V1.8.0 (latest)
+## *** V1.9.0 (latest)
+
+TL;DR:
+
+Web retrieval sidecar with deterministic relevance gating. The model now searches the internet before making things up. Receipts included.
+
+**`>>web` - provider-agnostic web retrieval**
+
+New deterministic sidecar for live web search. `>>web <query>` returns ranked web results with strict relevance scoring and honest provenance. Provider-agnostic: ships with `ddg_lite` (DuckDuckGo, no API key needed), supports `tavily`, `searxng`, and `custom` adapters.
+
+Results are scored deterministically - exact phrase match bonus, token-overlap ratio, and trusted-domain boost - with a hard threshold before anything counts as evidence. Garbage in, garbage out? No. Garbage in, fail-loud out.
+
+**Automatic retrieval cascade**
+
+The router no longer waits for you to type `>>web`. When cheatsheets and wiki can't answer a retrievable-fact query, web search fires automatically before model fallback.
+
+Retrieval order: `Cheatsheets → Wiki → Web → Model`. Each step only fires if the previous one missed. The model is last resort, not first call.
+
+This is triggered by a broad `needs_web_retrieval` signal (WH-questions, named entities, attribution queries, date/event phrasing), not a narrow intent enum. If the question looks like something the internet could answer, the system tries before the model guesses.
+
+**Refusal durability guard**
+
+New safety guard for quote/source attribution queries. If retrieval already failed and the user pushes ("no, it's a quote, do you know the source?") without adding new evidence, the model is hard-blocked from inventing attributions. Previously, follow-up pressure caused the model to cave and confabulate. Now it holds the line.
+
+Guard releases when new evidence is supplied (new entity tokens, URLs, pasted content). Safety constraint, not capability limiter.
+
+**Deterministic source links**
+
+Answers grounded from wiki or web now include a `See: <url>` line before the footer. The URL is injected deterministically from retrieval metadata - never model-generated. One click to verify.
+
+- `Source: Wiki` -> `See: https://en.wikipedia.org/wiki/...`
+- `Source: Web` -> `See: https://actual-source-url.com/...`
+- `Source: Cheatsheets` / `Source: Model` -> no `See:` line (nothing external to link to).
+
+**User trust domains**
+
+New config extension: `web_search.user_trust_domains`. Add your own trusted domains (e.g. `bbc.co.uk`, `reuters.com`, `pubmed.ncbi.nlm.nih.gov`) and they get the same relevance scoring boost as built-in domains. Ships empty by default. Built-in domain list stays active and invisible.
+
+```yaml
+web_search:
+  user_trust_domains: []
+  # Example:
+  # user_trust_domains:
+  #   - bbc.co.uk
+  #   - reuters.com
+```
+
+**What this is building toward**
+
+`>>web` closes the last major retrieval gap before swarm. The system can now ground answers from your definitions (Cheatsheets), encyclopedic summaries (Wiki), live web evidence (Web), curated deep knowledge (Vault/Mentats), or your own pasted context (Scratchpad/Lock). Model fallback is truly last resort now.
+
+See [FAQ](FAQ.md) for full `>>web` details and config options.
+
+---
+
+## *** V1.8.0
 
 TL;DR: 
 

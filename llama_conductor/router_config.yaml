@@ -1,6 +1,9 @@
-﻿# router_config.yaml
-# version 1.6.0
+﻿# llama-conductor main settings
+# version 1.8.0
 
+# -----------------------------------------------------------------------------
+# Backend / Upstream
+# -----------------------------------------------------------------------------
 # Backend upstream configuration.
 # `provider` controls START-2 launcher behavior:
 # - llama_cpp: launch local llama-server and route via configured local port
@@ -31,6 +34,9 @@ backend:
 # Prefer backend.upstream_chat_url for all new configs.
 llama_swap_url: "http://127.0.0.1:8010/v1/chat/completions"
 
+# -----------------------------------------------------------------------------
+# Router / Frontend / Launcher
+# -----------------------------------------------------------------------------
 # Router bind port (when running `python router_fastapi.py`)
 port: 9000
 
@@ -69,6 +75,9 @@ launcher:
   ready_timeout_s: 22
   auto_clean_before_start: true
 
+# -----------------------------------------------------------------------------
+# Model Presets / Role Mapping
+# -----------------------------------------------------------------------------
 # llama-server router-mode preset generation.
 # This drives startup-time generation of the models-preset INI consumed by llama-server.
 llama_server:
@@ -87,11 +96,14 @@ roles:
   coder: "Qwen3-4B-Hivemind-Inst-Q4_K_M-imat"
   second_op: "Nanbeige4-3B-Thinking-2511-Q4_K_M"
   judge: "Phi-4-mini-instruct-Q4_K_M"
+# -----------------------------------------------------------------------------
+# Retrieval / Knowledge Sources
+# -----------------------------------------------------------------------------
 # Vault is Qdrant-only; Mentats uses this kb label when searching Qdrant.
 vault_kb_name: "vault"
 
 # Filesystem KB folders.
-# These are *not* Qdrant. They are folders containing raw docs + SUMM_*.md files.
+# These are *not* Qdrant. They are folders containing raw docs + SUMM_*.md files. Add your own.
 kb_paths:
   c64: "C:/docs/c64"
   amiga: "C:/docs/amiga"
@@ -104,6 +116,44 @@ rag:
   collection: "moa_kb_docs"
   vector_name: "e5_small_v2"
 
+# Web sidecar (>>web): provider-agnostic retrieval lane.
+web_search:
+  enabled: true
+  ## Public default: keyless DDG Lite for zero-config startup.
+  ## DDG Lite rate-limits quickly; switch to free Tavily API or your own search engine ASAP.
+  provider: "ddg_lite"   # ddg_lite|tavily|searxng|custom
+  max_results: 5
+  auto_top_n: 3          # automatic cascade keeps top N gated rows (1..5)
+  timeout_sec: 8
+  safe_search: true
+  include_domains: []     # optional allow-list (e.g. ["wikipedia.org"])
+  exclude_domains: []     # optional block-list
+  # Trust boost only (ranking bias), not verification/allowlist.
+  # Built-in trusted domains remain active in code.
+  # Add domains here to receive the same +1.0 trust weighting.
+  user_trust_domains:
+    - pubmed.ncbi.nlm.nih.gov
+    - pmc.ncbi.nlm.nih.gov
+    - chiromt.biomedcentral.com
+    - link.springer.com
+    - researchgate.net
+  # Example:
+  # user_trust_domains:
+  #   - bbc.co.uk
+  #   - reuters.com
+  #   - pubmed.ncbi.nlm.nih.gov
+  recency_days: 0         # 0 disables recency filter
+  api_key: ""             # optional shared key fallback
+  tavily:
+    api_key: ""
+  searxng:
+    base_url: "http://127.0.0.1:8888/search"
+  custom:
+    base_url: ""
+
+# -----------------------------------------------------------------------------
+# Memory / Footer / Profile
+# -----------------------------------------------------------------------------
 # Vodka settings (overrides vodka_filter.py defaults)
 vodka:
   # Presets reduce knob-soup; explicit keys below still override preset values.
@@ -133,6 +183,8 @@ profile:
   # turbo maps to the existing feral-equivalent runtime preset.
   default: "direct"
 
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # Deterministic state-transition reasoning router.
 # Phase 1 scope: bounded capacity / transfer family.
 state_solver:
@@ -149,6 +201,9 @@ mentats:
   debug: false
   debug_payload: false
 
+# -----------------------------------------------------------------------------
+# Scratchpad / KAIOKEN / Watchdog / Cheatsheets
+# -----------------------------------------------------------------------------
 # Scratchpad sidecar (ephemeral session-grounding)
 scratchpad:
   storage_dir: "."         # base dir for total_recall/session_kb
@@ -171,5 +226,11 @@ kaioken:
 cheatsheets:
   track_b:
     enabled: true
+
+
+
+
+
+
 
 

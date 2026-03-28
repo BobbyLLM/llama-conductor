@@ -103,11 +103,16 @@ class SessionState:
     # Per-turn provenance overrides (set by retrieval lanes, consumed in finalize).
     turn_footer_source_override: str = ""
     turn_footer_confidence_override: str = ""
+    turn_source_url_override: str = ""
     turn_retrieval_track: str = ""
     turn_local_knowledge_line: str = ""
     turn_cheatsheets_warning_line: str = ""
     turn_cheatsheets_warning_key: str = ""
     cheatsheets_warning_last_shown_key: str = ""
+    turn_quote_source_durability_guard: bool = False
+    last_retrieval_miss_intent: str = ""
+    last_retrieval_miss_query_signature: str = ""
+    last_retrieval_miss_query_text: str = ""
 
 
 # Global session storage

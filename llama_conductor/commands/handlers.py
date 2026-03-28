@@ -45,6 +45,7 @@ try:
         format_quote_result,
         flush_ctc_cache,
         handle_wiki_query,
+        handle_web_query,
         handle_define_query,
         handle_exchange_query,
         handle_weather_query,
@@ -58,6 +59,7 @@ except Exception:
     format_quote_result = None  # type: ignore
     flush_ctc_cache = None  # type: ignore
     handle_wiki_query = None  # type: ignore
+    handle_web_query = None  # type: ignore
     handle_define_query = None  # type: ignore
     handle_exchange_query = None  # type: ignore
     handle_weather_query = None  # type: ignore
@@ -130,7 +132,7 @@ def _resolve_judge_audit_dir() -> str:
 
 
 _SIDECAR_FAIL_TOKENS_RE = re.compile(
-    r"\b(request timeout|timeout|not found|http error|error:|parse failed|blocked request)\b",
+    r"\b(request timeout|timeout|not found|no relevant results|http error|error:|parse failed|blocked request)\b",
     re.IGNORECASE,
 )
 _INLINE_COMMAND_FOOTER_RE = re.compile(
@@ -295,7 +297,7 @@ def _core_help_text() -> str:
         "- `>>flush`\n"
         "- `>>faq`\n"
         "- `>>trust <query>`\n"
-        "- `>>wiki <topic>` | `>>define <word>` | `>>exchange <query>` | `>>weather <location>`\n"
+        "- `>>wiki <topic>` | `>>web <query>` | `>>define <word>` | `>>exchange <query>` | `>>weather <location>`\n"
         "- `>>judge <criterion> : item1, item2, item3 [--verbose]`\n"
         "- `>>trust` recommends routes; execution remains manual.\n"
         "- Sidecars are deterministic utility lookups/conversions.\n"
@@ -1870,6 +1872,20 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         if _is_integrity_failure(raw):
             return _append_command_footer(raw, confidence="unverified", source="Wiki")
         return _append_command_footer(raw, confidence="unverified", source="Wiki")
+
+    # >>web <query> (provider-agnostic web search sidecar)
+    if cmd_key == "web":
+        if not handle_web_query:
+            return "[router] web not available (sidecars.py missing)"
+        query = cmd[len(parts[0]):].strip()
+        if not query:
+            return "[web] usage: >>web <query>\nExample: >>web father give me legs quote"
+        raw = str(handle_web_query(query) or "").strip()
+        if _is_sidecar_success(raw, "[web]"):
+            return _append_command_footer(raw, confidence="medium", source="Web")
+        # Provenance invariant: only successful, relevance-gated web evidence may
+        # carry Source: Web. Miss/error remains unverified model provenance.
+        return _append_command_footer(raw, confidence="unverified", source="Model")
 
     # >>define <word> (Etymonline etymology)
     if cmd_key == "define":

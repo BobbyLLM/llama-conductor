@@ -12,16 +12,16 @@ import re
 
 
 _CONF_RE = re.compile(
-    r"^\s*Confidence:\s*(unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki)\s*$",
+    r"^\s*Confidence:\s*(unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki|Web)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _SRC_RE = re.compile(
-    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki)\s*$",
+    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki|Web)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _CONF_PREFIX_RE = re.compile(r"^\s*Confidence:\s*", re.IGNORECASE)
 _INLINE_CONF_RE = re.compile(
-    r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki)(?:[\s\.\-:]+[A-Za-z]+){0,3}\s*",
+    r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki|Web)(?:[\s\.\-:]+[A-Za-z]+){0,3}\s*",
     re.IGNORECASE,
 )
 _INLINE_BROKEN_CONF_RE = re.compile(
@@ -55,7 +55,7 @@ _INLINE_TRUNC_SOURCE_TAIL_RE = re.compile(
     re.IGNORECASE,
 )
 _SIMPLE_SOURCE_LINE_RE = re.compile(
-    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki)\s*$",
+    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki|Web)\s*$",
     re.IGNORECASE,
 )
 
@@ -111,11 +111,11 @@ def _detect_abstract_source(
     m = _CONF_RE.search(t)
     if m:
         src = (m.group(2) or "").strip().title()
-        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki"} else "Model"
+        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki", "Web"} else "Model"
     m_src = _SRC_RE.search(t)
     if m_src:
         src = (m_src.group(1) or "").strip().title()
-        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki"} else "Model"
+        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki", "Web"} else "Model"
 
     if lock_active:
         return "Model" if "not found in locked source" in low else "Docs"
@@ -142,6 +142,8 @@ def _compute_confidence(
     if source in {"User", "Contextual", "Mixed"}:
         return "medium"
     if source == "Wiki":
+        return "medium"
+    if source == "Web":
         return "medium"
     if source == "Cheatsheets":
         return "high"
@@ -181,12 +183,30 @@ def normalize_sources_footer(
         has_facts_block=has_facts_block,
     )
     override_source = str(source_override or "").strip().title()
-    if override_source in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki"}:
+    if override_source in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki", "Web"}:
         source = override_source
+    # Structural provenance guard:
+    # "User" source must be explicitly assigned by the router lane.
+    # Never trust model-emitted "Source: User" lines in body/footer text.
+    if source == "User" and override_source != "User":
+        source = "Model"
     # Structural provenance guard:
     # "Wiki" source must come from lane override (actual injected wiki facts),
     # never from model-emitted body/footer text.
     if source == "Wiki" and override_source != "Wiki":
+        source = "Model"
+    if source == "Web" and override_source != "Web":
+        source = "Model"
+    # Retrieval-miss responses are system miss notices, not grounded evidence.
+    # Never badge these as Web/Wiki/User, regardless of upstream attempt lane.
+    miss_low = t.lower()
+    retrieval_miss = (
+        miss_low.startswith("not available in retrieved web facts")
+        or miss_low.startswith("not available in retrieved wiki facts")
+        or "not available in retrieved web facts." in miss_low
+        or "not available in retrieved wiki facts." in miss_low
+    )
+    if retrieval_miss:
         source = "Model"
     # Provenance floor: do not upgrade to Docs without explicit evidence of a docs lane.
     if (
@@ -220,7 +240,9 @@ def normalize_sources_footer(
         locked_fact_lines=max(0, int(locked_fact_lines or 0)),
     )
     override_conf = str(confidence_override or "").strip().lower()
-    if override_conf in {"unverified", "low", "medium", "med", "high", "top"}:
+    if retrieval_miss:
+        conf = "unverified"
+    elif override_conf in {"unverified", "low", "medium", "med", "high", "top"}:
         conf = "medium" if override_conf == "med" else override_conf
 
     base = _strip_confidence_lines(t)

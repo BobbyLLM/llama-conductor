@@ -10,10 +10,10 @@ from __future__ import annotations
 import re
 import html as ihtml
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 import math
 import requests
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, parse_qs, unquote
 
 # ============================================================================
 # Data Classes
@@ -80,6 +80,18 @@ class WeatherResult:
     location: Optional[str] = None
     condition: str = ""
     error: Optional[str] = None
+
+
+@dataclass
+class WebSearchHit:
+    """Normalized web search hit."""
+    title: str
+    url: str
+    snippet: str
+    timestamp: str
+    source: str
+    rank: int
+    score: float = 0.0
 
 
 # ============================================================================
@@ -501,7 +513,7 @@ _WIKI_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 _WIKI_STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in",
     "is", "it", "of", "on", "or", "that", "the", "this", "to", "was", "were",
-    "what", "when", "where", "which", "who", "why", "with", "won", "did", "do",
+    "what", "when", "where", "which", "who", "why", "with", "did", "do",
 }
 
 
@@ -721,6 +733,577 @@ def handle_define_query(term: str, max_chars: int = 500) -> str:
         return f"[define] HTTP error: {e.response.status_code if e.response is not None else 'unknown'}"
     except Exception as e:
         return f"[define] Error: {e}"
+
+
+# ============================================================================
+# Web Search (>>web)
+# ============================================================================
+
+_WEB_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+_WEB_QUOTED_RE = re.compile(r"['\"]([^'\"\n]{2,160})['\"]")
+_WEB_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "did", "do", "does", "for", "from",
+    "how", "i", "if", "in", "is", "it", "of", "on", "or", "quote", "source", "that", "the",
+    "this", "to", "was", "were", "what", "when", "where", "who", "why", "with",
+}
+_WEB_TRUST_DOMAINS = {
+    "imdb.com",
+    "wikipedia.org",
+    "wikiquote.org",
+    "tvtropes.org",
+    "fandom.com",
+    "simpsons.fandom.com",
+    "springfieldspringfield.co.uk",
+    "npr.org",
+    "bbc.co.uk",
+    "bbc.com",
+    "reuters.com",
+    "apnews.com",
+    "theguardian.com",
+    "nytimes.com",
+    "washingtonpost.com",
+    "abc.net.au",
+    "wdsu.com",
+    "6abc.com",
+}
+_WEB_RELEVANCE_THRESHOLD = 3.0
+_WEB_USER_TRUST_DOMAINS_MAX = 100
+
+
+def _web_cfg(path: str, default):
+    try:
+        from .config import cfg_get  # lazy import to avoid hard startup coupling
+
+        return cfg_get(path, default)
+    except Exception:
+        return default
+
+
+def _web_cfg_list(path: str) -> list[str]:
+    raw = _web_cfg(path, [])
+    if isinstance(raw, str):
+        parts = [p.strip() for p in raw.split(",")]
+        return [p for p in parts if p]
+    if isinstance(raw, list):
+        out: list[str] = []
+        for p in raw:
+            s = str(p or "").strip()
+            if s:
+                out.append(s)
+        return out
+    return []
+
+
+def _normalize_domain_list(values: list[str], *, max_items: int | None = None) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for v in values:
+        d = str(v or "").strip().lower()
+        if not d:
+            continue
+        if d.startswith("www."):
+            d = d[4:]
+        # simple domain safety: labels + dots + hyphen, no protocol/path
+        if not re.match(r"^[a-z0-9][a-z0-9.-]*[a-z0-9]$", d):
+            continue
+        if ".." in d:
+            continue
+        if d in seen:
+            continue
+        seen.add(d)
+        out.append(d)
+        if max_items is not None and len(out) >= int(max_items):
+            break
+    return out
+
+
+def _effective_trust_domains() -> list[str]:
+    builtins = _normalize_domain_list(list(_WEB_TRUST_DOMAINS))
+    user_raw = _web_cfg_list("web_search.user_trust_domains")
+    user_norm = _normalize_domain_list(user_raw, max_items=_WEB_USER_TRUST_DOMAINS_MAX)
+    return _normalize_domain_list([*builtins, *user_norm])
+
+
+def _web_domain(url: str) -> str:
+    try:
+        host = (urlparse(str(url or "")).hostname or "").strip().lower()
+        return host[4:] if host.startswith("www.") else host
+    except Exception:
+        return ""
+
+
+def _domain_is_allowed(url: str, include_domains: list[str], exclude_domains: list[str]) -> bool:
+    host = _web_domain(url)
+    if not host:
+        return False
+    inc = [d.strip().lower() for d in include_domains if str(d or "").strip()]
+    exc = [d.strip().lower() for d in exclude_domains if str(d or "").strip()]
+    if inc and not any(host == d or host.endswith("." + d) for d in inc):
+        return False
+    if exc and any(host == d or host.endswith("." + d) for d in exc):
+        return False
+    return True
+
+
+def _normalize_hit(
+    *,
+    title: str,
+    url: str,
+    snippet: str,
+    timestamp: str,
+    source: str,
+    rank: int,
+    include_domains: list[str],
+    exclude_domains: list[str],
+) -> Optional[WebSearchHit]:
+    u = str(url or "").strip()
+    if not u:
+        return None
+    if not (u.startswith("http://") or u.startswith("https://")):
+        return None
+    # Reject known tracker/ad redirect URLs from search wrappers.
+    try:
+        pu = urlparse(u)
+        host = str(pu.netloc or "").lower()
+        path = str(pu.path or "")
+        ql = str(pu.query or "").lower()
+        if host.endswith("duckduckgo.com") and (path.startswith("/y.js") or path.startswith("/y/")):
+            return None
+        if "ad_domain=" in ql or "ad_provider=" in ql or "aclick" in ql:
+            return None
+        if host.endswith("bing.com") and path.startswith("/aclick"):
+            return None
+    except Exception:
+        return None
+    if not _domain_is_allowed(u, include_domains, exclude_domains):
+        return None
+    t = re.sub(r"\s+", " ", str(title or "").strip())
+    s = re.sub(r"\s+", " ", str(snippet or "").strip())
+    ts = re.sub(r"\s+", " ", str(timestamp or "").strip())
+    if not t:
+        t = u
+    return WebSearchHit(
+        title=t[:240],
+        url=u,
+        snippet=s[:320],
+        timestamp=ts[:80],
+        source=str(source or "").strip() or "web",
+        rank=max(1, int(rank or 1)),
+        score=0.0,
+    )
+
+
+def _ddg_extract_url(raw_url: str) -> str:
+    u = str(raw_url or "").strip()
+    if not u:
+        return ""
+    if "duckduckgo.com/l/?" in u:
+        try:
+            parsed = urlparse(u)
+            qs = parse_qs(parsed.query)
+            uddg = (qs.get("uddg") or [""])[0].strip()
+            if uddg:
+                return unquote(uddg)
+        except Exception:
+            return ""
+    return u
+
+
+def _web_norm_text(s: str) -> str:
+    t = str(s or "").strip().lower()
+    t = re.sub(r"[^a-z0-9\s]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _query_nonstop_tokens(query: str) -> list[str]:
+    toks = [t.lower() for t in _WEB_TOKEN_RE.findall(str(query or ""))]
+    out: list[str] = []
+    for t in toks:
+        if len(t) < 2:
+            continue
+        if t in _WEB_STOPWORDS:
+            continue
+        out.append(t)
+    return out
+
+
+def _quote_phrase_candidates(query: str) -> list[str]:
+    out: list[str] = []
+    for q in _WEB_QUOTED_RE.findall(str(query or "")):
+        n = _web_norm_text(q)
+        if n:
+            out.append(n)
+    if out:
+        return out
+    base = _web_norm_text(query)
+    base = re.sub(
+        r"^(?:where does|what is|what's|do you know|can you find|find|source of|what is this quote from)\s+",
+        "",
+        base,
+        flags=re.IGNORECASE,
+    )
+    base = re.sub(r"\b(?:quote|source|from)\b", " ", base, flags=re.IGNORECASE)
+    base = re.sub(r"\s+", " ", base).strip()
+    if base:
+        out.append(base)
+    return out
+
+
+def _domain_trust_boost(url: str) -> float:
+    host = _web_domain(url)
+    if not host:
+        return 0.0
+    for d in _effective_trust_domains():
+        if host == d or host.endswith("." + d):
+            return 1.0
+    return 0.0
+
+
+def _score_hit(query: str, hit: WebSearchHit) -> float:
+    text = _web_norm_text(f"{hit.title} {hit.snippet}")
+    phrase_score = 0.0
+    for p in _quote_phrase_candidates(query):
+        if p and p in text:
+            phrase_score = 5.0
+            break
+    q_toks = _query_nonstop_tokens(query)
+    ratio = 0.0
+    if q_toks:
+        q_set = set(q_toks)
+        s_set = set(_WEB_TOKEN_RE.findall(text))
+        overlap = len(q_set.intersection(s_set))
+        ratio = float(overlap) / float(max(1, len(q_set)))
+    token_score = ratio * 3.0
+    trust = _domain_trust_boost(hit.url)
+    return round(phrase_score + token_score + trust, 2)
+
+
+def _relevance_passes(score: float) -> bool:
+    return float(score) >= float(_WEB_RELEVANCE_THRESHOLD)
+
+
+def _web_search_ddg_lite(
+    query: str,
+    *,
+    timeout_sec: float,
+    max_results: int,
+    include_domains: list[str],
+    exclude_domains: list[str],
+) -> tuple[list[WebSearchHit], str]:
+    headers = {"User-Agent": "llama-conductor/1.8.0 (+web ddg-lite)"}
+    url = "https://lite.duckduckgo.com/lite/"
+    resp = requests.get(url, params={"q": query}, headers=headers, timeout=timeout_sec)
+    # DDG anomaly/challenge can return 202 with HTML that is not search results.
+    if int(resp.status_code) != 200:
+        return [], f"http status {resp.status_code}"
+    html = str(resp.text or "")
+    low = html.lower()
+    if ("anomaly-modal" in low) or ("bots use duckduckgo too" in low) or ("anomaly.js" in low):
+        return [], "ddg challenge page"
+    rows = re.findall(
+        r"<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>(.*?)(?=<a[^>]*href=|$)",
+        html,
+        flags=re.I | re.S,
+    )
+    if not rows:
+        return [], "parse-shape mismatch"
+    out: list[WebSearchHit] = []
+    for i, (href, title_html, tail_html) in enumerate(rows, start=1):
+        if len(out) >= max_results:
+            break
+        title = re.sub(r"<[^>]+>", " ", ihtml.unescape(title_html or ""))
+        tail_txt = re.sub(r"<[^>]+>", " ", ihtml.unescape(tail_html or ""))
+        snippet = re.sub(r"\s+", " ", tail_txt).strip()
+        resolved = _ddg_extract_url(href)
+        hit = _normalize_hit(
+            title=title,
+            url=resolved,
+            snippet=snippet,
+            timestamp="",
+            source="ddg_lite",
+            rank=i,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+        )
+        if hit is not None:
+            out.append(hit)
+    return out, ""
+
+
+def _web_search_tavily(
+    query: str,
+    *,
+    timeout_sec: float,
+    max_results: int,
+    include_domains: list[str],
+    exclude_domains: list[str],
+    recency_days: int,
+) -> tuple[list[WebSearchHit], str]:
+    api_key = str(_web_cfg("web_search.tavily.api_key", "") or "").strip()
+    if not api_key:
+        api_key = str(_web_cfg("web_search.api_key", "") or "").strip()
+    if not api_key:
+        return [], "missing api key"
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "max_results": max_results,
+        "search_depth": "basic",
+    }
+    if include_domains:
+        payload["include_domains"] = include_domains
+    if exclude_domains:
+        payload["exclude_domains"] = exclude_domains
+    if recency_days > 0:
+        payload["days"] = recency_days
+    resp = requests.post(
+        "https://api.tavily.com/search",
+        json=payload,
+        headers={"User-Agent": "llama-conductor/1.8.0 (+web tavily)"},
+        timeout=timeout_sec,
+    )
+    resp.raise_for_status()
+    data = resp.json() if resp.content else {}
+    rows = data.get("results", []) if isinstance(data, dict) else []
+    out: list[WebSearchHit] = []
+    for i, row in enumerate(rows, start=1):
+        if len(out) >= max_results:
+            break
+        if not isinstance(row, dict):
+            continue
+        hit = _normalize_hit(
+            title=str(row.get("title", "") or ""),
+            url=str(row.get("url", "") or ""),
+            snippet=str(row.get("content", "") or row.get("snippet", "") or ""),
+            timestamp=str(row.get("published_date", "") or row.get("date", "") or ""),
+            source="tavily",
+            rank=i,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+        )
+        if hit is not None:
+            out.append(hit)
+    return out, ""
+
+
+def _web_search_json_provider(
+    *,
+    provider: str,
+    base_url: str,
+    query: str,
+    timeout_sec: float,
+    max_results: int,
+    include_domains: list[str],
+    exclude_domains: list[str],
+    safe_search: bool,
+    recency_days: int,
+) -> tuple[list[WebSearchHit], str]:
+    if not base_url:
+        return [], "missing base_url"
+    params = {"q": query, "format": "json"}
+    if provider == "searxng":
+        params["safesearch"] = 1 if safe_search else 0
+        if recency_days > 0:
+            params["time_range"] = "day" if recency_days <= 1 else "month"
+    headers = {"User-Agent": f"llama-conductor/1.8.0 (+web {provider})"}
+    resp = requests.get(base_url, params=params, headers=headers, timeout=timeout_sec)
+    resp.raise_for_status()
+    data = resp.json() if resp.content else {}
+    rows = []
+    if isinstance(data, dict):
+        if isinstance(data.get("results"), list):
+            rows = data.get("results", [])
+        elif isinstance(data.get("items"), list):
+            rows = data.get("items", [])
+    out: list[WebSearchHit] = []
+    for i, row in enumerate(rows, start=1):
+        if len(out) >= max_results:
+            break
+        if not isinstance(row, dict):
+            continue
+        hit = _normalize_hit(
+            title=str(row.get("title", "") or ""),
+            url=str(row.get("url", "") or row.get("link", "") or ""),
+            snippet=str(row.get("content", "") or row.get("snippet", "") or ""),
+            timestamp=str(row.get("publishedDate", "") or row.get("published", "") or row.get("date", "") or ""),
+            source=provider,
+            rank=i,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+        )
+        if hit is not None:
+            out.append(hit)
+    return out, ""
+
+
+def _dedupe_hits(hits: list[WebSearchHit], max_results: int) -> list[WebSearchHit]:
+    seen: set[str] = set()
+    out: list[WebSearchHit] = []
+    for h in hits:
+        norm = str(h.url or "").strip().lower().rstrip("/")
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        out.append(h)
+        if len(out) >= max_results:
+            break
+    return out
+
+
+def _sorted_hits(hits: list[WebSearchHit]) -> list[WebSearchHit]:
+    # Deterministic ordering: score desc, rank asc, domain asc, url asc.
+    return sorted(hits, key=lambda h: (-float(h.score or 0.0), int(h.rank), _web_domain(h.url), h.url))
+
+
+def _run_web_search(query: str) -> tuple[list[WebSearchHit], str, str]:
+    q = re.sub(r"\s+", " ", str(query or "").strip())
+    if not q:
+        return [], "", "no query provided"
+    if not bool(_web_cfg("web_search.enabled", False)):
+        return [], "", "disabled in config"
+
+    provider = str(_web_cfg("web_search.provider", "ddg_lite") or "ddg_lite").strip().lower()
+    max_results = max(1, int(_web_cfg("web_search.max_results", 5)))
+    timeout_sec = float(_web_cfg("web_search.timeout_sec", 8))
+    safe_search = bool(_web_cfg("web_search.safe_search", True))
+    include_domains = _web_cfg_list("web_search.include_domains")
+    exclude_domains = _web_cfg_list("web_search.exclude_domains")
+    recency_days = int(_web_cfg("web_search.recency_days", 0))
+
+    if provider == "ddg_lite":
+        hits, parse_err = _web_search_ddg_lite(
+            q,
+            timeout_sec=timeout_sec,
+            max_results=max_results,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+        )
+        if parse_err:
+            return [], provider, f"parse failed ({provider}): {parse_err}"
+    elif provider == "tavily":
+        hits, parse_err = _web_search_tavily(
+            q,
+            timeout_sec=timeout_sec,
+            max_results=max_results,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+            recency_days=recency_days,
+        )
+        if parse_err:
+            return [], provider, f"error ({provider}): {parse_err}"
+    elif provider in {"searxng", "custom"}:
+        base_url = str(_web_cfg(f"web_search.{provider}.base_url", "") or "").strip()
+        if not base_url:
+            base_url = str(_web_cfg("web_search.base_url", "") or "").strip()
+        hits, parse_err = _web_search_json_provider(
+            provider=provider,
+            base_url=base_url,
+            query=q,
+            timeout_sec=timeout_sec,
+            max_results=max_results,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+            safe_search=safe_search,
+            recency_days=recency_days,
+        )
+        if parse_err:
+            return [], provider, f"error ({provider}): {parse_err}"
+    else:
+        return [], provider, f"unsupported provider: {provider}"
+
+    return _sorted_hits(_dedupe_hits(hits, max_results=max_results)), provider, ""
+
+
+def _relevant_hits(query: str, hits: list[WebSearchHit]) -> list[WebSearchHit]:
+    scored: list[WebSearchHit] = []
+    for h in hits:
+        h.score = _score_hit(query, h)
+        if _relevance_passes(h.score):
+            scored.append(h)
+    return _sorted_hits(scored)
+
+
+def resolve_web_evidence(query: str) -> Tuple[bool, Dict[str, Any], str]:
+    """Return bounded grounded web evidence rows for automatic cascade use."""
+    q = re.sub(r"\s+", " ", str(query or "").strip())
+    if not q:
+        return False, {}, "no query provided"
+    try:
+        hits, provider, err = _run_web_search(q)
+        if err:
+            return False, {}, err
+        filtered = _relevant_hits(q, hits)
+        if not filtered:
+            return False, {}, "no relevant results"
+        keep_n = int(_web_cfg("web_search.auto_top_n", 3) or 3)
+        if keep_n < 1:
+            keep_n = 1
+        if keep_n > 5:
+            keep_n = 5
+        kept = filtered[:keep_n]
+        rows: list[dict[str, Any]] = []
+        for h in kept:
+            rows.append(
+                {
+                    "title": str(h.title or "").strip(),
+                    "url": str(h.url or "").strip(),
+                    "snippet": str(h.snippet or "").strip(),
+                    "score": float(h.score or 0.0),
+                }
+            )
+        top = kept[0]
+        evidence = {
+            "query": q,
+            "provider": provider,
+            "result_count": int(len(kept)),
+            "result_count_total": int(len(filtered)),
+            "rows": rows,
+            "title": str(top.title or "").strip(),
+            "url": str(top.url or "").strip(),
+            "snippet": str(top.snippet or "").strip(),
+            "score": float(top.score or 0.0),
+            "relevance_gate": "pass",
+            "threshold": float(_WEB_RELEVANCE_THRESHOLD),
+        }
+        return True, evidence, ""
+    except requests.exceptions.Timeout:
+        return False, {}, "request timeout"
+    except requests.exceptions.HTTPError as e:
+        code = e.response.status_code if e.response is not None else "unknown"
+        return False, {}, f"http error: {code}"
+    except Exception as e:
+        return False, {}, f"error: {e}"
+
+
+def handle_web_query(query: str) -> str:
+    """
+    Provider-agnostic deterministic web lookup.
+    """
+    q = re.sub(r"\s+", " ", str(query or "").strip())
+    if not q:
+        return "[web] No query provided"
+    try:
+        hits, provider, err = _run_web_search(q)
+        if err:
+            return f"[web] {err}"
+        filtered = _relevant_hits(q, hits)
+        if not filtered:
+            return f"[web] no relevant results for: {q}"
+        lines = [f"[web] {len(filtered)} relevant result(s) for: {q}"]
+        for i, h in enumerate(filtered, start=1):
+            lines.append(f"{i}. {h.title}")
+            lines.append(f"   {h.url}")
+            if h.snippet:
+                lines.append(f"   {h.snippet}")
+            lines.append(f"   score={h.score:.2f} provider={provider}")
+        return "\n".join(lines)
+    except requests.exceptions.Timeout:
+        return "[web] Request timeout"
+    except requests.exceptions.HTTPError as e:
+        code = e.response.status_code if e.response is not None else "unknown"
+        return f"[web] HTTP error: {code}"
+    except Exception as e:
+        return f"[web] Error: {e}"
 
 
 # ============================================================================

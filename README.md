@@ -68,7 +68,9 @@ WITHOUT llama-conductor:
 
 ```text
 400-message chat history
--> slow generation, degraded recall, dropped setup context, OOM
+-> VRAM spikes, tok/s craters, model forgets its own name, OOM
+-> you restart the chat and lose everything
+-> rinse, repeat, contemplate career change
 ```
 
 WITH llama-conductor:
@@ -76,16 +78,16 @@ WITH llama-conductor:
 ```text
 Vodka CTC trims context automatically:
 - keeps the recent turns that matter
-- hard-caps prompt growth
-- drops mid-chat bloat
-- keeps memory available through deterministic recall paths
-- user definable presets
+- hard-caps prompt growth so VRAM stays predictable
+- drops mid-chat bloat before it kills your GPU
+- keeps memory available through deterministic recall (not stuffed into prompt)
+- user definable presets (fast / balanced / max-recall)
 ```
 
 Result: 
-- Consistent prompt size, stable performance, and optional rolling deterministic summary (stdlib extractive).
-- Tok/s you started with, is what you keep (more or less).
-- Bonus: Tweak your --ctx and maybe, just maybe, your Raspberry Pi *can* run that 4B model at decent tok/s, without memory loss or chug.
+- Consistent prompt size, stable performance, and optional rolling deterministic summary (stdlib extractive, no LLM compute).
+- Tok/s you started with is tok/s you keep. No "why is it slow now" twenty minutes in.
+- Bonus: Tweak your `--ctx` and maybe, just maybe, your Raspberry Pi *can* run that 4B model without chug. Your electricity bill called. It says you're welcome.
 
 
 ### 2) 🐠 Goldfish memory and confident misremembering
@@ -143,6 +145,7 @@ Sources:
 - `Source: Vault` → ##mentats path, grounded or refused
 - `Source: Cheatsheets` → grounded to your definitions | Confidence: high (you told it, it parrots it back)
 - `Source: Mixed` → touched multiple paths. Footer tells you which ones.
+- `Source: Web` → grounded to live web retrieval | Confidence: based on relevance gate score. Comes with a `See: <url>` receipt.
 
 ### 4) 📌 Grounding drift in normal chat (fixed with >>scratch / >>lock)
 
@@ -299,6 +302,39 @@ What you actually get (instead of cosplay certainty):
 
 ---
 
+### 9) 🌐 "I'm sure it's from that movie..." (your model is a confident liar about things Google knows)
+
+WITHOUT llama-conductor:
+```text
+You: Where does the quote "I yam what I yam" come from?
+Model: The quote "I yam what I yam" is from the 1939 musical The Wizard of Oz.
+       It is sung by the character Glinda, the Good Witch of the South,
+       in the song "I'm a Little Teapot."
+You: ...
+You: I need a drink.
+```
+
+WITH llama-conductor:
+```text
+You: Where does the quote "I yam what I yam" come from?
+Assistant: I Yam What I Yam is the second Popeye theatrical cartoon short.
+The source of the quote is the comic strip Thimble Theatre by E. C. Segar,
+in which Popeye first appeared.
+See: https://en.wikipedia.org/wiki/I_Yam_What_I_Yam
+Confidence: medium | Source: Web
+```
+
+Result:
+- When cheatsheets and wiki can't answer, the router now searches the web before letting the model guess.
+- Retrieval cascade: `Cheatsheets → Wiki → Web → Model`. Each step fires only if the previous one missed.
+- Deterministic relevance gate scores every result (phrase match + token overlap + domain trust). Garbage results get rejected, not served.
+- `See: <url>` gives you the actual source link. One click to verify. Receipts, not pinky promises.
+- Model is still last resort. If all retrieval fails, you get `Confidence: unverified | Source: Model` and you know exactly what you're dealing with.
+- Want to search manually? `>>web <query>` works standalone for anything.
+- Add your own trusted domains in config. BBC? Reuters? PubMed? Your call. Built-in defaults stay active either way.
+
+---
+
 ## Quickstart (First-Time, Recommended)
 
 ### [Step 0] Prerequisites
@@ -446,7 +482,7 @@ Config pointers:
 ### 🧰 Deterministic sidecars
 
 
->>calc / >>find / >>list / >>flush / >>status / >>wiki 
+>>calc / >>find / >>list / >>flush / >>status / >>wiki / >>web
 - Router executes deterministic pathways
 - No creative writing layer in the middle
 
@@ -455,6 +491,7 @@ Config pointers:
 - Great for boring operational tasks where wrong answers are expensive.
 - >>wiki pulls answers from wikipedia (preset to first 400 words; acts as summary)
 - >>trust (you ask question, router gives you options for data sources. You choose, not it)
+- >>web pulls answers from the live web with deterministic relevance scoring (DuckDuckGo, or bring your own provider)
 
 ### 🎚️ Mode switches (serious, fun, fun rewrite)
 
@@ -515,13 +552,10 @@ Result:
 4. Deterministic memory path separate from model weights. You said it, it remembers it EXACTLY. 
 5. File KB flow stays simple (folder-based ingest -> SUMM -> Vault)
 6. Guarded retrieval/reasoning contracts keep failure modes explicit
+7. Web retrieval with relevance gating - when local knowledge runs out, it searches before guessing. And shows you the source URL.
 
 ---
 
 ## 📜 License
 
 AGPL-3.0-or-later. See `LICENSE`.
-
-
-
-

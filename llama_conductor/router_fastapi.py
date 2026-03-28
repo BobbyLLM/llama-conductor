@@ -110,8 +110,10 @@ except Exception:
 
 try:
     from .sidecars import handle_wiki_query as _sidecar_wiki_query  # type: ignore
+    from .sidecars import resolve_web_evidence as _sidecar_web_evidence  # type: ignore
 except Exception:
     _sidecar_wiki_query = None  # type: ignore
+    _sidecar_web_evidence = None  # type: ignore
 
 try:
     from .cheatsheets_runtime import (  # type: ignore
@@ -1911,6 +1913,124 @@ _DEFINITIONAL_QUERY_RE = re.compile(
     r")\s*$",
     re.IGNORECASE,
 )
+_QUOTE_SOURCE_INTENT_RE = re.compile(
+    r"(?:"
+    r"\bwhere\s+does\s+(?:the\s+)?quote\b|"
+    r"\bwhat(?:'s| is)?\s+the\s+source\b|"
+    r"\bdo\s+you\s+know\s+the\s+source\b|"
+    r"\bsource\s+of\s+(?:this|that)\s+(?:quote|line)\b|"
+    r"\bwho\s+said\b|"
+    r"\bwhat\s+is\s+this\s+quote\s+from\b"
+    r")",
+    re.IGNORECASE,
+)
+_WHO_WON_INTENT_RE = re.compile(
+    r"(?:"
+    r"\bwho\s+won\b|"
+    r"\bwinner\s+of\b|"
+    r"\bwho\s+took\s+home\b"
+    r")",
+    re.IGNORECASE,
+)
+_QUOTE_SPAN_RE = re.compile(r"[\"“”'‘’]([^\"“”'‘’]{3,180})[\"“”'‘’]")
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+_QUOTE_EVIDENCE_STOPWORDS = {
+    "where", "does", "the", "quote", "what", "is", "source", "of", "this", "that",
+    "line", "from", "know", "you", "do", "no", "its", "it's", "i", "mean", "it",
+    "a", "an", "to", "for", "on", "in", "and", "or", "but", "so", "really",
+}
+
+
+def _is_quote_source_intent(text: str) -> bool:
+    t = str(text or "").strip()
+    if not t:
+        return False
+    if _QUOTE_SOURCE_INTENT_RE.search(t):
+        return True
+    return bool(_QUOTE_SPAN_RE.search(t) and re.search(r"\b(from|source|quote)\b", t, flags=re.IGNORECASE))
+
+
+def _is_who_won_intent(text: str) -> bool:
+    t = str(text or "").strip()
+    if not t:
+        return False
+    return bool(_WHO_WON_INTENT_RE.search(t))
+
+
+def _quote_source_signature(text: str) -> dict[str, Any]:
+    t = str(text or "").strip()
+    quoted = [str(m.group(1) or "").strip().lower() for m in _QUOTE_SPAN_RE.finditer(t)]
+    tokens = [
+        tok for tok in re.findall(r"[a-z0-9]+", t.lower())
+        if len(tok) >= 3 and tok not in _QUOTE_EVIDENCE_STOPWORDS
+    ]
+    sig = {
+        "quoted": sorted(set(x for x in quoted if x)),
+        "tokens": sorted(set(tokens)),
+        "has_url": bool(_URL_RE.search(t)),
+        "has_block": bool("\n" in t and len(t) >= 180),
+    }
+    return sig
+
+
+def _has_new_quote_source_evidence(*, prior_signature_json: str, current_text: str) -> bool:
+    try:
+        prior = json.loads(str(prior_signature_json or "{}"))
+        if not isinstance(prior, dict):
+            prior = {}
+    except Exception:
+        prior = {}
+    cur = _quote_source_signature(current_text)
+    if bool(cur.get("has_url")) or bool(cur.get("has_block")):
+        return True
+    prior_q = set(str(x).strip().lower() for x in list(prior.get("quoted", []) or []) if str(x).strip())
+    cur_q = set(str(x).strip().lower() for x in list(cur.get("quoted", []) or []) if str(x).strip())
+    if cur_q.difference(prior_q):
+        return True
+    prior_t = set(str(x).strip().lower() for x in list(prior.get("tokens", []) or []) if str(x).strip())
+    cur_t = set(str(x).strip().lower() for x in list(cur.get("tokens", []) or []) if str(x).strip())
+    # Release-biased: any meaningful token delta is treated as new evidence.
+    return bool(cur_t.difference(prior_t))
+
+
+def _quote_source_supported_by_answer(*, user_text: str, deterministic_answer: str) -> bool:
+    ans = str(deterministic_answer or "").strip()
+    if not ans:
+        return False
+    if ans.lower().startswith("not available in retrieved wiki facts"):
+        return False
+    sig = _quote_source_signature(user_text)
+    quoted = list(sig.get("quoted", []) or [])
+    if not quoted:
+        return True
+    ans_toks = set(re.findall(r"[a-z0-9]+", ans.lower()))
+    for q in quoted:
+        q_toks = [
+            tok for tok in re.findall(r"[a-z0-9]+", str(q).lower())
+            if len(tok) >= 3 and tok not in _QUOTE_EVIDENCE_STOPWORDS
+        ]
+        if len(set(q_toks).intersection(ans_toks)) >= 2:
+            return True
+    return False
+
+
+def _winner_claim_is_specific(answer_text: str) -> bool:
+    a = str(answer_text or "").strip()
+    if not a:
+        return False
+    if re.search(r"\bnot available in retrieved\b", a, flags=re.IGNORECASE):
+        return False
+    if re.search(r"\bunknown\b", a, flags=re.IGNORECASE):
+        return False
+    if re.search(r"\bnot sure\b|\bunsure\b|\bcannot verify\b", a, flags=re.IGNORECASE):
+        return False
+    if re.search(r"\bDr\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b", a):
+        return True
+    if re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4}\b", a):
+        return True
+    if re.search(r"[\"'“”][^\"'“”]{2,80}[\"'“”]\s+won\b", a, flags=re.IGNORECASE):
+        return True
+    return False
 
 
 def _finalize_chat_response(
@@ -3095,12 +3215,35 @@ async def v1_chat_completions(req: Request):
     # Reset per-turn retrieval overrides before optional static/wiki grounding.
     state.turn_footer_source_override = ""
     state.turn_footer_confidence_override = ""
+    state.turn_source_url_override = ""
     state.turn_retrieval_track = ""
     state.turn_local_knowledge_line = ""
     state.turn_cheatsheets_warning_line = ""
     state.turn_cheatsheets_warning_key = ""
+    state.turn_quote_source_durability_guard = False
     cheatsheets_constraints_block = ""
     cheatsheets_deterministic_answer = ""
+    quote_source_intent_now = _is_quote_source_intent(user_text)
+    who_won_intent_now = _is_who_won_intent(user_text)
+    retrieval_guard_intent_now = "quote_source" if quote_source_intent_now else ("who_won" if who_won_intent_now else "")
+    if retrieval_guard_intent_now:
+        prior_miss_intent = str(getattr(state, "last_retrieval_miss_intent", "") or "").strip().lower()
+        prior_sig = str(getattr(state, "last_retrieval_miss_query_signature", "") or "").strip()
+        if prior_miss_intent == retrieval_guard_intent_now:
+            has_new_evidence = False
+            if retrieval_guard_intent_now == "quote_source":
+                has_new_evidence = _has_new_quote_source_evidence(
+                    prior_signature_json=prior_sig,
+                    current_text=user_text,
+                )
+            else:
+                # Reuse quote-source signature delta machinery for conservative release-biased check.
+                has_new_evidence = _has_new_quote_source_evidence(
+                    prior_signature_json=prior_sig,
+                    current_text=user_text,
+                )
+            if not has_new_evidence:
+                state.turn_quote_source_durability_guard = True
     # Cheatsheets retrieval (Track A) + optional wiki recovery (Track B).
     # Track B is intentionally working-only by design; do not harmonize silently.
     try:
@@ -3120,14 +3263,19 @@ async def v1_chat_completions(req: Request):
                 prior_user_text=str(getattr(state, "last_user_text", "") or ""),
                 track_b_enabled=bool(cfg_get("cheatsheets.track_b.enabled", False)),
                 wiki_lookup_fn=_sidecar_wiki_query,
+                web_lookup_fn=_sidecar_web_evidence,
+                quote_source_intent=quote_source_intent_now,
             )
             state.turn_footer_source_override = str(cheat.footer_source or "").strip()
             state.turn_footer_confidence_override = str(cheat.footer_confidence or "").strip().lower()
+            state.turn_source_url_override = str(getattr(cheat, "source_url", "") or "").strip()
             state.turn_retrieval_track = str(cheat.track or "").strip()
             state.turn_local_knowledge_line = str(cheat.local_knowledge_line or "").strip()
             state.turn_kaioken_macro = str(macro or "").strip().lower()
             cheatsheets_constraints_block = str(cheat.constraints_block or "").strip()
             cheatsheets_deterministic_answer = str(cheat.deterministic_answer or "").strip()
+            # Keep deterministic Track B payloads intact here.
+            # Quote/source durability is handled by explicit guard constraints and fallback logic.
             # Non-blocking JSONL parse diagnostics: surface exact file/line issue to user
             # so malformed cheatsheet entries can be fixed quickly.
             if _get_cheatsheets_parse_warnings is not None:
@@ -3175,6 +3323,49 @@ async def v1_chat_completions(req: Request):
             f"{constraints_block}\n\n{cheatsheets_constraints_block}".strip()
             if constraints_block
             else cheatsheets_constraints_block
+        )
+    if bool(getattr(state, "turn_quote_source_durability_guard", False)):
+        quote_guard_constraints = (
+            "Retrieval follow-up guard:\n"
+            "- Previous retrieval did not verify this attribution and no new evidence was provided.\n"
+            "- Do not invent specific attributions, names, dates, or sources.\n"
+            "- If unknown, state that it is unknown."
+        )
+        constraints_block = (
+            f"{constraints_block}\n\n{quote_guard_constraints}".strip()
+            if constraints_block
+            else quote_guard_constraints
+        )
+    quote_source_first_turn_guard = bool(
+        (quote_source_intent_now or who_won_intent_now)
+        and (not bool(getattr(state, "turn_quote_source_durability_guard", False)))
+        and (str(getattr(state, "turn_retrieval_track", "") or "").strip() == "")
+        and (not bool((cheatsheets_deterministic_answer or "").strip()))
+        and (not lock_active)
+        and (not scratchpad_grounded)
+    )
+    if quote_source_first_turn_guard:
+        if who_won_intent_now and (not quote_source_intent_now):
+            quote_guard_constraints = (
+                "Winner-attribution first-turn guard:\n"
+                "- No verified retrieval evidence is currently available for this winner query.\n"
+                "- Do not invent specific winner names, titles, or dates.\n"
+                "- If answering from priors, keep it uncertain and brief.\n"
+                "- If unknown, state that it is unknown."
+            )
+        else:
+            quote_guard_constraints = (
+                "Quote/source first-turn guard:\n"
+                "- No verified retrieval evidence is currently available for this attribution.\n"
+                "- Do not invent specific attributions, names, dates, or sources.\n"
+                "- If you answer from priors, keep it uncertain and brief.\n"
+                "- Do not cite specific titles, person names, years, or publication details without evidence.\n"
+                "- If unknown, state that it is unknown."
+            )
+        constraints_block = (
+            f"{constraints_block}\n\n{quote_guard_constraints}".strip()
+            if constraints_block
+            else quote_guard_constraints
         )
     scratchpad_exhaustive = False
     scratchpad_locked_indices = set(
@@ -3343,6 +3534,35 @@ async def v1_chat_completions(req: Request):
     # "who/what is" style queries, return the exact stored definition verbatim.
     # This bypasses thinker paraphrase while preserving normal footer pipeline.
     if cheatsheets_deterministic_answer and (not lock_active):
+        try:
+            if retrieval_guard_intent_now == "quote_source":
+                det_low = str(cheatsheets_deterministic_answer or "").strip().lower()
+                if det_low.startswith("not available in retrieved wiki facts"):
+                    sig = _quote_source_signature(user_text)
+                    state.last_retrieval_miss_intent = "quote_source"
+                    state.last_retrieval_miss_query_text = str(user_text or "").strip()
+                    state.last_retrieval_miss_query_signature = json.dumps(sig, ensure_ascii=False)
+                else:
+                    state.last_retrieval_miss_intent = ""
+                    state.last_retrieval_miss_query_text = ""
+                    state.last_retrieval_miss_query_signature = ""
+            elif retrieval_guard_intent_now == "who_won":
+                det_low = str(cheatsheets_deterministic_answer or "").strip().lower()
+                if det_low.startswith("not available in retrieved"):
+                    sig = _quote_source_signature(user_text)
+                    state.last_retrieval_miss_intent = "who_won"
+                    state.last_retrieval_miss_query_text = str(user_text or "").strip()
+                    state.last_retrieval_miss_query_signature = json.dumps(sig, ensure_ascii=False)
+                else:
+                    state.last_retrieval_miss_intent = ""
+                    state.last_retrieval_miss_query_text = ""
+                    state.last_retrieval_miss_query_signature = ""
+            else:
+                state.last_retrieval_miss_intent = ""
+                state.last_retrieval_miss_query_text = ""
+                state.last_retrieval_miss_query_signature = ""
+        except Exception:
+            pass
         _emit_kaioken_telemetry(
             state=state,
             session_id=session_id,
@@ -3686,6 +3906,27 @@ async def v1_chat_completions(req: Request):
         text=text,
         call_model_fn=call_model_prompt,
     )
+    if bool(getattr(state, "turn_quote_source_durability_guard", False)):
+        guard_header = "[Cannot verify from retrieved source. Responding from model priors.]"
+        # Deterministic anti-confab body on guarded follow-up turns.
+        text = f"{guard_header}\n\nThe source is unknown to me. Sorry."
+        state.turn_footer_source_override = "Model"
+        state.turn_footer_confidence_override = "unverified"
+        state.turn_source_url_override = ""
+    elif quote_source_first_turn_guard and who_won_intent_now:
+        # First-turn who_won guard: allow uncertain priors, but block specific winner-name confabulations.
+        if _winner_claim_is_specific(str(text or "")):
+            guard_header = "[Cannot verify from retrieved source. Responding from model priors.]"
+            text = f"{guard_header}\n\nThe winner is unknown to me. Sorry."
+            state.turn_footer_source_override = "Model"
+            state.turn_footer_confidence_override = "unverified"
+            state.turn_source_url_override = ""
+    elif quote_source_first_turn_guard and quote_source_intent_now:
+        guard_header = "[Cannot verify from retrieved source. Responding from model priors.]"
+        text = f"{guard_header}\n\nThe source is unknown to me. Sorry."
+        state.turn_footer_source_override = "Model"
+        state.turn_footer_confidence_override = "unverified"
+        state.turn_source_url_override = ""
     kaioken_guard_applied = str(pre_guard_text or "") != str(text or "")
     # Serious/model answer path usually supersedes deterministic follow-up context.
     # Exception: preserve an explicitly disengaged decision lane frame so users can
@@ -3720,6 +3961,57 @@ async def v1_chat_completions(req: Request):
             "kaioken_mode": str(getattr(state, "kaioken_mode", "log_only") or "log_only"),
         },
     )
+
+    try:
+        if retrieval_guard_intent_now == "quote_source":
+            final_text_low = str(text or "").strip().lower()
+            retrieval_track = str(getattr(state, "turn_retrieval_track", "") or "").strip()
+            # Miss conditions:
+            # - no retrieval lane evidence (track != B), or
+            # - explicit wiki fail-loud, or
+            # - guarded follow-up header, or
+            # - track B answered but does not support quoted span.
+            miss_now = (
+                retrieval_track != "B"
+                or final_text_low.startswith("not available in retrieved wiki facts")
+                or "[cannot verify from retrieved source." in final_text_low
+                or (
+                    retrieval_track == "B"
+                    and (not _quote_source_supported_by_answer(user_text=user_text, deterministic_answer=text))
+                )
+            )
+            if miss_now:
+                sig = _quote_source_signature(user_text)
+                state.last_retrieval_miss_intent = "quote_source"
+                state.last_retrieval_miss_query_text = str(user_text or "").strip()
+                state.last_retrieval_miss_query_signature = json.dumps(sig, ensure_ascii=False)
+            else:
+                state.last_retrieval_miss_intent = ""
+                state.last_retrieval_miss_query_text = ""
+                state.last_retrieval_miss_query_signature = ""
+        elif retrieval_guard_intent_now == "who_won":
+            final_text_low = str(text or "").strip().lower()
+            retrieval_track = str(getattr(state, "turn_retrieval_track", "") or "").strip()
+            miss_now = (
+                retrieval_track != "B"
+                or final_text_low.startswith("not available in retrieved")
+                or "[cannot verify from retrieved source." in final_text_low
+            )
+            if miss_now:
+                sig = _quote_source_signature(user_text)
+                state.last_retrieval_miss_intent = "who_won"
+                state.last_retrieval_miss_query_text = str(user_text or "").strip()
+                state.last_retrieval_miss_query_signature = json.dumps(sig, ensure_ascii=False)
+            else:
+                state.last_retrieval_miss_intent = ""
+                state.last_retrieval_miss_query_text = ""
+                state.last_retrieval_miss_query_signature = ""
+        else:
+            state.last_retrieval_miss_intent = ""
+            state.last_retrieval_miss_query_text = ""
+            state.last_retrieval_miss_query_signature = ""
+    except Exception:
+        pass
 
     return _finalize_chat_response(
         text=text,

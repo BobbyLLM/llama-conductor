@@ -55,6 +55,7 @@ _ROUTER_CONTROL_PREFIXES = (
     ">>scratch",
     ">>summ",
     ">>wiki",
+    ">>web",
     ">>define",
     ">>calc",
     ">>vision",

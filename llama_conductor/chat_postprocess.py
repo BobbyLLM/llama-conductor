@@ -653,6 +653,7 @@ def apply_deterministic_footer(
         )
         setattr(state, "turn_footer_source_override", "")
         setattr(state, "turn_footer_confidence_override", "")
+        setattr(state, "turn_source_url_override", "")
         setattr(state, "turn_retrieval_track", "")
         setattr(state, "turn_local_knowledge_line", "")
         return out

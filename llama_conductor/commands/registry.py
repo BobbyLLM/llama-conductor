@@ -50,6 +50,7 @@ def command_registry() -> Dict[str, CommandMeta]:
         CommandMeta("find", ("find",), ("sidecar available",), ("none",), ">>find <query>"),
         CommandMeta("flush", ("flush",), ("none",), ("profile/style/runtime state reset + cache flush",), ">>flush"),
         CommandMeta("wiki", ("wiki",), ("sidecar available",), ("none",), ">>wiki <topic>"),
+        CommandMeta("web", ("web",), ("sidecar available",), ("none",), ">>web <query>"),
         CommandMeta("define", ("define",), ("sidecar available",), ("none",), ">>define <word>"),
         CommandMeta("exchange", ("exchange",), ("sidecar available",), ("none",), ">>exchange <query>"),
         CommandMeta("weather", ("weather",), ("sidecar available",), ("none",), ">>weather <location>"),
