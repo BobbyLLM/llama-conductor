@@ -110,9 +110,11 @@ except Exception:
 
 try:
     from .sidecars import handle_wiki_query as _sidecar_wiki_query  # type: ignore
+    from .sidecars import handle_define_query as _sidecar_define_query  # type: ignore
     from .sidecars import resolve_web_evidence as _sidecar_web_evidence  # type: ignore
 except Exception:
     _sidecar_wiki_query = None  # type: ignore
+    _sidecar_define_query = None  # type: ignore
     _sidecar_web_evidence = None  # type: ignore
 
 try:
@@ -3264,6 +3266,7 @@ async def v1_chat_completions(req: Request):
                 track_b_enabled=bool(cfg_get("cheatsheets.track_b.enabled", False)),
                 wiki_lookup_fn=_sidecar_wiki_query,
                 web_lookup_fn=_sidecar_web_evidence,
+                define_lookup_fn=_sidecar_define_query,
                 quote_source_intent=quote_source_intent_now,
             )
             state.turn_footer_source_override = str(cheat.footer_source or "").strip()

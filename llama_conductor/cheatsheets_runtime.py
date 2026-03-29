@@ -23,7 +23,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 
 _QUESTION_FRAMING_RE = re.compile(
-    r"\b(what(?:'s|\s+is)|explain|tell me about|how does\b.+\bwork)\b|\?",
+    r"\b(what(?:'s|\s+is)|define|explain|tell me about|how does\b.+\bwork|meaning of|definition of)\b|\?",
     re.IGNORECASE,
 )
 _DISTRESS_SUBS = {"distress_hint", "vulnerable_under_humour"}
@@ -47,7 +47,7 @@ _ORDINAL_CAP_TERM_RE = re.compile(
     r"\b\d{1,3}(?:st|nd|rd|th)\s+[A-Z][A-Za-z0-9_/-]{2,}(?:\s+[A-Z][A-Za-z0-9_/-]{2,}){0,4}\b"
 )
 _STRICT_LOOKUP_RE = re.compile(
-    r"^\s*(?:who(?:'s|\s+is)|what(?:'s|\s+is)|define|explain|tell me about)\s+(.+?)\s*[?.!]*\s*$",
+    r"^\s*(?:who(?:'s|\s+is)|what(?:'s|\s+is)|define|explain|tell me about|what(?:'s|\s+is)\s+the\s+(?:definition|meaning)\s+of)\s+(.+?)\s*[?.!]*\s*$",
     re.IGNORECASE,
 )
 _OPEN_ENDED_LOOKUP_RE = re.compile(
@@ -89,7 +89,7 @@ _LIST_INDEX_EXACT_RE = re.compile(r"^\s*list\s+index\s*\??\s*$", re.IGNORECASE)
 _LEADING_ARTICLE_RE = re.compile(r"^\s*(?:the|a|an)\s+")
 _UMBRELLA_TAGS = {"pop culture", "pop_culture", "gen x", "gen_x"}
 _LEADING_IMPERATIVE_RE = re.compile(
-    r"^\s*(?:give|tell|show|explain|describe|summarise|summarize|list)\b(?:\s+me)?\s+(?:a|an|the)?\s*(?:short|brief|quick)?\s*(?:summary|overview|recap)?\s*(?:of|about)?\s*",
+    r"^\s*(?:give|tell|show|explain|describe|summarise|summarize|list|search(?:\s+for)?|look\s+(?:up|for)|find(?:\s+me)?)\b(?:\s+me)?\s+(?:a|an|the)?\s*(?:short|brief|quick)?\s*(?:summary|overview|recap)?\s*(?:of|about)?\s*",
     re.IGNORECASE,
 )
 
@@ -804,7 +804,43 @@ def _parse_web_payload(raw: Any) -> Tuple[bool, Dict[str, Any]]:
                     out["rows"] = norm_rows
                     return True, out
             return True, ev
-        return False, {}
+    return False, {}
+
+
+def _definition_query_term(user_text: str) -> str:
+    q = str(user_text or "").strip()
+    if not q:
+        return ""
+    patterns = (
+        r"(?i)^\s*define\s+(.+?)\s*[?.!]*\s*$",
+        r"(?i)^\s*what(?:'s|\s+is)\s+the\s+definition\s+of\s+(.+?)\s*[?.!]*\s*$",
+        r"(?i)^\s*what(?:'s|\s+is)\s+the\s+meaning\s+of\s+(.+?)\s*[?.!]*\s*$",
+    )
+    for pat in patterns:
+        m = re.match(pat, q)
+        if m:
+            return str(m.group(1) or "").strip()
+    return ""
+
+
+def _parse_define_payload(raw: str) -> Tuple[bool, str]:
+    t = str(raw or "").strip()
+    if not t or not t.lower().startswith("[define]"):
+        return False, ""
+    low = t.lower()
+    if (
+        "request timeout" in low
+        or "not found" in low
+        or "http error" in low
+        or "parse failed" in low
+        or "upstream blocked" in low
+        or low.endswith("error:")
+    ):
+        return False, ""
+    body = re.sub(r"(?i)^\s*\[define\]\s*", "", t, count=1).strip()
+    if not body:
+        return False, ""
+    return True, body
     t = str(raw or "").strip()
     if not t.lower().startswith("[web]"):
         return False, {}
@@ -1763,6 +1799,7 @@ def resolve_cheatsheets_turn(
     track_b_enabled: bool,
     wiki_lookup_fn: Optional[Callable[[str], str]],
     web_lookup_fn: Optional[Callable[[str], Any]] = None,
+    define_lookup_fn: Optional[Callable[[str], str]] = None,
     quote_source_intent: bool = False,
 ) -> CheatsheetsTurnResult:
     entries = load_cheatsheets_entries(cheatsheets_dir)
@@ -2013,8 +2050,28 @@ def resolve_cheatsheets_turn(
         return CheatsheetsTurnResult("", "", "", "", "", "", "", False, tuple(), "")
     if not q_framing and (not needs_web):
         return CheatsheetsTurnResult("", "", "", "", "", "", "", False, tuple(), "")
-    if wiki_lookup_fn is None and web_lookup_fn is None:
+    if wiki_lookup_fn is None and web_lookup_fn is None and define_lookup_fn is None:
         return CheatsheetsTurnResult("", "", "", "", "", "", "", False, tuple(), "")
+
+    # Natural-language define lane (equivalent intent to >>define command),
+    # before wiki/web fallback.
+    def_term = _definition_query_term(user_text)
+    if def_term and define_lookup_fn is not None:
+        ok_def, def_text = _parse_define_payload(str(define_lookup_fn(def_term) or ""))
+        if ok_def and def_text:
+            return CheatsheetsTurnResult(
+                facts_block="",
+                constraints_block="",
+                deterministic_answer=_escape_markdown_leading_quotes(def_text),
+                local_knowledge_line="",
+                track="B",
+                footer_source="Define" if not has_existing_facts else "Mixed",
+                footer_confidence="medium",
+                kb_lookup_candidate=False,
+                matched_terms=tuple(),
+                wiki_term="",
+                source_url="",
+            )
 
     known_norm_terms = {e.norm_term for e in entries if e.norm_term}
     candidates = _wiki_candidates(user_text, known_norm_terms)

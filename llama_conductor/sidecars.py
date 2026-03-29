@@ -861,6 +861,21 @@ def _normalize_hit(
         return None
     if not (u.startswith("http://") or u.startswith("https://")):
         return None
+    # Reject low-signal dictionary/reference domains from general web grounding.
+    try:
+        host_norm = _web_domain(u)
+        if host_norm:
+            blocked = (
+                "merriam-webster.com",
+                "dictionary.com",
+                "vocabulary.com",
+                "thesaurus.com",
+                "wordreference.com",
+            )
+            if any(host_norm == d or host_norm.endswith("." + d) for d in blocked):
+                return None
+    except Exception:
+        return None
     # Reject known tracker/ad redirect URLs from search wrappers.
     try:
         pu = urlparse(u)

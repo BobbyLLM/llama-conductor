@@ -143,7 +143,7 @@ web_search:
   #   - reuters.com
   #   - pubmed.ncbi.nlm.nih.gov
   recency_days: 0         # 0 disables recency filter
-  api_key: ""             # optional shared key fallback
+  api_key: ""
   tavily:
     api_key: ""
   searxng:

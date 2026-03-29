@@ -12,16 +12,16 @@ import re
 
 
 _CONF_RE = re.compile(
-    r"^\s*Confidence:\s*(unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki|Web)\s*$",
+    r"^\s*Confidence:\s*(unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Define|Wiki|Web)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _SRC_RE = re.compile(
-    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki|Web)\s*$",
+    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Define|Wiki|Web)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _CONF_PREFIX_RE = re.compile(r"^\s*Confidence:\s*", re.IGNORECASE)
 _INLINE_CONF_RE = re.compile(
-    r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki|Web)(?:[\s\.\-:]+[A-Za-z]+){0,3}\s*",
+    r"\s*Confidence:\s*(?:unverified|low|medium|med|high|top)\s*\|\s*Source:\s*(?:Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Define|Wiki|Web)(?:[\s\.\-:]+[A-Za-z]+){0,3}\s*",
     re.IGNORECASE,
 )
 _INLINE_BROKEN_CONF_RE = re.compile(
@@ -55,7 +55,7 @@ _INLINE_TRUNC_SOURCE_TAIL_RE = re.compile(
     re.IGNORECASE,
 )
 _SIMPLE_SOURCE_LINE_RE = re.compile(
-    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Wiki|Web)\s*$",
+    r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Define|Wiki|Web)\s*$",
     re.IGNORECASE,
 )
 
@@ -111,11 +111,11 @@ def _detect_abstract_source(
     m = _CONF_RE.search(t)
     if m:
         src = (m.group(2) or "").strip().title()
-        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki", "Web"} else "Model"
+        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Define", "Wiki", "Web"} else "Model"
     m_src = _SRC_RE.search(t)
     if m_src:
         src = (m_src.group(1) or "").strip().title()
-        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki", "Web"} else "Model"
+        return src if src in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Define", "Wiki", "Web"} else "Model"
 
     if lock_active:
         return "Model" if "not found in locked source" in low else "Docs"
@@ -147,6 +147,8 @@ def _compute_confidence(
         return "medium"
     if source == "Cheatsheets":
         return "high"
+    if source == "Define":
+        return "medium"
     if source in {"Docs", "Scratchpad"}:
         if lock_active and locked_fact_lines >= 4:
             return "top"
@@ -183,7 +185,7 @@ def normalize_sources_footer(
         has_facts_block=has_facts_block,
     )
     override_source = str(source_override or "").strip().title()
-    if override_source in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Wiki", "Web"}:
+    if override_source in {"Model", "Docs", "User", "Contextual", "Mixed", "Scratchpad", "Cheatsheets", "Define", "Wiki", "Web"}:
         source = override_source
     # Structural provenance guard:
     # "User" source must be explicitly assigned by the router lane.

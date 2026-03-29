@@ -102,6 +102,7 @@ _APPROVED_FOOTER_SOURCES = {
     "Scratchpad",
     "Docs",
     "Cheatsheets",
+    "Define",
     "Wiki",
     "Web",
 }
