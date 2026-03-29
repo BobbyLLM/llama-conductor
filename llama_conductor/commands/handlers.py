@@ -518,9 +518,34 @@ def _clear_pending_lock(state: SessionState) -> None:
     state.pending_lock_candidate = ""
 
 
-def _reset_profile_runtime_state(state: SessionState) -> None:
-    """Reset session interaction-profile state to defaults."""
+def _reset_profile_runtime_state(state: SessionState, cfg_get: Optional[Callable[..., object]] = None) -> None:
+    """Reset session interaction-profile state and re-apply configured default profile."""
     reset_profile(state.interaction_profile)
+    try:
+        default_profile = ""
+        if cfg_get is not None:
+            default_profile = str(cfg_get("profile.default", "") or "").strip().lower()
+        p = state.interaction_profile
+        if default_profile == "direct":
+            profile_set(p, "correction_style", "direct")
+            profile_set(p, "verbosity", "compact")
+            profile_set(p, "snark_tolerance", "medium")
+            profile_set(p, "sarcasm_level", "low")
+            profile_set(p, "profanity_ok", "false")
+        elif default_profile == "casual":
+            profile_set(p, "correction_style", "direct")
+            profile_set(p, "verbosity", "compact")
+            profile_set(p, "snark_tolerance", "high")
+            profile_set(p, "sarcasm_level", "medium")
+            profile_set(p, "profanity_ok", "false")
+        elif default_profile in {"turbo", "feral"}:
+            profile_set(p, "correction_style", "direct")
+            profile_set(p, "verbosity", "compact")
+            profile_set(p, "snark_tolerance", "high")
+            profile_set(p, "sarcasm_level", "high")
+            profile_set(p, "profanity_ok", "true")
+    except Exception:
+        pass
     state.profile_turn_counter = 0
     state.profile_effective_strength = 0.0
     state.profile_output_compliance = 0.0
@@ -1206,7 +1231,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
                 effective_strength=state.profile_effective_strength,
             )
         if sub == "reset":
-            _reset_profile_runtime_state(state)
+            _reset_profile_runtime_state(state, cfg_get)
             return "[profile] reset to defaults"
         if sub == "on":
             state.profile_enabled = True
@@ -1528,7 +1553,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             scratchpad_count = 0
             prev_locked = _clear_locked_summ(state)
             _clear_pending_lock(state)
-            _reset_profile_runtime_state(state)
+            _reset_profile_runtime_state(state, cfg_get)
             # Detach-all contract: reset scratch mode/locks so next attach starts strict.
             state.scratchpad_mode = "strict"
             state.scratchpad_locked_indices.clear()
@@ -1793,7 +1818,7 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
     # >>flush (CTC cache)
     if low == "flush":
         # User-requested behavior: flush also resets profile/session-style identity.
-        _reset_profile_runtime_state(state)
+        _reset_profile_runtime_state(state, cfg_get)
         state.rag_last_query = ""
         state.rag_last_hits = 0
         state.vault_last_query = ""

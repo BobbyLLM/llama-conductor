@@ -1,6 +1,18 @@
 # What's New
 
-## *** V1.9.0 (latest)
+## *** V1.9.1 (latest)
+
+TL;DR:
+
+Bugpatch release focused on retrieval scoring stability and live regression hardening.
+
+- Fixed `_quote_phrase_candidates` to generate structural sub-phrases (instead of whole-query exact matching), which restores phrase-score signal on natural-language web queries.
+- No trust-weight tuning in this patch; scoring formula and thresholds are unchanged.
+- Verified live improvements across the key regression set after the structural fix.
+
+---
+
+## *** V1.9.0
 
 TL;DR:
 

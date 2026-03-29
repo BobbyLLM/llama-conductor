@@ -379,6 +379,9 @@ def _build_kaioken_soft_constraints(*, state: SessionState, user_text: str) -> s
         switch_prior_tokens = []
     conf = str(getattr(cls, "confidence", "low") or "low").lower()
     subs = {str(s).strip().lower() for s in list(getattr(cls, "subsignals", []) or [])}
+    effective_subs = set(subs)
+    if bool(getattr(state, "turn_playful_override", False)):
+        effective_subs.add("playful")
     macro = str(getattr(cls, "macro", "working") or "working").strip().lower()
     if conf != "high":
         if _is_continuation_prompt(user_text):
@@ -390,10 +393,16 @@ def _build_kaioken_soft_constraints(*, state: SessionState, user_text: str) -> s
                     pmacro = str(getattr(pcls, "macro", "working") or "working").strip().lower()
                     if {"distress_hint", "vulnerable_under_humour"} & psubs:
                         subs = psubs
+                        effective_subs = set(psubs)
+                        if bool(getattr(state, "turn_playful_override", False)):
+                            effective_subs.add("playful")
                         macro = pmacro
                         conf = "high"
                     elif _KAIOKEN_DISTRESS_FALLBACK_RE.search(prev):
                         subs = {"distress_hint"}
+                        effective_subs = {"distress_hint"}
+                        if bool(getattr(state, "turn_playful_override", False)):
+                            effective_subs.add("playful")
                         macro = "personal"
                         conf = "high"
                 except Exception:
@@ -404,12 +413,17 @@ def _build_kaioken_soft_constraints(*, state: SessionState, user_text: str) -> s
     literal_followup = bool(literal_anchor)
     hints: List[str] = []
 
-    if "directive" in subs:
+    if "directive" in effective_subs:
         hints.append("Follow user constraints/format exactly before adding extra detail.")
-    if "friction" in subs:
+    if "friction" in effective_subs:
         hints.append("User is pushing back; match energy without escalating or dismissing. Do not lecture.")
+    if "playful" in effective_subs and bool(getattr(state, "turn_cheatsheet_hit", False)):
+        hints.append(
+            "Respond as someone who gets the reference. Don't explain it. "
+            "Play with the tone, not the meaning. One or two sentences max."
+        )
 
-    if "vulnerable_under_humour" in subs:
+    if "vulnerable_under_humour" in effective_subs:
         hints.extend([
             "User is mixing humor with pain/stress.",
             "Engage with the joke first, then acknowledge what is underneath.",
@@ -418,7 +432,7 @@ def _build_kaioken_soft_constraints(*, state: SessionState, user_text: str) -> s
             "Do NOT give unsolicited advice unless user explicitly asks for it.",
             "Keep it short (2-5 sentences), grounded, and human.",
         ])
-    elif "distress_hint" in subs:
+    elif "distress_hint" in effective_subs:
         hints.extend([
             "User is signaling real self-doubt/distress.",
             "Acknowledge directly and briefly.",
@@ -3219,6 +3233,8 @@ async def v1_chat_completions(req: Request):
     state.turn_footer_confidence_override = ""
     state.turn_source_url_override = ""
     state.turn_retrieval_track = ""
+    state.turn_cheatsheet_hit = False
+    state.turn_playful_override = False
     state.turn_local_knowledge_line = ""
     state.turn_cheatsheets_warning_line = ""
     state.turn_cheatsheets_warning_key = ""
@@ -3273,6 +3289,15 @@ async def v1_chat_completions(req: Request):
             state.turn_footer_confidence_override = str(cheat.footer_confidence or "").strip().lower()
             state.turn_source_url_override = str(getattr(cheat, "source_url", "") or "").strip()
             state.turn_retrieval_track = str(cheat.track or "").strip()
+            state.turn_cheatsheet_hit = bool(
+                str(cheat.track or "").strip() == "A"
+                and (
+                    bool(tuple(getattr(cheat, "matched_terms", tuple()) or tuple()))
+                    or bool(str(cheat.facts_block or "").strip())
+                    or bool(str(cheat.deterministic_answer or "").strip())
+                )
+            )
+            state.turn_playful_override = bool(getattr(cheat, "playful_override", False))
             state.turn_local_knowledge_line = str(cheat.local_knowledge_line or "").strip()
             state.turn_kaioken_macro = str(macro or "").strip().lower()
             cheatsheets_constraints_block = str(cheat.constraints_block or "").strip()

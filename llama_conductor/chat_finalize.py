@@ -85,6 +85,14 @@ _INLINE_PROFILE_FRAGMENT_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+_INLINE_PARTIAL_FOOTER_FRAGMENT_RE = re.compile(
+    r"(?:"
+    r"(?:\s*\|\s*(?:profile|sarc|snark|sn\w*|confidence|source)\s*[:|]?[^\n]*)"
+    r"|"
+    r"(?:\s+(?:profile|confidence|source)\s*[:|]\s*[^\n]*$)"
+    r")",
+    re.IGNORECASE,
+)
 _SENTENCE_SPLIT_RE = re.compile(r"[^.!?\n]+[.!?]*", re.UNICODE)
 _EDS_OWNERSHIP_DESCRIPTOR_RE = re.compile(
     r"\b("
@@ -323,6 +331,21 @@ def _strip_inline_profile_fragments(text: str) -> str:
     return "\n".join(out).strip()
 
 
+def _strip_inline_partial_footer_fragments(text: str) -> str:
+    raw = str(text or "")
+    if not raw.strip():
+        return raw
+    out: list[str] = []
+    for ln in raw.splitlines():
+        s = str(ln or "")
+        if _FOOTER_META_LINE_RE.match(s.strip()):
+            out.append(s)
+            continue
+        s2 = _INLINE_PARTIAL_FOOTER_FRAGMENT_RE.sub("", s).rstrip()
+        out.append(s2)
+    return "\n".join(out).strip()
+
+
 def _clamp_single_response_sentence_loops(text: str, max_repeats: int = 2) -> str:
     """Clamp pathological single-response sentence loops.
 
@@ -410,6 +433,24 @@ def _apply_user_parrot_guard(text: str, user_text: str, state: Any) -> str:
         if footer_lines:
             parts.append("\n".join(footer_lines).strip())
         return "\n\n".join(p for p in parts if p).strip()
+
+    # Pre-check: exact double-echo of user content (X + X with punctuation/space/newline separators).
+    # Narrow blind-spot fix: preserve existing clamp/A-B thresholds, but catch two-copy parroting early.
+    def _norm_for_double_echo(s: str) -> str:
+        t = str(s or "").lower()
+        t = re.sub(r"[\s\.\!\?\,;:\-_'\"`\(\)\[\]\{\}]+", "", t)
+        return t
+
+    body_norm = _norm_for_double_echo(body)
+    user_norm = _norm_for_double_echo(user_text)
+    if user_norm and body_norm == (user_norm + user_norm):
+        prof = getattr(state, "interaction_profile", None)
+        ack_style = str(getattr(prof, "ack_reframe_style", "plain") or "plain").lower()
+        snark = str(getattr(prof, "snark_tolerance", "low") or "low").lower()
+        if ack_style == "feral" or snark in ("medium", "high"):
+            body = "Not much on my side. You're the one with skin in the game - what do you want to dig into?"
+        else:
+            body = "Not much on my side. What do you want to dig into?"
 
     # High-confidence leading verbatim mirror strip (density-independent):
     # if body starts with the same token sequence as user text, drop that
@@ -515,6 +556,7 @@ def finalize_chat_response(
 ) -> Any:
     text = _strip_reasoning_leak_lines(str(text or ""))
     text = _strip_inline_profile_fragments(str(text or ""))
+    text = _strip_inline_partial_footer_fragments(str(text or ""))
 
     def _set_lock_miss_footer(in_text: str) -> str:
         t = str(in_text or "").strip()

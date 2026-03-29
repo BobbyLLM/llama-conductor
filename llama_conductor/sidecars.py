@@ -944,23 +944,53 @@ def _query_nonstop_tokens(query: str) -> list[str]:
 
 def _quote_phrase_candidates(query: str) -> list[str]:
     out: list[str] = []
+
+    # Quoted input remains highest-confidence phrase evidence.
     for q in _WEB_QUOTED_RE.findall(str(query or "")):
         n = _web_norm_text(q)
         if n:
             out.append(n)
     if out:
         return out
-    base = _web_norm_text(query)
-    base = re.sub(
-        r"^(?:where does|what is|what's|do you know|can you find|find|source of|what is this quote from)\s+",
-        "",
-        base,
-        flags=re.IGNORECASE,
+
+    raw_tokens = [t.lower() for t in _WEB_TOKEN_RE.findall(_web_norm_text(query))]
+    if not raw_tokens:
+        return out
+
+    # Strip framing words so phrase matching targets content-bearing chunks.
+    phrase_stop = set(_WEB_STOPWORDS).union(
+        {
+            "won",
+            "winner",
+            "winners",
+            "winning",
+            "please",
+            "can",
+            "could",
+            "would",
+            "you",
+        }
     )
-    base = re.sub(r"\b(?:quote|source|from)\b", " ", base, flags=re.IGNORECASE)
-    base = re.sub(r"\s+", " ", base).strip()
-    if base:
-        out.append(base)
+    tokens = [t for t in raw_tokens if t not in phrase_stop]
+    if len(tokens) < 2:
+        return out
+
+    seen: set[str] = set()
+
+    def _push(cand: str) -> None:
+        c = _web_norm_text(cand)
+        if not c or c in seen:
+            return
+        seen.add(c)
+        out.append(c)
+
+    # Prefer most-specific phrase first, then bounded n-grams (4..2).
+    _push(" ".join(tokens))
+    max_n = min(4, len(tokens))
+    for n in range(max_n, 1, -1):
+        for i in range(0, len(tokens) - n + 1):
+            _push(" ".join(tokens[i : i + n]))
+
     return out
 
 

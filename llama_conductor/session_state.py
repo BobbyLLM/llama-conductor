@@ -105,6 +105,8 @@ class SessionState:
     turn_footer_confidence_override: str = ""
     turn_source_url_override: str = ""
     turn_retrieval_track: str = ""
+    turn_cheatsheet_hit: bool = False
+    turn_playful_override: bool = False
     turn_local_knowledge_line: str = ""
     turn_cheatsheets_warning_line: str = ""
     turn_cheatsheets_warning_key: str = ""

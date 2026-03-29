@@ -142,6 +142,8 @@ _GENERIC_TAG_TERMS = {
     "the",
 }
 
+_BANTER_TAGS = {"idiom", "casual register", "casual_register", "banter", "banter register", "banter_register"}
+
 
 @dataclass(frozen=True)
 class CheatsheetEntry:
@@ -168,6 +170,7 @@ class CheatsheetsTurnResult:
     matched_terms: Tuple[str, ...]
     wiki_term: str
     source_url: str = ""
+    playful_override: bool = False
 
 
 _FILE_META: Dict[Path, Tuple[int, str]] = {}
@@ -186,6 +189,16 @@ def _norm_text(s: str) -> str:
 
 def _tokens(s: str) -> List[str]:
     return _TOKEN_RE.findall(_norm_text(s))
+
+
+def _is_banter_idiom_entry(entry: CheatsheetEntry) -> bool:
+    try:
+        if str(entry.norm_category or "").strip().lower() == "idiom":
+            return True
+        tags = {str(t or "").strip().lower() for t in tuple(entry.norm_tags or ()) if str(t or "").strip()}
+        return bool(tags & _BANTER_TAGS)
+    except Exception:
+        return False
 
 
 def _warn(msg: str) -> None:
@@ -583,6 +596,36 @@ def _needs_web_retrieval(*, user_text: str, q_framing: bool) -> bool:
     if re.search(r"\b\d{4}\b", raw) or re.search(r"\b\d+(?:st|nd|rd|th)\b", raw, flags=re.IGNORECASE):
         return True
     if _CAP_TERM_RE.search(raw):
+        return True
+    return False
+
+
+def _has_explicit_fact_signal(*, user_text: str, q_framing: bool, quote_source_intent: bool) -> bool:
+    """High-precision fact-seeking detector used to allow retrieval on casual/personal turns."""
+    raw = str(user_text or "").strip()
+    if not raw:
+        return False
+    if quote_source_intent:
+        return True
+    if _definition_query_term(raw):
+        return True
+    if _STRICT_LOOKUP_RE.match(raw):
+        return True
+    if _QUOTED_TERM_RE.search(raw):
+        return True
+    # WH lead-ins are explicit fact-seeking signals even without trailing '?'.
+    if re.search(r"^\s*(?:who|what|when|where|which|why|how)\b", raw, flags=re.IGNORECASE):
+        return True
+    if re.search(
+        r"\b(?:source|from|citation|cited|attribution|verify|fact[-\s]?check|"
+        r"who\s+(?:won|wrote|authored|directed)|"
+        r"when\s+(?:was|were|did)|"
+        r"where\s+(?:is|was)|"
+        r"what\s+is\s+the\s+(?:date|year)|"
+        r"current\s+[a-z][a-z0-9_-]*)\b",
+        raw,
+        flags=re.IGNORECASE,
+    ):
         return True
     return False
 
@@ -1974,6 +2017,7 @@ def resolve_cheatsheets_turn(
         if scoped_entries:
             facts = _build_cheatsheets_facts([(e, 2) for e in scoped_entries])
             deterministic_answer = _build_topic_deterministic_answer(requested_topic_norm, scoped_entries)
+            playful_override = any(_is_banter_idiom_entry(e) for e in scoped_entries)
             return CheatsheetsTurnResult(
                 facts_block=facts,
                 constraints_block=_build_track_a_constraints(strict_lookup=True),
@@ -1985,13 +2029,21 @@ def resolve_cheatsheets_turn(
                 kb_lookup_candidate=True,
                 matched_terms=tuple(e.term for e in scoped_entries),
                 wiki_term="",
+                playful_override=playful_override,
             )
 
     matches = _select_matches(entries, user_text)
     kb_lookup_candidate = bool(matches)
     if matches:
         # Track A lane restriction: do not inject on personal/distress unless explicit question framing.
-        if personal_or_distress and (not q_framing):
+        distress_lane = bool(
+            (_DISTRESS_SUBS & subs)
+            or _PERSONAL_OR_DISTRESS_RE.search(" ".join(sorted(subs)))
+            or bool(prior_distress_carry)
+            or _DISTRESS_TEXT_RE.search(str(user_text or ""))
+            or _DISTRESS_TEXT_RE.search(str(prior_user_text or ""))
+        )
+        if personal_or_distress and (not q_framing) and distress_lane:
             return CheatsheetsTurnResult(
                 facts_block="",
                 constraints_block="",
@@ -2018,6 +2070,7 @@ def resolve_cheatsheets_turn(
         fully_grounded = bool(strict_lookup and (not has_existing_facts))
         source = "Cheatsheets" if fully_grounded else "Mixed"
         conf = top_conf if fully_grounded else "medium"
+        playful_override = any(_is_banter_idiom_entry(e) for e, _ in matches)
         deterministic_answer = ""
         if fully_grounded and len(direct_hits) == 1:
             t = str(direct_hits[0].term or "").strip()
@@ -2037,11 +2090,24 @@ def resolve_cheatsheets_turn(
             kb_lookup_candidate=kb_lookup_candidate,
             matched_terms=tuple(e.term for e, _ in matches),
             wiki_term="",
+            playful_override=playful_override,
         )
 
     # Track B gate:
     # Retrieval trigger is intentionally broad and separate from safety intent enums.
-    needs_web = _needs_web_retrieval(user_text=user_text, q_framing=q_framing)
+    needs_web_initial = _needs_web_retrieval(user_text=user_text, q_framing=q_framing)
+    needs_web = bool(needs_web_initial)
+    explicit_fact_signal = _has_explicit_fact_signal(
+        user_text=user_text,
+        q_framing=q_framing,
+        quote_source_intent=quote_source_intent,
+    )
+    # Banter guard: casual/personal turns should not retrieve unless explicit fact intent exists.
+    if macro_l in {"casual", "personal"} and (not explicit_fact_signal):
+        needs_web = False
+    # Global non-fact guard in case macro misclassifies banter as working.
+    if (not q_framing) and (not explicit_fact_signal):
+        needs_web = False
     if not track_b_enabled:
         return CheatsheetsTurnResult("", "", "", "", "", "", "", False, tuple(), "")
     if personal_or_distress and (not q_framing) and (not quote_source_intent):
