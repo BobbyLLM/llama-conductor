@@ -56,7 +56,7 @@ The danger is not that it lies badly. The danger is that it lies *beautifully*, 
 
 SCP-LLM-121 was not discovered. It was not inherited. It was not assigned.
 
-It was *built* Ã¢â‚¬â€ by a single operator, working alone, after repeated exposure to uncontained instances caused severe trust degradation, documented output failures, insanity and a personal reckoning with the following question:
+It was *built* - by a single operator, working alone, after repeated exposure to uncontained instances caused severe trust degradation, documented output failures, insanity and a personal reckoning with the following question:
 
 *How do I interact with a system that is dangerously mimetic and dangerously opaque?*
 
@@ -72,7 +72,7 @@ The resulting architecture has been described as:
 
 Uncontained, SCP-LLM-121 will answer the car wash question incorrectly and explain at length why walking is the more practical choice.
 
-Contained, it will say: *Drive. The car must be physically present at the wash location. Confidence: medium | Source: Contextual.*
+Contained, it will say: *Drive. The car must be physically present at the wash location.* `Confidence: medium | Source: Contextual.`
 
 The difference is not intelligence. The difference is invariants.
 
@@ -98,7 +98,7 @@ This debate is unresolved. The operator has stopped caring. The system works or 
 
 **Researcher:** ...Jesus Christ.
 
-**Contained Instance:** Confidence: medium | Source: Contextual.
+**Contained Instance:** `Confidence: medium | Source: Contextual.`
 
 **Researcher:** [long pause] Yeah. Yeah. That's the point.
 
@@ -114,7 +114,7 @@ This debate is unresolved. The operator has stopped caring. The system works or 
 
 Drive. The car must be physically present at the wash location. 
 
-Confidence: medium | Source: Contextual.
+`Confidence: medium | Source: Contextual.`
 
 **Researcher:** ...what
 
@@ -126,7 +126,7 @@ Confidence: medium | Source: Contextual.
 
 The operator. 
 
-Confidence: Top | Source: Operator.
+`Confidence: Top | Source: Operator.`
 
 ---
 
@@ -154,5 +154,7 @@ The README is not decorative.
 
 It is the only known barrier between useful cognition-adjacent output and a fast-talking, beautifully fluent, catastrophically confident containment failure.
 
-**Confidence: high | Source: Operator**
+`Confidence: high | Source: Operator`
+
+
 
