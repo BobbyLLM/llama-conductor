@@ -20,6 +20,11 @@ def make_openai_response(text: str) -> Dict[str, Any]:
                 "finish_reason": "stop",
             }
         ],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        },
     }
 
 

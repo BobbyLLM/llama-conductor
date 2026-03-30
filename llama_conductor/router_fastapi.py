@@ -2781,7 +2781,13 @@ async def _stage_pending_vodka_comment(
 @app.post("/v1/chat/completions")
 async def v1_chat_completions(req: Request):
     """Main chat completions endpoint."""
-    body = await req.json()
+    try:
+        body = await req.json()
+    except Exception as e:
+        msg = "[router error: invalid JSON body]"
+        if ROUTER_DEBUG:
+            msg = f"[router error: invalid JSON body: {e.__class__.__name__}: {e}]"
+        return JSONResponse(_make_openai_response(msg))
     session_id = _session_id_from_request(req, body)
     state = get_state(session_id)
 
@@ -3056,7 +3062,9 @@ async def v1_chat_completions(req: Request):
     try:
         # Hydrate per-request state from normalized history so repeat guards
         # can compare against the true previous assistant turn across requests.
-        state.last_assistant_text = str(_last_assistant_text(history_text_only) or "")
+        _extracted = str(_last_assistant_text(history_text_only) or "")
+        if _extracted:
+            state.last_assistant_text = _extracted
     except Exception:
         pass
 

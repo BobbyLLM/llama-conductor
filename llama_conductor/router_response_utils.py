@@ -193,6 +193,10 @@ def strip_footer_lines_for_scan(text: str) -> str:
             continue
         if low.startswith("source:") or low.startswith("sources:"):
             continue
+        if low.startswith("profile:"):
+            continue
+        if low.startswith("| sarc:") or low.startswith("| snark:"):
+            continue
         keep.append(ln)
     return "\n".join(keep).strip()
 
