@@ -227,7 +227,7 @@ def _append_source_see_line(*, text: str, source: str, source_url: str) -> str:
     lines = raw.splitlines()
     filtered: List[str] = []
     for ln in lines:
-        if re.match(r"^\s*See:\s*https?://\S+\s*$", str(ln or "").strip(), flags=re.IGNORECASE):
+        if re.match(r"^\s*See:\s*https?://\S+", str(ln or "").strip(), flags=re.IGNORECASE):
             continue
         filtered.append(ln)
     lines = filtered

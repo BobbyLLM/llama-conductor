@@ -4,6 +4,17 @@
 
 Roadmap breadcrumb entries (incremental, may land across multiple commits) en route to 1.9.2 release.
 
+- `who_is_current` + winner safety hardening:
+  - Added current-holder guard wiring and entity-consistency gate for Track B web hits, so nonsense entities no longer inherit real-world officeholders.
+  - Tightened winner-name confabulation controls (`who_won`), including under-specified query fail-loud behavior and duplicate `See:` cleanup.
+
+- `who_is_current` anti-confabulation guard:
+  - Added `_is_who_is_current_intent` using decomposed temporal/role/person-verb signals (explicitly excludes `head of` over-trigger shape).
+  - Wired into `retrieval_guard_intent_now`, first-turn constraint injection, miss breadcrumb writes (both router paths), and post-generation enforcement.
+  - Reuses existing `_winner_claim_is_specific` + `who_won` guard idiom (no parallel refactor branch).
+  - Validation: grounded query grounded correctly on rerun (`3/3`), nonsense-entity miss returns unverified, `who_won` unchanged, non-current query unchanged.
+  - Note: first-turn retrieval-miss specific-name blocking remains identical to existing `who_won` boundary (accepted, not introduced by this patch).
+
 - `WebSearchHit` groundwork (struct-only):
   - Added metadata fields: `domain`, `source_type`, `serp_score`, `content_score`, `corroboration_score`, `fetch_status`, `canonical_url`.
   - No scoring or retrieval behavior changes in this step.

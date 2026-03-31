@@ -1,4 +1,4 @@
-﻿"""FastAPI orchestration layer for llama-conductor.
+"""FastAPI orchestration layer for llama-conductor.
 
 Responsibilities:
 - expose API routes
@@ -53,6 +53,8 @@ from .interaction_profile import (
     update_profile_from_user_turn,
 )
 from .privacy_utils import safe_preview, short_hash
+from .upstream_watchdog import start_watchdog, stop_watchdog
+
 # Required modules
 from .vodka_filter import Filter as VodkaFilter, purge_session_memory_jsonl, purge_vodka_ctx_facts
 from .serious import run_serious
@@ -1973,6 +1975,40 @@ def _is_who_won_intent(text: str) -> bool:
     return bool(_WHO_WON_INTENT_RE.search(t))
 
 
+def _is_who_is_current_intent(text: str) -> bool:
+    t = str(text or "").strip().lower()
+    if not t:
+        return False
+    # Gate 1: must include explicit temporal "current" signal.
+    has_current = bool(re.search(
+        r"\b(current(ly)?|right\s+now|at\s+(the\s+)?present|these\s+days"
+        r"|as\s+of\s+now|nowadays|in\s+office|serving\s+as)\b",
+        t,
+        flags=re.IGNORECASE,
+    ))
+    if not has_current:
+        return False
+
+    # Signal A: role/position vocabulary.
+    has_role = bool(re.search(
+        r"\b(president|prime\s+minister|chancellor|ceo|cto|cfo"
+        r"|director|secretary(\s+general)?|chair(man|woman|person)?"
+        r"|governor|mayor|minister|commissioner|chief\s+executive)\b",
+        t,
+        flags=re.IGNORECASE,
+    ))
+
+    # Signal B: person-verb framing.
+    has_person_verb = bool(re.search(
+        r"\bwho\s+(leads?|runs?|heads?|chairs?|governs?|directs?"
+        r"|manages?|serves?\s+as|holds?\s+the\s+(role|position|office))\b",
+        t,
+        flags=re.IGNORECASE,
+    ))
+
+    return bool(has_role or has_person_verb)
+
+
 def _quote_source_signature(text: str) -> dict[str, Any]:
     t = str(text or "").strip()
     quoted = [str(m.group(1) or "").strip().lower() for m in _QUOTE_SPAN_RE.finditer(t)]
@@ -2044,7 +2080,13 @@ def _winner_claim_is_specific(answer_text: str) -> bool:
         return True
     if re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4}\b", a):
         return True
-    if re.search(r"[\"'“”][^\"'“”]{2,80}[\"'“”]\s+won\b", a, flags=re.IGNORECASE):
+    if re.search(r"['\"\u201c\u201d][^'\"\u201c\u201d]{2,80}['\"\u201c\u201d]\s+won\b", a, flags=re.IGNORECASE):
+        return True
+    # Single proper-noun subject before action verb (e.g. "Wikipedia won best picture")
+    if re.search(r"\b[A-Z][a-z]{4,}\s+(won|is\s+the|was\s+the|leads?|runs?|heads?)\b", a):
+        return True
+    # Single proper-noun after copula (e.g. "winner is Anora")
+    if re.search(r"\b(?:is|was|are)\s+[A-Z][a-z]{4,}\b", a):
         return True
     return False
 
@@ -2164,7 +2206,7 @@ async def _chat_exception_guard(request: Request, call_next):
 
 
 @app.on_event("startup")
-async def _startup_runtime() -> None:
+async def _startup_watchdog() -> None:
     try:
         base = str(cfg_get("vodka.storage_dir", "") or "").strip()
         subdir = str(cfg_get("vodka.subdir", "vodka") or "vodka").strip()
@@ -2187,9 +2229,19 @@ async def _startup_runtime() -> None:
             _dbg(f"[DEBUG] startup session-kb janitor stats={stats}")
     except Exception:
         pass
+    try:
+        start_watchdog()
+    except Exception:
+        pass
+
+
 @app.on_event("shutdown")
-async def _shutdown_runtime() -> None:
-    return None
+async def _shutdown_watchdog() -> None:
+    try:
+        stop_watchdog()
+    except Exception:
+        pass
+
 
 @app.get("/healthz")
 def healthz():
@@ -2260,14 +2312,16 @@ def _stage_openwebui_title_bypass(*, user_text_raw: str) -> Optional[str]:
 
     def _openwebui_title_for(t: str) -> str:
         t_l = t.lower()
+        if "cliniko" in t_l:
+            return "Cliniko Pipeline"
         if "router" in t_l or "fastapi" in t_l:
             return "Router Debugging"
         return "Chat Summary"
 
     if not _is_openwebui_title_task(user_text_raw):
         return None
-    title_debug = bool(cfg_get("router.debug", False))
-    if title_debug:
+    CLINIKO_DEBUG = cfg_get("cliniko.debug", True)
+    if CLINIKO_DEBUG:
         _dbg("[DEBUG] openwebui title task bypass")
     return json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
 
@@ -3251,7 +3305,13 @@ async def v1_chat_completions(req: Request):
     cheatsheets_deterministic_answer = ""
     quote_source_intent_now = _is_quote_source_intent(user_text)
     who_won_intent_now = _is_who_won_intent(user_text)
-    retrieval_guard_intent_now = "quote_source" if quote_source_intent_now else ("who_won" if who_won_intent_now else "")
+    who_is_current_intent_now = _is_who_is_current_intent(user_text)
+    retrieval_guard_intent_now = (
+        "quote_source" if quote_source_intent_now
+        else "who_won" if who_won_intent_now
+        else "who_is_current" if who_is_current_intent_now
+        else ""
+    )
     if retrieval_guard_intent_now:
         prior_miss_intent = str(getattr(state, "last_retrieval_miss_intent", "") or "").strip().lower()
         prior_sig = str(getattr(state, "last_retrieval_miss_query_signature", "") or "").strip()
@@ -3373,7 +3433,7 @@ async def v1_chat_completions(req: Request):
             else quote_guard_constraints
         )
     quote_source_first_turn_guard = bool(
-        (quote_source_intent_now or who_won_intent_now)
+        (quote_source_intent_now or who_won_intent_now or who_is_current_intent_now)
         and (not bool(getattr(state, "turn_quote_source_durability_guard", False)))
         and (str(getattr(state, "turn_retrieval_track", "") or "").strip() == "")
         and (not bool((cheatsheets_deterministic_answer or "").strip()))
@@ -3388,6 +3448,14 @@ async def v1_chat_completions(req: Request):
                 "- Do not invent specific winner names, titles, or dates.\n"
                 "- If answering from priors, keep it uncertain and brief.\n"
                 "- If unknown, state that it is unknown."
+            )
+        elif who_is_current_intent_now and (not quote_source_intent_now) and (not who_won_intent_now):
+            quote_guard_constraints = (
+                "Current-holder first-turn guard:\n"
+                "- No verified retrieval evidence is currently available for this current-holder query.\n"
+                "- Do not state a specific name as the current holder.\n"
+                "- If answering from priors, keep it uncertain and brief.\n"
+                "- If unknown or unverified, state that it is unknown."
             )
         else:
             quote_guard_constraints = (
@@ -3587,6 +3655,17 @@ async def v1_chat_completions(req: Request):
                 if det_low.startswith("not available in retrieved"):
                     sig = _quote_source_signature(user_text)
                     state.last_retrieval_miss_intent = "who_won"
+                    state.last_retrieval_miss_query_text = str(user_text or "").strip()
+                    state.last_retrieval_miss_query_signature = json.dumps(sig, ensure_ascii=False)
+                else:
+                    state.last_retrieval_miss_intent = ""
+                    state.last_retrieval_miss_query_text = ""
+                    state.last_retrieval_miss_query_signature = ""
+            elif retrieval_guard_intent_now == "who_is_current":
+                det_low = str(cheatsheets_deterministic_answer or "").strip().lower()
+                if det_low.startswith("not available in retrieved"):
+                    sig = _quote_source_signature(user_text)
+                    state.last_retrieval_miss_intent = "who_is_current"
                     state.last_retrieval_miss_query_text = str(user_text or "").strip()
                     state.last_retrieval_miss_query_signature = json.dumps(sig, ensure_ascii=False)
                 else:
@@ -3957,6 +4036,14 @@ async def v1_chat_completions(req: Request):
             state.turn_footer_source_override = "Model"
             state.turn_footer_confidence_override = "unverified"
             state.turn_source_url_override = ""
+    elif quote_source_first_turn_guard and who_is_current_intent_now:
+        # First-turn who_is_current guard: block specific name confabulations.
+        if _winner_claim_is_specific(str(text or "")):
+            guard_header = "[Cannot verify from retrieved source. Responding from model priors.]"
+            text = f"{guard_header}\n\nThe current holder is unknown to me. Sorry."
+            state.turn_footer_source_override = "Model"
+            state.turn_footer_confidence_override = "unverified"
+            state.turn_source_url_override = ""
     elif quote_source_first_turn_guard and quote_source_intent_now:
         guard_header = "[Cannot verify from retrieved source. Responding from model priors.]"
         text = f"{guard_header}\n\nThe source is unknown to me. Sorry."
@@ -4042,6 +4129,23 @@ async def v1_chat_completions(req: Request):
                 state.last_retrieval_miss_intent = ""
                 state.last_retrieval_miss_query_text = ""
                 state.last_retrieval_miss_query_signature = ""
+        elif retrieval_guard_intent_now == "who_is_current":
+            final_text_low = str(text or "").strip().lower()
+            retrieval_track = str(getattr(state, "turn_retrieval_track", "") or "").strip()
+            miss_now = (
+                retrieval_track != "B"
+                or final_text_low.startswith("not available in retrieved")
+                or "[cannot verify from retrieved source." in final_text_low
+            )
+            if miss_now:
+                sig = _quote_source_signature(user_text)
+                state.last_retrieval_miss_intent = "who_is_current"
+                state.last_retrieval_miss_query_text = str(user_text or "").strip()
+                state.last_retrieval_miss_query_signature = json.dumps(sig, ensure_ascii=False)
+            else:
+                state.last_retrieval_miss_intent = ""
+                state.last_retrieval_miss_query_text = ""
+                state.last_retrieval_miss_query_signature = ""
         else:
             state.last_retrieval_miss_intent = ""
             state.last_retrieval_miss_query_text = ""
@@ -4073,4 +4177,3 @@ if __name__ == "__main__":
     host = str(cfg_get("server.host", "0.0.0.0"))
     port = int(cfg_get("server.port", 9000))
     uvicorn.run("router_fastapi:app", host=host, port=port, reload=False)
-

@@ -1003,6 +1003,38 @@ def _web_evidence_rows(evidence: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+def _web_evidence_entity_consistent(term: str, evidence: Dict[str, Any]) -> bool:
+    """Return True if retrieved evidence contains meaningful entity tokens from the lookup term.
+    Rejects hits where evidence is clearly about a different entity.
+    Role/title words are excluded so only named-entity tokens gate the check."""
+    _SKIP = {
+        # Function words
+        "what", "when", "where", "which", "that", "this", "with", "from",
+        "have", "been", "were", "they", "their", "about", "who", "the",
+        "is", "of", "in", "and", "or", "for", "current", "currently",
+        # Role/title words — must not count as entity evidence
+        "mayor", "ceo", "president", "prime", "minister", "governor",
+        "chair", "chairman", "chairwoman", "chairperson", "director",
+        "secretary", "commissioner", "chancellor", "chief", "executive",
+        "head", "leader", "officer",
+    }
+    term_tokens = {
+        w.lower() for w in re.findall(r"[a-zA-Z]{4,}", term)
+        if w.lower() not in _SKIP
+    }
+    if not term_tokens:
+        return True  # no discriminating entity tokens; can't check, don't block
+    rows = _web_evidence_rows(evidence)
+    for row in rows:
+        haystack = (
+            str(row.get("title", "") or "").lower() + " " +
+            str(row.get("snippet", "") or "").lower()
+        )
+        if any(tok in haystack for tok in term_tokens):
+            return True
+    return False
+
+
 def _support_subject_norm(user_text: str) -> str:
     raw = str(user_text or "").strip()
     if not raw:
@@ -1290,7 +1322,8 @@ def _extract_winner_from_web(evidence: Dict[str, Any], *, thing_phrase: str = ""
     )
     banned = {
         "the", "a", "an", "academy awards", "awards", "oscars", "best picture", "best",
-        "picture", "who", "won",
+        "picture", "who", "won", "wikipedia",
+        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
     }
     award_phrase_re = re.compile(r"\b(best\s+picture|best\s+film|best\s+actor|best\s+actress)\b", re.IGNORECASE)
 
@@ -1365,6 +1398,19 @@ def _extract_winner_from_web(evidence: Dict[str, Any], *, thing_phrase: str = ""
         cand = " ".join(w.capitalize() for w in words)
         return cand if _valid_name(cand) else ""
 
+    # High-priority fallback: prefer stable URL slugs before noisy snippet parsing.
+    rows = evidence.get("rows", None)
+    if isinstance(rows, list):
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            cand = _winner_from_url_slug(str(r.get("url", "") or ""))
+            if cand:
+                return cand
+    cand0 = _winner_from_url_slug(str(evidence.get("url", "") or ""))
+    if cand0:
+        return cand0
+
     for t in texts:
         m = was_re.search(str(t))
         if m:
@@ -1383,7 +1429,7 @@ def _extract_winner_from_web(evidence: Dict[str, Any], *, thing_phrase: str = ""
             cand = _clean_name(m.group(1))
             if _valid_name(cand):
                 return cand
-    # Fallback (high priority): mine stable URL slugs when snippets are noisy.
+    # Backward-compatible late fallback.
     rows = evidence.get("rows", None)
     if isinstance(rows, list):
         for r in rows:
@@ -1788,6 +1834,16 @@ def _build_web_slot_deterministic_answer(user_text: str, evidence: Dict[str, Any
             m2 = re.search(r"(?i)\bwho\s+won\s+(.+)$", q)
             thing = str(m2.group(1) or "").strip() if m2 else ""
             event = ""
+        # Ambiguous winner query without event/time anchor: refuse to guess.
+        if thing and (not event):
+            lowq = q.lower()
+            anchored = bool(
+                re.search(r"\b(19\d{2}|20\d{2})\b", lowq)
+                or re.search(r"\b\d{1,3}(?:st|nd|rd|th)\b", lowq)
+                or re.search(r"\b(academy awards|oscars|grammys|emmys|golden globes|world cup|super bowl)\b", lowq)
+            )
+            if not anchored:
+                return "Not available in retrieved web facts."
         winner = _extract_winner_from_web(evidence, thing_phrase=thing)
         if not winner:
             return "Not available in retrieved web facts."
@@ -2184,6 +2240,8 @@ def resolve_cheatsheets_turn(
                 ok_web, evidence = _parse_web_payload(web_lookup_fn(term))
                 if not ok_web:
                     continue
+                if not _web_evidence_entity_consistent(term, evidence):
+                    continue
                 wfacts = _build_web_facts(evidence)
                 wsource = "Mixed" if has_existing_facts else "Web"
                 wdet = _build_web_slot_deterministic_answer(user_text=user_text, evidence=evidence)
@@ -2223,6 +2281,8 @@ def resolve_cheatsheets_turn(
         for term in candidates:
             ok_web, evidence = _parse_web_payload(web_lookup_fn(term))
             if not ok_web:
+                continue
+            if not _web_evidence_entity_consistent(term, evidence):
                 continue
             facts = _build_web_facts(evidence)
             source = "Mixed" if has_existing_facts else "Web"
