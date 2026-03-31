@@ -84,7 +84,20 @@ class WeatherResult:
 
 @dataclass
 class WebSearchHit:
-    """Normalized web search hit."""
+    """Normalized web search hit.
+
+    Core fields (always populated at instantiation):
+        title, url, snippet, timestamp, source, rank, score
+
+    Extended metadata fields (default to sentinel; populated by retrieval pipeline):
+        domain        -- eTLD+1 extracted from url (e.g. 'pubmed.ncbi.nlm.nih.gov')
+        source_type   -- categorical: 'official' | 'wiki' | 'reference' | 'forum' | 'news' | 'academic' | 'unknown'
+        serp_score    -- rank-derived score component (0.0 until scoring wired)
+        content_score -- content quality score component (0.0 until scoring wired)
+        corroboration_score -- cross-hit agreement score (0.0 until scoring wired)
+        fetch_status  -- 'skipped' | 'pending' | 'fetched' | 'failed'
+        canonical_url -- resolved URL post-redirect ('' means use url)
+    """
     title: str
     url: str
     snippet: str
@@ -92,6 +105,14 @@ class WebSearchHit:
     source: str
     rank: int
     score: float = 0.0
+    # --- extended metadata (swarm/observability groundwork) ---
+    domain: str = ""
+    source_type: str = "unknown"
+    serp_score: float = 0.0
+    content_score: float = 0.0
+    corroboration_score: float = 0.0
+    fetch_status: str = "skipped"  # sentinel: fetch not attempted; 'pending' reserved for queued fetch
+    canonical_url: str = ""
 
 
 # ============================================================================

@@ -1,6 +1,16 @@
 # What's New
 
-## *** V1.9.1 (latest)
+## 1.9.2 ROADMAP (latest WIP)
+
+Roadmap breadcrumb entries (incremental, may land across multiple commits) en route to 1.9.2 release.
+
+- `WebSearchHit` groundwork (struct-only):
+  - Added metadata fields: `domain`, `source_type`, `serp_score`, `content_score`, `corroboration_score`, `fetch_status`, `canonical_url`.
+  - No scoring or retrieval behavior changes in this step.
+  - Purpose: observability now, cleaner swarm/policy wiring later without breaking dataclass shape.
+  - Validation: full-field instantiation, live `>>web` smoke, repo-wide serialization grep, academic-path integration check (4/4 pass, no regressions).
+
+## *** V1.9.1 
 
 TL;DR:
 
