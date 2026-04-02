@@ -72,7 +72,7 @@ frontend:
 # Launcher orchestration defaults (used by launch_stack.py).
 launcher:
   router_host: "0.0.0.0"
-  ready_timeout_s: 22
+  ready_timeout_s: 25
   auto_clean_before_start: true
 
 # -----------------------------------------------------------------------------

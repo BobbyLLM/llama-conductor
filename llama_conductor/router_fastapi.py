@@ -1,4 +1,4 @@
-"""FastAPI orchestration layer for llama-conductor.
+﻿"""FastAPI orchestration layer for llama-conductor.
 
 Responsibilities:
 - expose API routes
@@ -53,8 +53,6 @@ from .interaction_profile import (
     update_profile_from_user_turn,
 )
 from .privacy_utils import safe_preview, short_hash
-from .upstream_watchdog import start_watchdog, stop_watchdog
-
 # Required modules
 from .vodka_filter import Filter as VodkaFilter, purge_session_memory_jsonl, purge_vodka_ctx_facts
 from .serious import run_serious
@@ -2206,7 +2204,7 @@ async def _chat_exception_guard(request: Request, call_next):
 
 
 @app.on_event("startup")
-async def _startup_watchdog() -> None:
+async def _startup_runtime() -> None:
     try:
         base = str(cfg_get("vodka.storage_dir", "") or "").strip()
         subdir = str(cfg_get("vodka.subdir", "vodka") or "vodka").strip()
@@ -2229,19 +2227,9 @@ async def _startup_watchdog() -> None:
             _dbg(f"[DEBUG] startup session-kb janitor stats={stats}")
     except Exception:
         pass
-    try:
-        start_watchdog()
-    except Exception:
-        pass
-
-
 @app.on_event("shutdown")
-async def _shutdown_watchdog() -> None:
-    try:
-        stop_watchdog()
-    except Exception:
-        pass
-
+async def _shutdown_runtime() -> None:
+    return None
 
 @app.get("/healthz")
 def healthz():
@@ -2312,16 +2300,14 @@ def _stage_openwebui_title_bypass(*, user_text_raw: str) -> Optional[str]:
 
     def _openwebui_title_for(t: str) -> str:
         t_l = t.lower()
-        if "cliniko" in t_l:
-            return "Cliniko Pipeline"
         if "router" in t_l or "fastapi" in t_l:
             return "Router Debugging"
         return "Chat Summary"
 
     if not _is_openwebui_title_task(user_text_raw):
         return None
-    CLINIKO_DEBUG = cfg_get("cliniko.debug", True)
-    if CLINIKO_DEBUG:
+    title_debug = bool(cfg_get("router.debug", False))
+    if title_debug:
         _dbg("[DEBUG] openwebui title task bypass")
     return json.dumps({"title": _openwebui_title_for(user_text_raw)}, ensure_ascii=False)
 
@@ -4177,3 +4163,4 @@ if __name__ == "__main__":
     host = str(cfg_get("server.host", "0.0.0.0"))
     port = int(cfg_get("server.port", 9000))
     uvicorn.run("router_fastapi:app", host=host, port=port, reload=False)
+

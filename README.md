@@ -406,7 +406,35 @@ docker start qdrant >/dev/null 2>&1 || docker run --name qdrant -p 6333:6333 -d 
 
 Need more launch variants? See [FAQ: Launch Script: The Easy Way](FAQ.md#launch-script-the-easy-way).
 
-### [Step 3A] Docker Compose (single-host)
+### [Step 3A] First-time launcher setup (recommended)
+
+The repo ships a stdlib-only stack supervisor at `tools/start_stack.py`. On first run, it writes a one-time local config for your machine paths.
+
+```bash
+python tools/start_stack.py --setup
+```
+
+Verify it resolved correctly before launching anything:
+
+```bash
+python tools/start_stack.py --doctor
+```
+
+Then launch as normal:
+
+```bash
+python tools/start_stack.py
+```
+
+Windows users: `START-ALL.bat` in the repo root calls this for you. Desktop shortcut optional.
+
+- `stack.local.yaml` is your machine config - gitignored, never touches the repo.
+- Leave overrides blank during `--setup` to inherit paths from `router_config.yaml`.
+- Qdrant is optional. If absent or disabled, core stack still launches - you just lose `##mentats`/Vault paths.
+
+---
+
+### [Step 3B] Docker Compose (single-host)
 
 If you prefer Docker Compose, this repo ships a ready baseline:
 

@@ -4,6 +4,15 @@
 
 Roadmap breadcrumb entries (incremental, may land across multiple commits) en route to 1.9.2 release.
 
+- Launcher reliability (tools/start_stack.py):
+  - Qdrant launch now configurable via qdrant.launch_mode in stack.local.yaml
+    (direct or cmd_start_min); resolved mode visible in --doctor output.
+  - Qdrant health probe adds root URL fallback to reduce false startup timeouts.
+  - stack.local.yaml generator comments clarified: notes.* is auto-populated
+    snapshot data; paths/qdrant/metrics are user-editable local overrides.
+  - ready_timeout_s set to 25 for practical cold-start headroom on old target hardware.
+  - START-ALL.bat is now a thin shim to tools/start_stack.py.
+
 - `who_is_current` + winner safety hardening:
   - Added current-holder guard wiring and entity-consistency gate for Track B web hits, so nonsense entities no longer inherit real-world officeholders.
   - Tightened winner-name confabulation controls (`who_won`), including under-specified query fail-loud behavior and duplicate `See:` cleanup.

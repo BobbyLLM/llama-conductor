@@ -1357,6 +1357,13 @@ upstream_headers:
 - Verify `roles.*` model IDs match what `/v1/models` actually returns
 - Check provider logs for model-load failures or OOM
 
+#### Launch fails immediately with a config error?
+- Run `python tools/start_stack.py --setup` if you haven't already.
+- Run `python tools/start_stack.py --doctor` to confirm paths resolved
+  correctly before anything spawns.
+- `stack.local.yaml` missing or incomplete = launcher refuses to start.
+   Run `python tools/start_stack.py --setup`.
+
 ---
 
 ### Config knobs (router_config.yaml) with examples
