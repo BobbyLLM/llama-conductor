@@ -426,9 +426,8 @@ Then launch as normal:
 python tools/start_stack.py
 ```
 
-Windows users: `START-ALL.bat` in the repo root calls this for you. Desktop shortcut optional.
+Windows users: `START-ALL.bat` in the repo root calls this for you. Mac and Linux: `start-all.sh`
 
-- `stack.local.yaml` is your machine config - gitignored, never touches the repo.
 - Leave overrides blank during `--setup` to inherit paths from `router_config.yaml`.
 - Qdrant is optional. If absent or disabled, core stack still launches - you just lose `##mentats`/Vault paths.
 
