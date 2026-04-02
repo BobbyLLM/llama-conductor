@@ -814,6 +814,14 @@ web_search:
 
 These get the same relevance scoring boost as built-in domains. Ships empty. Built-in defaults stay active regardless.
 
+**Showtimes lookup (first schema use case):**
+
+Showtimes is the first retrieval-intent contract schema in production. In plain English: it is a hard rule set for what may be emitted, so the model cannot improvise session rows.
+
+- You can define trusted domains for better local hits via `router_config.yaml`.
+- Session titles are sourced via the configured search provider (for example Tavily), then validated against allowed cinema domains (for example `muvitimes.com`) before emission.
+- If venue verification fails, the system falls through safely: it refuses to emit titles for that venue and returns a fail-loud message (with chain homepage fallback when available) instead of guessing.
+
 **Footer provenance:**
 - `Source: Web` -> real web evidence passed the relevance gate.
 - `See: <url>` -> the actual source URL, injected deterministically from retrieval metadata. Never model-generated.

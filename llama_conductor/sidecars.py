@@ -7,9 +7,11 @@ Includes helpers for:
 """
 
 from __future__ import annotations
+import json
 import re
 import html as ihtml
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 import math
 import requests
@@ -789,6 +791,7 @@ _WEB_TRUST_DOMAINS = {
 }
 _WEB_RELEVANCE_THRESHOLD = 3.0
 _WEB_USER_TRUST_DOMAINS_MAX = 100
+_WEB_CONTRACTS_PATH = Path(__file__).resolve().parent / "schema" / "web_contracts.jsonl"
 
 
 def _web_cfg(path: str, default):
@@ -813,6 +816,44 @@ def _web_cfg_list(path: str) -> list[str]:
                 out.append(s)
         return out
     return []
+
+
+def _web_cfg_intent_domain_list(intent_id: str, bucket: str) -> list[str]:
+    p = f"web_search.intent_domains.{str(intent_id or '').strip().lower()}.{str(bucket or '').strip().lower()}"
+    return _normalize_domain_list(_web_cfg_list(p))
+
+
+def _web_cfg_showtimes_venue_url_path(query: str) -> tuple[str, str]:
+    """
+    Return (domain, relative_path) for deterministic showtimes URL resolution.
+    Empty strings when no mapping matches.
+    """
+    qn = _web_norm_text(query)
+    if not qn:
+        return "", ""
+    try:
+        table = _web_cfg("web_search.intent_domains.showtimes.venue_urls", {}) or {}
+        if not isinstance(table, dict):
+            return "", ""
+        for dom, mapping in table.items():
+            d = str(dom or "").strip().lower()
+            if d.startswith("www."):
+                d = d[4:]
+            if not d:
+                continue
+            if not isinstance(mapping, dict):
+                continue
+            for k, rel in mapping.items():
+                key = _web_norm_text(str(k or ""))
+                rv = str(rel or "").strip().lstrip("/")
+                if not key or not rv:
+                    continue
+                toks = [t for t in key.split() if t]
+                if toks and all(t in qn for t in toks):
+                    return d, rv
+    except Exception:
+        return "", ""
+    return "", ""
 
 
 def _normalize_domain_list(values: list[str], *, max_items: int | None = None) -> list[str]:
@@ -1048,6 +1089,490 @@ def _relevance_passes(score: float) -> bool:
     return float(score) >= float(_WEB_RELEVANCE_THRESHOLD)
 
 
+def _load_web_contracts() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    try:
+        if not _WEB_CONTRACTS_PATH.exists():
+            return out
+        for ln in _WEB_CONTRACTS_PATH.read_text(encoding="utf-8").splitlines():
+            s = str(ln or "").lstrip("\ufeff").strip()
+            if not s or s.startswith("#"):
+                continue
+            try:
+                obj = json.loads(s)
+            except Exception:
+                continue
+            if isinstance(obj, dict) and str(obj.get("id", "")).strip():
+                if bool(obj.get("enabled", True)):
+                    out.append(obj)
+        return out
+    except Exception:
+        return []
+
+
+def _web_contract_for_query(query: str) -> Optional[dict[str, Any]]:
+    q_raw = str(query or "").strip().lower()
+    q_norm = _web_norm_text(query)
+    if not q_raw and not q_norm:
+        return None
+    for c in _load_web_contracts():
+        sig = c.get("query_signals", {}) if isinstance(c.get("query_signals", {}), dict) else {}
+        kws = [str(k or "").strip().lower() for k in list(sig.get("keywords", []) or [])]
+        if kws and any(_web_norm_text(k) and _web_norm_text(k) in q_norm for k in kws):
+            return c
+        regs = [str(r or "").strip() for r in list(sig.get("regex", []) or [])]
+        for pat in regs:
+            try:
+                if pat and (re.search(pat, q_raw, flags=re.IGNORECASE) or re.search(pat, q_norm, flags=re.IGNORECASE)):
+                    return c
+            except Exception:
+                continue
+    return None
+
+
+def _normalize_title_gate(text: str) -> str:
+    t = str(text or "")
+    t = re.sub(r"\((?:19|20)\d{2}\)", " ", t)
+    t = re.sub(r"\b(G|PG|M|MA15\+|R18\+|NR)\b", " ", t, flags=re.IGNORECASE)
+    t = re.sub(r"[^A-Za-z0-9\s]+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip().lower()
+    return t
+
+
+def _showtimes_blocklist(contract: dict[str, Any]) -> list[str]:
+    vals = []
+    for x in list(contract.get("extraction_blocklist", []) or []):
+        n = _normalize_title_gate(str(x or ""))
+        if n:
+            vals.append(n)
+    out: list[str] = []
+    seen: set[str] = set()
+    for v in vals:
+        if v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
+    return out
+
+
+def _showtimes_domain_selector(contract: dict[str, Any], url: str) -> dict[str, Any]:
+    host = _web_domain(url)
+    if not host:
+        return {}
+    ds = contract.get("domain_selectors", {}) if isinstance(contract.get("domain_selectors", {}), dict) else {}
+    for dom, cfg in ds.items():
+        d = str(dom or "").strip().lower()
+        if d.startswith("www."):
+            d = d[4:]
+        if not d:
+            continue
+        if host == d or host.endswith("." + d):
+            return cfg if isinstance(cfg, dict) else {}
+    return {}
+
+
+def _extract_showtimes_titles(hits: list[WebSearchHit], *, max_items: int = 8) -> list[str]:
+    deny = {
+        "reading", "cinema", "cinemas", "movie", "movies", "showtime", "showtimes",
+        "session", "sessions", "ticket", "tickets", "book", "booking", "armadale",
+        "western", "australia", "wa",
+    }
+    out: list[str] = []
+    seen: set[str] = set()
+    for h in hits:
+        raw = str(h.title or "").strip()
+        if not raw:
+            continue
+        # Prefer local left-side title chunks over site suffixes.
+        chunks = re.split(r"\s+[|\u2022:-]\s+|\s+-\s+", raw)
+        for c in chunks:
+            cand = re.sub(r"\s+", " ", str(c or "").strip(" -|:\u2022")).strip()
+            if not cand:
+                continue
+            tokens = re.findall(r"[A-Za-z0-9']+", cand)
+            if len(tokens) < 1 or len(tokens) > 8:
+                continue
+            low_tokens = {t.lower() for t in tokens}
+            if low_tokens & deny:
+                continue
+            if not any(ch.isalpha() for ch in cand):
+                continue
+            if not any(t[:1].isupper() or t.isupper() for t in tokens):
+                continue
+            norm = _normalize_title_gate(cand)
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            out.append(cand)
+            if len(out) >= max_items:
+                return out
+    return out
+
+
+def _showtimes_allowed_domains() -> list[str]:
+    preferred = _web_cfg_intent_domain_list("showtimes", "preferred")
+    permitted = _web_cfg_intent_domain_list("showtimes", "permitted")
+    return _normalize_domain_list([*preferred, *permitted])
+
+
+def _url_in_domains(url: str, domains: list[str]) -> bool:
+    host = _web_domain(url)
+    if not host:
+        return False
+    for d in domains:
+        if host == d or host.endswith("." + d):
+            return True
+    return False
+
+
+def _fetch_showtimes_page_text(url: str, *, timeout_sec: float = 8.0, max_chars: int = 400000) -> str:
+    try:
+        resp = requests.get(
+            str(url or "").strip(),
+            timeout=timeout_sec,
+            headers={"User-Agent": "llama-conductor/1.9.2 (+showtimes fetch)"},
+        )
+        resp.raise_for_status()
+        raw = str(resp.text or "")
+        if len(raw) > max_chars:
+            raw = raw[:max_chars]
+        return raw
+    except Exception:
+        return ""
+
+
+def _extract_showtimes_titles_from_page_text(
+    html_text: str,
+    *,
+    max_items: int = 8,
+    blocklist: list[str] | None = None,
+    title_elements: list[str] | None = None,
+    strip_markdown_links: bool = False,
+) -> list[str]:
+    deny = {
+        "reading", "cinema", "cinemas", "movie", "movies", "showtime", "showtimes",
+        "session", "sessions", "ticket", "tickets", "book", "booking", "armadale",
+        "western", "australia", "wa", "adelaide", "perth", "belmont", "west", "lakes",
+        "times", "prices", "online",
+    }
+    out: list[str] = []
+    seen: set[str] = set()
+    if not html_text:
+        return out
+
+    # pull text-bearing chunks from selected structural elements
+    chunks: list[str] = []
+    pats = []
+    elems = [str(x or "").strip().lower() for x in (title_elements or []) if str(x or "").strip()]
+    if elems:
+        for e in elems:
+            if re.fullmatch(r"h[1-6]|a|li|span|div", e):
+                pats.append(rf"<{e}[^>]*>(.*?)</{e}>")
+    else:
+        pats = [
+            r"<h[1-4][^>]*>(.*?)</h[1-4]>",
+            r"<a[^>]*>(.*?)</a>",
+            r"<li[^>]*>(.*?)</li>",
+        ]
+    pats.append(r"og:title\" content=\"([^\"]+)\"")
+    for pat in pats:
+        for m in re.findall(pat, html_text, flags=re.I | re.S):
+            t = re.sub(r"<[^>]+>", " ", ihtml.unescape(str(m or "")))
+            if strip_markdown_links:
+                # [Title](url) -> Title
+                t = re.sub(r"\[([^\]]+)\]\((?:[^)]+)\)", r"\1", t)
+            t = re.sub(r"\s+", " ", t).strip()
+            if t:
+                chunks.append(t)
+
+    for cand in chunks:
+        # reject day/date navigation labels
+        if re.search(r"\b(?:mon|tue|wed|thu|fri|sat|sun)\b", cand, flags=re.IGNORECASE):
+            if re.search(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b", cand, flags=re.IGNORECASE):
+                continue
+        if re.search(r"\b(?:\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|[A-Za-z]{3}\s+\d{1,2},?\s+\d{4})\b", cand):
+            continue
+        if re.search(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b", cand, flags=re.IGNORECASE) and re.search(r"\b\d{4}\b", cand):
+            continue
+        toks = re.findall(r"[A-Za-z0-9']+", cand)
+        if len(toks) < 1 or len(toks) > 8:
+            continue
+        low_toks = {t.lower() for t in toks}
+        if low_toks & deny:
+            continue
+        if not any(ch.isalpha() for ch in cand):
+            continue
+        if not any(t[:1].isupper() or t.isupper() for t in toks):
+            continue
+        norm = _normalize_title_gate(cand)
+        if not norm or norm in seen:
+            continue
+        if blocklist and any(b and b in norm for b in blocklist):
+            continue
+        seen.add(norm)
+        out.append(cand)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _showtimes_norm_text(s: str) -> str:
+    t = ihtml.unescape(str(s or ""))
+    t = t.lower()
+    t = re.sub(r"[^a-z0-9\s]+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _extract_showtimes_venue_identity(html_text: str) -> str:
+    if not html_text:
+        return ""
+    pats = [
+        r"<h1[^>]*>(.*?)</h1>",
+        r"<title[^>]*>(.*?)</title>",
+        r"<h2[^>]*>(.*?)</h2>",
+    ]
+    for pat in pats:
+        ms = re.findall(pat, html_text, flags=re.I | re.S)
+        for m in ms:
+            t = re.sub(r"<[^>]+>", " ", ihtml.unescape(str(m or "")))
+            t = re.sub(r"\s+", " ", t).strip()
+            if t:
+                return t
+    return ""
+
+
+def _showtimes_query_chain_suburb(query: str) -> tuple[str, str]:
+    q = str(query or "")
+    qn = _showtimes_norm_text(q)
+    chain = ""
+    suburb = ""
+    m_chain = re.search(r"\b(reading|event|hoyts|palace|luna|village)\b(?:\s+cinemas?)?", qn, flags=re.I)
+    if m_chain:
+        c = str(m_chain.group(1) or "").strip().lower()
+        chain = (c.title() + " Cinemas") if c else ""
+    if not chain:
+        m_generic = re.search(r"\b([a-z][a-z0-9'-]{2,30})\s+cinemas?\b", qn, flags=re.I)
+        if m_generic:
+            gg = re.sub(r"\s+", " ", str(m_generic.group(1) or "").strip()).strip()
+            if gg:
+                chain = f"{gg.title()} Cinemas"
+
+    m_sub = re.search(r"\bin\s+([a-z][a-z\s'-]{1,50})", qn, flags=re.I)
+    raw_sub = str(m_sub.group(1) if m_sub else "").strip()
+    if raw_sub:
+        raw_sub = re.sub(r"\b(on|for|at)\b.*$", "", raw_sub, flags=re.I).strip()
+        raw_sub = re.sub(
+            r"\b(western australia|new south wales|south australia|queensland|tasmania|victoria|australia|wa|nsw|sa|qld|tas|vic)\b",
+            " ",
+            raw_sub,
+            flags=re.I,
+        )
+        raw_sub = re.sub(r"\s+", " ", raw_sub).strip(" ,.-")
+        if raw_sub:
+            suburb = raw_sub.title()
+
+    if (not suburb) and qn:
+        stop = {
+            "what", "whats", "what s", "playing", "at", "in", "on", "for", "the", "a", "an",
+            "cinema", "cinemas", "movie", "movies", "showtimes", "session", "sessions",
+            "reading", "event", "hoyts", "palace", "luna",
+            "western", "australia", "new", "south", "wales", "queensland", "tasmania", "victoria",
+            "wa", "nsw", "sa", "qld", "tas", "vic",
+        }
+        toks = [t for t in re.findall(r"[a-z]{3,}", qn) if t not in stop]
+        if toks:
+            suburb = toks[0].title()
+    return chain, suburb
+
+
+def _showtimes_query_tokens(query: str) -> tuple[list[str], list[str]]:
+    qn = _showtimes_norm_text(query)
+    chain_tokens: list[str] = []
+    for c in ("reading", "event", "hoyts", "palace", "luna", "village"):
+        if re.search(rf"\b{c}\b", qn):
+            chain_tokens.append(c)
+    stop = {
+        "what", "whats", "what s", "playing", "at", "in", "on", "for", "the", "a", "an",
+        "cinema", "cinemas", "movie", "movies", "showtimes", "session", "sessions",
+        "reading", "event", "hoyts", "palace", "luna",
+        "western", "australia", "new", "south", "wales", "queensland", "tasmania", "victoria",
+        "wa", "nsw", "sa", "qld", "tas", "vic",
+        "april", "may", "june", "july", "august", "september", "october", "november", "december",
+        "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    }
+    geo_tokens = [t for t in re.findall(r"[a-z]{3,}", qn) if t not in stop]
+    # keep unique order
+    g_seen: set[str] = set()
+    g_out: list[str] = []
+    for t in geo_tokens:
+        if t in g_seen:
+            continue
+        g_seen.add(t)
+        g_out.append(t)
+    return chain_tokens, g_out
+
+
+def _showtimes_venue_verified(query: str, page_text: str) -> bool:
+    ident = _extract_showtimes_venue_identity(page_text)
+    if not ident:
+        return False
+    ident_n = _showtimes_norm_text(ident)
+    chain_toks, geo_toks = _showtimes_query_tokens(query)
+    chain_ok = True if (not chain_toks) else any(re.search(rf"\b{re.escape(t)}\b", ident_n) for t in chain_toks)
+    geo_ok = True if (not geo_toks) else any(re.search(rf"\b{re.escape(t)}\b", ident_n) for t in geo_toks)
+    return bool(chain_ok and geo_ok)
+
+
+def _showtimes_chain_homepage(chain_label: str) -> str:
+    try:
+        table = _web_cfg("web_search.intent_domains.showtimes.chain_homepages", {}) or {}
+    except Exception:
+        table = {}
+    if not isinstance(table, dict):
+        return ""
+    key = re.sub(r"\s+", " ", str(chain_label or "").strip().lower())
+    if not key:
+        return ""
+    # Try exact key first.
+    url = str(table.get(key, "") or "").strip()
+    if url:
+        return url
+    # Fallback: drop trailing "cinema/cinemas" and retry.
+    key2 = re.sub(r"\s+cinemas?$", "", key).strip()
+    if key2:
+        for k, v in table.items():
+            kk = re.sub(r"\s+", " ", str(k or "").strip().lower())
+            vv = str(v or "").strip()
+            if not kk or not vv:
+                continue
+            kk2 = re.sub(r"\s+cinemas?$", "", kk).strip()
+            if key2 == kk2:
+                return vv
+    return ""
+
+
+def _render_web_contract(query: str, hits: list[WebSearchHit], *, include_prefix: bool = True) -> Optional[str]:
+    contract = _web_contract_for_query(query)
+    if not contract:
+        return None
+    cid = str(contract.get("id", "")).strip().lower()
+    if cid != "showtimes":
+        return None
+    if not hits:
+        return None
+    tmpl = contract.get("emission_template", {}) if isinstance(contract.get("emission_template", {}), dict) else {}
+    prefix = str(tmpl.get("prefix", "Films currently showing:")).strip()
+    fallback = str(tmpl.get("fallback", "Could not verify titles from retrieved source.")).strip()
+    url_line = str(tmpl.get("url_line", "For full show-times, see: {url}")).strip()
+    max_items = int(contract.get("max_items", 8) or 8)
+    if max_items < 1:
+        max_items = 1
+    if max_items > 12:
+        max_items = 12
+    blocklist = _showtimes_blocklist(contract)
+    selector = _showtimes_domain_selector(contract, str(hits[0].url or "").strip())
+    top_url = str(hits[0].url or "").strip()
+    titles: list[str] = []
+    allowed_domains = _showtimes_allowed_domains()
+    chain_label, suburb_label = _showtimes_query_chain_suburb(query)
+    if top_url and allowed_domains and (not _url_in_domains(top_url, allowed_domains)):
+        lead = "[web] " if include_prefix else ""
+        if chain_label and suburb_label:
+            mismatch = f"Could not verify {chain_label} in {suburb_label} from retrieved source."
+        elif chain_label:
+            mismatch = f"Could not verify {chain_label} from retrieved source."
+        else:
+            mismatch = "Could not verify venue/location from retrieved source."
+        home = _showtimes_chain_homepage(chain_label)
+        if home:
+            return (
+                f"{lead}{mismatch}\n"
+                f"{url_line.format(url=home)}"
+            ).strip()
+        return f"{lead}{mismatch}".strip()
+    if top_url and allowed_domains and _url_in_domains(top_url, allowed_domains):
+        page = _fetch_showtimes_page_text(top_url)
+        if not page:
+            lead = "[web] " if include_prefix else ""
+            return (
+                f"{lead}{fallback}\n"
+                f"{url_line.format(url=top_url)}"
+            ).strip()
+        if not _showtimes_venue_verified(query, page):
+            lead = "[web] " if include_prefix else ""
+            if chain_label and suburb_label:
+                mismatch = f"Could not verify {chain_label} in {suburb_label} from retrieved source."
+            elif chain_label:
+                mismatch = f"Could not verify {chain_label} from retrieved source."
+            else:
+                mismatch = "Could not verify venue/location from retrieved source."
+            home = _showtimes_chain_homepage(chain_label)
+            if home:
+                return (
+                    f"{lead}{mismatch}\n"
+                    f"{url_line.format(url=home)}"
+                ).strip()
+            return f"{lead}{mismatch}".strip()
+        elems_raw = selector.get("title_elements", [])
+        if isinstance(elems_raw, str):
+            elems = [x.strip() for x in elems_raw.split(",") if str(x).strip()]
+        elif isinstance(elems_raw, list):
+            elems = [str(x or "").strip() for x in elems_raw if str(x or "").strip()]
+        else:
+            elems = []
+        strip_links = bool(selector.get("strip_markdown_links", False))
+        titles = _extract_showtimes_titles_from_page_text(
+            page,
+            max_items=max_items,
+            blocklist=blocklist,
+            title_elements=elems,
+            strip_markdown_links=strip_links,
+        )
+    if titles:
+        lead = "[web] " if include_prefix else ""
+        return (
+            f"{lead}{prefix} {', '.join(titles)}.\n"
+            f"{url_line.format(url=top_url)}"
+        ).strip()
+    lead = "[web] " if include_prefix else ""
+    return (
+        f"{lead}{fallback}\n"
+        f"{url_line.format(url=top_url)}"
+    ).strip()
+
+
+def render_showtimes_from_evidence(query: str, evidence: Dict[str, Any], *, include_prefix: bool = False) -> str:
+    rows = evidence.get("rows", None)
+    hits: list[WebSearchHit] = []
+    if isinstance(rows, list):
+        for i, r in enumerate(rows, start=1):
+            if not isinstance(r, dict):
+                continue
+            t = str(r.get("title", "") or "").strip()
+            u = str(r.get("url", "") or "").strip()
+            s = str(r.get("snippet", "") or "").strip()
+            if not u:
+                continue
+            hits.append(
+                WebSearchHit(
+                    title=t or u,
+                    url=u,
+                    snippet=s,
+                    timestamp="",
+                    source="web",
+                    rank=i,
+                    score=float(r.get("score", 0.0) or 0.0),
+                )
+            )
+    if not hits:
+        u = str(evidence.get("url", "") or "").strip()
+        if u:
+            hits = [WebSearchHit(title=str(evidence.get("title", "") or u), url=u, snippet=str(evidence.get("snippet", "") or ""), timestamp="", source="web", rank=1, score=float(evidence.get("score", 0.0) or 0.0))]
+    rendered = _render_web_contract(query, hits, include_prefix=include_prefix)
+    return str(rendered or "").strip()
+
+
 def _web_search_ddg_lite(
     query: str,
     *,
@@ -1232,8 +1757,8 @@ def _run_web_search(query: str) -> tuple[list[WebSearchHit], str, str]:
     max_results = max(1, int(_web_cfg("web_search.max_results", 5)))
     timeout_sec = float(_web_cfg("web_search.timeout_sec", 8))
     safe_search = bool(_web_cfg("web_search.safe_search", True))
-    include_domains = _web_cfg_list("web_search.include_domains")
-    exclude_domains = _web_cfg_list("web_search.exclude_domains")
+    include_domains = _normalize_domain_list(_web_cfg_list("web_search.include_domains"))
+    exclude_domains = _normalize_domain_list(_web_cfg_list("web_search.exclude_domains"))
     recency_days = int(_web_cfg("web_search.recency_days", 0))
 
     if provider == "ddg_lite":
@@ -1280,6 +1805,126 @@ def _run_web_search(query: str) -> tuple[list[WebSearchHit], str, str]:
     return _sorted_hits(_dedupe_hits(hits, max_results=max_results)), provider, ""
 
 
+def _web_intent_id(query: str) -> str:
+    q = str(query or "").strip().lower()
+    if not q:
+        return ""
+    if re.search(r"\b(showtimes?|session\s*times?|what'?s\s+playing|whats\s+playing|currently\s+showing)\b", q):
+        return "showtimes"
+    if re.search(r"\b(cinema|cinemas|movie|movies)\b", q) and re.search(r"\b(playing|showing|sessions?)\b", q):
+        return "showtimes"
+    return ""
+
+
+def _run_web_search_intent_routed(query: str) -> tuple[list[WebSearchHit], str, str]:
+    q = re.sub(r"\s+", " ", str(query or "").strip())
+    if not q:
+        return [], "", "no query provided"
+    intent_id = _web_intent_id(q)
+    if not intent_id:
+        return _run_web_search(q)
+
+    provider = str(_web_cfg("web_search.provider", "ddg_lite") or "ddg_lite").strip().lower()
+    max_results = max(1, int(_web_cfg("web_search.max_results", 5)))
+    timeout_sec = float(_web_cfg("web_search.timeout_sec", 8))
+    safe_search = bool(_web_cfg("web_search.safe_search", True))
+    recency_days = int(_web_cfg("web_search.recency_days", 0))
+    global_include = _normalize_domain_list(_web_cfg_list("web_search.include_domains"))
+    global_exclude = _normalize_domain_list(_web_cfg_list("web_search.exclude_domains"))
+    preferred = _web_cfg_intent_domain_list(intent_id, "preferred")
+    permitted = _web_cfg_intent_domain_list(intent_id, "permitted")
+    blocked = _web_cfg_intent_domain_list(intent_id, "blocked")
+    merged_exclude = _normalize_domain_list([*global_exclude, *blocked])
+    shaped_q = q
+    if intent_id == "showtimes":
+        try:
+            vp = _web_cfg("web_search.intent_domains.showtimes.venue_postcodes", {}) or {}
+            if isinstance(vp, dict):
+                qn = _web_norm_text(q)
+                if not re.search(r"\b\d{4}\b", qn):
+                    for k, v in vp.items():
+                        key = _web_norm_text(str(k or ""))
+                        pc = re.sub(r"[^0-9]", "", str(v or ""))
+                        if not key or not pc:
+                            continue
+                        toks = [t for t in key.split() if t]
+                        if toks and all(t in qn for t in toks):
+                            shaped_q = f"{q} {pc}"
+                            break
+        except Exception:
+            shaped_q = q
+
+    # Option B: deterministic venue URL construction for known showtimes venues.
+    if intent_id == "showtimes":
+        d, rel = _web_cfg_showtimes_venue_url_path(q)
+        if d and rel:
+            if not any(d == x or d.endswith("." + x) for x in merged_exclude):
+                full_url = f"https://{d}/{rel}"
+                hit = _normalize_hit(
+                    title=full_url,
+                    url=full_url,
+                    snippet="deterministic venue URL mapping",
+                    timestamp="",
+                    source="deterministic_map",
+                    rank=1,
+                    include_domains=[d],
+                    exclude_domains=merged_exclude,
+                )
+                if hit is not None:
+                    return [hit], "deterministic_map", ""
+
+    def _provider_search(include_domains: list[str], exclude_domains: list[str]) -> tuple[list[WebSearchHit], str]:
+        if provider == "ddg_lite":
+            return _web_search_ddg_lite(
+                shaped_q, timeout_sec=timeout_sec, max_results=max_results,
+                include_domains=include_domains, exclude_domains=exclude_domains
+            )
+        if provider == "tavily":
+            return _web_search_tavily(
+                shaped_q, timeout_sec=timeout_sec, max_results=max_results,
+                include_domains=include_domains, exclude_domains=exclude_domains, recency_days=recency_days
+            )
+        if provider in {"searxng", "custom"}:
+            base_url = str(_web_cfg(f"web_search.{provider}.base_url", "") or "").strip()
+            if not base_url:
+                base_url = str(_web_cfg("web_search.base_url", "") or "").strip()
+            return _web_search_json_provider(
+                provider=provider, base_url=base_url, query=shaped_q, timeout_sec=timeout_sec, max_results=max_results,
+                include_domains=include_domains, exclude_domains=exclude_domains,
+                safe_search=safe_search, recency_days=recency_days,
+            )
+        return [], f"unsupported provider: {provider}"
+
+    stages: list[list[str]] = []
+    if preferred:
+        stages.append(_normalize_domain_list(preferred))
+    if permitted:
+        stages.append(_normalize_domain_list(permitted))
+
+    if not stages:
+        return _run_web_search(q)
+
+    last_err = ""
+    fallback_hits: list[WebSearchHit] = []
+    for inc in stages:
+        hits, parse_err = _provider_search(inc, merged_exclude)
+        if parse_err:
+            last_err = f"error ({provider}): {parse_err}"
+            continue
+        hits = _sorted_hits(_dedupe_hits(hits, max_results=max_results))
+        rel = _relevant_hits(q, hits)
+        if rel:
+            return hits, provider, ""
+        if hits and (not fallback_hits):
+            fallback_hits = hits
+
+    if fallback_hits:
+        return fallback_hits, provider, ""
+    if last_err:
+        return [], provider, last_err
+    return [], provider, "no relevant results"
+
+
 def _relevant_hits(query: str, hits: list[WebSearchHit]) -> list[WebSearchHit]:
     scored: list[WebSearchHit] = []
     for h in hits:
@@ -1295,7 +1940,7 @@ def resolve_web_evidence(query: str) -> Tuple[bool, Dict[str, Any], str]:
     if not q:
         return False, {}, "no query provided"
     try:
-        hits, provider, err = _run_web_search(q)
+        hits, provider, err = _run_web_search_intent_routed(q)
         if err:
             return False, {}, err
         filtered = _relevant_hits(q, hits)
@@ -1349,12 +1994,29 @@ def handle_web_query(query: str) -> str:
     if not q:
         return "[web] No query provided"
     try:
-        hits, provider, err = _run_web_search(q)
+        intent_id = _web_intent_id(q)
+        hits, provider, err = _run_web_search_intent_routed(q)
         if err:
             return f"[web] {err}"
+        # Showtimes parity lane: use contract rendering directly on routed hits.
+        # This keeps >>web behavior aligned with NLP path fail-loud venue verification.
+        if intent_id == "showtimes":
+            if hits:
+                contracted = _render_web_contract(q, hits, include_prefix=True)
+                if contracted:
+                    return contracted
+            chain_label, suburb_label = _showtimes_query_chain_suburb(q)
+            if chain_label and suburb_label:
+                return f"[web] Could not verify {chain_label} in {suburb_label} from retrieved source."
+            if chain_label:
+                return f"[web] Could not verify {chain_label} from retrieved source."
+            return "[web] Could not verify venue/location from retrieved source."
         filtered = _relevant_hits(q, hits)
         if not filtered:
             return f"[web] no relevant results for: {q}"
+        contracted = _render_web_contract(q, filtered)
+        if contracted:
+            return contracted
         lines = [f"[web] {len(filtered)} relevant result(s) for: {q}"]
         for i, h in enumerate(filtered, start=1):
             lines.append(f"{i}. {h.title}")

@@ -4,6 +4,12 @@
 
 Roadmap breadcrumb entries (incremental, may land across multiple commits) en route to 1.9.2 release.
 
+- >>web` showtimes intent contract (first registered schema instance):
+   - NLP path auto-aliases to `>>web` on showtimes intent; both paths share one contract renderer with showtimes-only no-fallthrough guard.
+   - `web_contracts.jsonl`: title-only extraction gate, forbidden session fields, fail-loud fallback — `showtimes` is first registered instance of reusable dynamic enumerable schema.
+   - `router_config.yaml`: intent-domain routing (`preferred/permitted/blocked`), deterministic venue URL construction bypasses Tavily for known venues, domain-scoped `h2` section selector prevents nav/chrome entering candidate pool.
+   - Validated live 3/3 runs: stable clean title list, correct venue, both paths identical, zero fabricated fields.
+
 - Launcher reliability (tools/start_stack.py):
   - Qdrant launch now configurable via qdrant.launch_mode in stack.local.yaml
     (direct or cmd_start_min); resolved mode visible in --doctor output.

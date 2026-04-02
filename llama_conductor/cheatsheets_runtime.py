@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import html as ihtml
 import hashlib
 import json
 from pathlib import Path
@@ -79,6 +80,8 @@ _LOCAL_GEO_ENV_RE = re.compile(
     r"\b(immediate\s+environment|local\s+area|where\s+you\s+operate|your\s+surroundings)\b",
     re.IGNORECASE,
 )
+_WEB_CONTRACTS_PATH = Path(__file__).resolve().parent / "schema" / "web_contracts.jsonl"
+_SHOWTIMES_FALLBACK_ERROR = "[showtimes] web retrieval failed; no verified titles available."
 _TOPIC_LOOKUP_RE = re.compile(
     r"^\s*(?:what\s+do\s+you\s+know\s+about|tell\s+me\s+about|explain)\s+(.+?)\s*[?.!]*\s*$",
     re.IGNORECASE,
@@ -826,6 +829,9 @@ def _parse_web_payload(raw: Any) -> Tuple[bool, Dict[str, Any]]:
     if isinstance(raw, tuple) and len(raw) >= 2:
         ok = bool(raw[0])
         ev = raw[1] if isinstance(raw[1], dict) else {}
+        reason = ""
+        if len(raw) >= 3:
+            reason = str(raw[2] or "").strip()
         if ok and ev:
             rows = ev.get("rows", None)
             if isinstance(rows, list):
@@ -845,8 +851,16 @@ def _parse_web_payload(raw: Any) -> Tuple[bool, Dict[str, Any]]:
                 if norm_rows:
                     out = dict(ev)
                     out["rows"] = norm_rows
+                    if reason:
+                        out["_reason"] = reason
                     return True, out
+            if reason:
+                out = dict(ev)
+                out["_reason"] = reason
+                return True, out
             return True, ev
+        if reason:
+            return False, {"_reason": reason}
     return False, {}
 
 
@@ -1033,6 +1047,223 @@ def _web_evidence_entity_consistent(term: str, evidence: Dict[str, Any]) -> bool
         if any(tok in haystack for tok in term_tokens):
             return True
     return False
+
+
+def _load_web_contract_by_id(contract_id: str) -> Dict[str, Any]:
+    cid = str(contract_id or "").strip().lower()
+    if not cid:
+        return {}
+    try:
+        if not _WEB_CONTRACTS_PATH.exists():
+            return {}
+        for ln in _WEB_CONTRACTS_PATH.read_text(encoding="utf-8").splitlines():
+            s = str(ln or "").lstrip("\ufeff").strip()
+            if not s or s.startswith("#"):
+                continue
+            try:
+                obj = json.loads(s)
+            except Exception:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            if not bool(obj.get("enabled", True)):
+                continue
+            if str(obj.get("id", "")).strip().lower() == cid:
+                return obj
+    except Exception:
+        return {}
+    return {}
+
+
+def _is_showtimes_intent(user_text: str) -> bool:
+    q = str(user_text or "").strip().lower()
+    if not q:
+        return False
+    if re.search(r"\b(showtimes?|session\s*times?|what'?s\s+playing|whats\s+playing|currently\s+showing)\b", q):
+        return True
+    if re.search(r"\b(cinema|cinemas|movie|movies)\b", q) and re.search(r"\b(playing|showing|sessions?)\b", q):
+        return True
+    return False
+
+
+def _showtimes_norm_title(s: str) -> str:
+    t = str(s or "")
+    t = re.sub(r"\((?:19|20)\d{2}\)", " ", t)
+    t = re.sub(r"\b(G|PG|M|MA15\+|R18\+|NR)\b", " ", t, flags=re.IGNORECASE)
+    t = re.sub(r"[^A-Za-z0-9\s]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip().lower()
+
+
+def _showtimes_titles_from_evidence(evidence: Dict[str, Any], *, max_items: int) -> List[str]:
+    deny = {
+        "reading", "cinema", "cinemas", "movie", "movies", "showtime", "showtimes",
+        "session", "sessions", "ticket", "tickets", "book", "booking",
+        "western", "australia", "armadale",
+    }
+    out: List[str] = []
+    seen: set[str] = set()
+    for row in _web_evidence_rows(evidence):
+        raw = str(row.get("title", "") or "").strip()
+        if not raw:
+            continue
+        chunks = re.split(r"\s+[|\u2022:-]\s+|\s+-\s+", raw)
+        for c in chunks:
+            cand = re.sub(r"\s+", " ", str(c or "").strip(" -|:\u2022")).strip()
+            if not cand:
+                continue
+            toks = re.findall(r"[A-Za-z0-9']+", cand)
+            if len(toks) < 1 or len(toks) > 8:
+                continue
+            low_toks = {t.lower() for t in toks}
+            if low_toks & deny:
+                continue
+            if not any(ch.isalpha() for ch in cand):
+                continue
+            if not any(t[:1].isupper() or t.isupper() for t in toks):
+                continue
+            norm = _showtimes_norm_title(cand)
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            out.append(cand)
+            if len(out) >= max_items:
+                return out
+    return out
+
+
+def _showtimes_contract_render(user_text: str, evidence: Dict[str, Any]) -> str:
+    # Keep NLP and >>web lanes consistent by reusing sidecars showtimes renderer.
+    try:
+        from .sidecars import render_showtimes_from_evidence  # type: ignore
+        rendered = str(render_showtimes_from_evidence(user_text, evidence, include_prefix=False) or "").strip()
+        if rendered:
+            return rendered
+    except Exception:
+        pass
+    c = _load_web_contract_by_id("showtimes")
+    tmpl = c.get("emission_template", {}) if isinstance(c.get("emission_template", {}), dict) else {}
+    prefix = str(tmpl.get("prefix", "Films currently showing:")).strip()
+    fallback = str(tmpl.get("fallback", "Could not verify film titles from retrieved source.")).strip()
+    url_line = str(tmpl.get("url_line", "For session times and booking: {url}")).strip()
+    max_items = int(c.get("max_items", 8) or 8)
+    if max_items < 1:
+        max_items = 1
+    if max_items > 12:
+        max_items = 12
+    u = _best_supporting_web_url(user_text=user_text, evidence=evidence)
+    if not u:
+        rows = _web_evidence_rows(evidence)
+        u = str(rows[0].get("url", "") or "").strip() if rows else ""
+    titles: List[str] = []
+    if u and _showtimes_url_allowed(u):
+        page = _showtimes_fetch_page_text(u)
+        titles = _showtimes_titles_from_page_text(page, max_items=max_items)
+    if not titles:
+        titles = _showtimes_titles_from_evidence(evidence, max_items=max_items)
+    if titles:
+        msg = f"{prefix} {', '.join(titles)}."
+    else:
+        msg = fallback
+    if u:
+        msg = f"{msg}\n{url_line.format(url=u)}"
+    return msg.strip()
+
+
+def _showtimes_allowed_domains_cfg() -> List[str]:
+    try:
+        from .config import cfg_get  # lazy import
+        pref = cfg_get("web_search.intent_domains.showtimes.preferred", []) or []
+        perm = cfg_get("web_search.intent_domains.showtimes.permitted", []) or []
+        vals = []
+        for v in [*list(pref), *list(perm)]:
+            s = str(v or "").strip().lower()
+            if s.startswith("www."):
+                s = s[4:]
+            if s:
+                vals.append(s)
+        out: List[str] = []
+        seen = set()
+        for d in vals:
+            if d in seen:
+                continue
+            seen.add(d)
+            out.append(d)
+        return out
+    except Exception:
+        return []
+
+
+def _showtimes_url_allowed(url: str) -> bool:
+    try:
+        host = (requests.utils.urlparse(str(url or "").strip()).hostname or "").lower()
+    except Exception:
+        host = ""
+    if not host:
+        return False
+    for d in _showtimes_allowed_domains_cfg():
+        if host == d or host.endswith("." + d):
+            return True
+    return False
+
+
+def _showtimes_fetch_page_text(url: str, *, timeout_sec: float = 8.0, max_chars: int = 400000) -> str:
+    try:
+        r = requests.get(
+            str(url or "").strip(),
+            timeout=timeout_sec,
+            headers={"User-Agent": "llama-conductor/1.9.2 (+showtimes fetch)"},
+        )
+        r.raise_for_status()
+        t = str(r.text or "")
+        if len(t) > max_chars:
+            t = t[:max_chars]
+        return t
+    except Exception:
+        return ""
+
+
+def _showtimes_titles_from_page_text(html_text: str, *, max_items: int) -> List[str]:
+    deny = {
+        "reading", "cinema", "cinemas", "movie", "movies", "showtime", "showtimes",
+        "session", "sessions", "ticket", "tickets", "book", "booking",
+        "western", "australia", "armadale", "adelaide", "perth", "belmont",
+        "west", "lakes", "times", "prices", "online",
+    }
+    out: List[str] = []
+    seen = set()
+    if not html_text:
+        return out
+    chunks: List[str] = []
+    for pat in (
+        r"<h[1-4][^>]*>(.*?)</h[1-4]>",
+        r"<a[^>]*>(.*?)</a>",
+        r"<li[^>]*>(.*?)</li>",
+        r"og:title\" content=\"([^\"]+)\"",
+    ):
+        for m in re.findall(pat, html_text, flags=re.I | re.S):
+            t = re.sub(r"<[^>]+>", " ", ihtml.unescape(str(m or "")))
+            t = re.sub(r"\s+", " ", t).strip()
+            if t:
+                chunks.append(t)
+    for cand in chunks:
+        toks = re.findall(r"[A-Za-z0-9']+", cand)
+        if len(toks) < 1 or len(toks) > 8:
+            continue
+        low_toks = {t.lower() for t in toks}
+        if low_toks & deny:
+            continue
+        if not any(ch.isalpha() for ch in cand):
+            continue
+        if not any(t[:1].isupper() or t.isupper() for t in toks):
+            continue
+        norm = _showtimes_norm_title(cand)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        out.append(cand)
+        if len(out) >= max_items:
+            break
+    return out
 
 
 def _support_subject_norm(user_text: str) -> str:
@@ -2151,6 +2382,7 @@ def resolve_cheatsheets_turn(
 
     # Track B gate:
     # Retrieval trigger is intentionally broad and separate from safety intent enums.
+    showtimes_intent = _is_showtimes_intent(user_text)
     needs_web_initial = _needs_web_retrieval(user_text=user_text, q_framing=q_framing)
     needs_web = bool(needs_web_initial)
     explicit_fact_signal = _has_explicit_fact_signal(
@@ -2158,6 +2390,9 @@ def resolve_cheatsheets_turn(
         q_framing=q_framing,
         quote_source_intent=quote_source_intent,
     )
+    if showtimes_intent:
+        needs_web = True
+        explicit_fact_signal = True
     # Banter guard: casual/personal turns should not retrieve unless explicit fact intent exists.
     if macro_l in {"casual", "personal"} and (not explicit_fact_signal):
         needs_web = False
@@ -2218,12 +2453,26 @@ def resolve_cheatsheets_turn(
         elif raw:
             candidates = [raw]
     if not candidates:
+        if showtimes_intent:
+            return CheatsheetsTurnResult(
+                facts_block="",
+                constraints_block="",
+                deterministic_answer=_SHOWTIMES_FALLBACK_ERROR,
+                local_knowledge_line="",
+                track="B",
+                footer_source="Model",
+                footer_confidence="unverified",
+                kb_lookup_candidate=False,
+                matched_terms=tuple(),
+                wiki_term="",
+                source_url="",
+            )
         return CheatsheetsTurnResult("", "", "", "", "", "", "", False, tuple(), "")
     # Try wiki first (local retrieval), then web only when unresolved.
     ok = False
     title = ""
     summary = ""
-    if wiki_lookup_fn is not None:
+    if wiki_lookup_fn is not None and (not showtimes_intent):
         for term in candidates:
             ok, title, summary = _parse_wiki_payload(str(wiki_lookup_fn(term) or ""))
             if ok:
@@ -2240,10 +2489,25 @@ def resolve_cheatsheets_turn(
                 ok_web, evidence = _parse_web_payload(web_lookup_fn(term))
                 if not ok_web:
                     continue
-                if not _web_evidence_entity_consistent(term, evidence):
+                if (not showtimes_intent) and (not _web_evidence_entity_consistent(term, evidence)):
                     continue
                 wfacts = _build_web_facts(evidence)
                 wsource = "Mixed" if has_existing_facts else "Web"
+                if showtimes_intent:
+                    wdet = _showtimes_contract_render(user_text=user_text, evidence=evidence)
+                    return CheatsheetsTurnResult(
+                        facts_block=wfacts,
+                        constraints_block=_build_track_b_web_constraints(),
+                        deterministic_answer=wdet,
+                        local_knowledge_line="",
+                        track="B",
+                        footer_source=wsource,
+                        footer_confidence="medium",
+                        kb_lookup_candidate=False,
+                        matched_terms=tuple(),
+                        wiki_term="",
+                        source_url="",
+                    )
                 wdet = _build_web_slot_deterministic_answer(user_text=user_text, evidence=evidence)
                 return CheatsheetsTurnResult(
                     facts_block=wfacts,
@@ -2261,6 +2525,20 @@ def resolve_cheatsheets_turn(
                         if str(wdet or "").strip().lower().startswith("not available in retrieved web facts")
                         else _best_supporting_web_url(user_text=user_text, evidence=evidence)
                     ),
+                )
+            if showtimes_intent:
+                return CheatsheetsTurnResult(
+                    facts_block="",
+                    constraints_block="",
+                    deterministic_answer=_SHOWTIMES_FALLBACK_ERROR,
+                    local_knowledge_line="",
+                    track="B",
+                    footer_source="Model",
+                    footer_confidence="unverified",
+                    kb_lookup_candidate=False,
+                    matched_terms=tuple(),
+                    wiki_term="",
+                    source_url="",
                 )
         return CheatsheetsTurnResult(
             facts_block=facts,
@@ -2282,10 +2560,25 @@ def resolve_cheatsheets_turn(
             ok_web, evidence = _parse_web_payload(web_lookup_fn(term))
             if not ok_web:
                 continue
-            if not _web_evidence_entity_consistent(term, evidence):
+            if (not showtimes_intent) and (not _web_evidence_entity_consistent(term, evidence)):
                 continue
             facts = _build_web_facts(evidence)
             source = "Mixed" if has_existing_facts else "Web"
+            if showtimes_intent:
+                wdet = _showtimes_contract_render(user_text=user_text, evidence=evidence)
+                return CheatsheetsTurnResult(
+                    facts_block=facts,
+                    constraints_block=_build_track_b_web_constraints(),
+                    deterministic_answer=wdet,
+                    local_knowledge_line="",
+                    track="B",
+                    footer_source=source,
+                    footer_confidence="medium",
+                    kb_lookup_candidate=False,
+                    matched_terms=tuple(),
+                    wiki_term="",
+                    source_url="",
+                )
             wdet = _build_web_slot_deterministic_answer(user_text=user_text, evidence=evidence)
             return CheatsheetsTurnResult(
                 facts_block=facts,
@@ -2304,4 +2597,32 @@ def resolve_cheatsheets_turn(
                     else _best_supporting_web_url(user_text=user_text, evidence=evidence)
                 ),
             )
+        if showtimes_intent:
+            return CheatsheetsTurnResult(
+                facts_block="",
+                constraints_block="",
+                deterministic_answer=_SHOWTIMES_FALLBACK_ERROR,
+                local_knowledge_line="",
+                track="B",
+                footer_source="Model",
+                footer_confidence="unverified",
+                kb_lookup_candidate=False,
+                matched_terms=tuple(),
+                wiki_term="",
+                source_url="",
+            )
+    if showtimes_intent:
+        return CheatsheetsTurnResult(
+            facts_block="",
+            constraints_block="",
+            deterministic_answer=_SHOWTIMES_FALLBACK_ERROR,
+            local_knowledge_line="",
+            track="B",
+            footer_source="Model",
+            footer_confidence="unverified",
+            kb_lookup_candidate=False,
+            matched_terms=tuple(),
+            wiki_term="",
+            source_url="",
+        )
     return CheatsheetsTurnResult("", "", "", "", "", "", "", False, tuple(), "")
