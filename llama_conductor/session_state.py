@@ -115,6 +115,16 @@ class SessionState:
     last_retrieval_miss_intent: str = ""
     last_retrieval_miss_query_signature: str = ""
     last_retrieval_miss_query_text: str = ""
+    # Retrieval follow-up evidence context (generic, one-shot by default).
+    evidence_context_active: bool = False
+    evidence_context_intent_class: str = ""
+    evidence_context_source_lane: str = ""
+    evidence_context_query_topic: str = ""
+    evidence_context_outcome: str = ""  # success|refusal
+    evidence_context_ttl_turns: int = 0
+    evidence_context_created_turn_id: int = 0
+    # One-shot router-side signal: run narrow wiki fallback before model dispatch.
+    evidence_context_wiki_fallback_active: bool = False
 
 
 # Global session storage

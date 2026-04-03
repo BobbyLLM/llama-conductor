@@ -4,6 +4,15 @@
 
 Roadmap breadcrumb entries (incremental, may land across multiple commits) en route to 1.9.2 release.
 
+- `>>web synth` credibility gate + refusal follow-up hardening:
+  - Global synthesis gate is now: UGC strip (global) -> independence (`>=2` distinct eTLD+1) -> credibility floor (requires at least one trusted eTLD+1).
+  - Trusted-domain baseline expanded in `router_config.yaml` (`nature.com`, `thelancet.com`, `bmj.com`, `nejm.org`, `arxiv.org` added).
+  - Trust matching is normalized to eTLD+1 (so trusted roots apply across subdomains by design).
+  - Refusal follow-up path simplified: any `>>web synth` refusal arms one-shot wiki fallback on the next plain user turn (`Results uncertain - see: <wiki URL>`).
+  - Wiki miss no longer falls through to model priors in this lane; it returns deterministic Wikipedia search URL fallback instead.
+  - `>>flush` now explicitly resets all `evidence_context_*` fields to prevent stale follow-up state.
+  - Removed orphaned follow-up helper logic after unconditional one-shot consume was adopted.
+
 - `>>web synth` lane (fully wired):
   - New command: `>>web synth <query>` now performs evidence-constrained synthesis from existing gated top-N web rows.
   - UGC hard floor in place for health-class queries (`youtube/facebook/reddit/x/tiktok/...` stripped before synthesis qualification).

@@ -172,8 +172,13 @@ web_search:
     - nhs.uk
     - cochrane.org
     - mayoclinic.org
+    - nature.com
+    - thelancet.com
+    - bmj.com
+    - nejm.org
+    - arxiv.org
   synth_policies:
-    health:
+    default:
       disallowed_domains:
         - youtube.com
         - facebook.com
@@ -184,6 +189,7 @@ web_search:
         - instagram.com
         - tumblr.com
         - pinterest.com
+      require_one_credible_source: true
       min_independent_sources: 2
   # Example:
   # user_trust_domains:
@@ -198,6 +204,20 @@ web_search:
     base_url: "http://127.0.0.1:8888/search"
   custom:
     base_url: ""
+
+evidence_context_policies:
+  default:
+    on_refusal_followup:
+      ttl_turns: 1
+      underspecified_followup:
+        suppress_web_retrieval: true
+        set_wiki_fallback_active: false
+  health:
+    on_refusal_followup:
+      ttl_turns: 1
+      underspecified_followup:
+        suppress_web_retrieval: true
+        set_wiki_fallback_active: true
 
 # -----------------------------------------------------------------------------
 # Memory / Footer / Profile

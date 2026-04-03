@@ -14,6 +14,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote as _url_quote
 
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
@@ -825,6 +826,37 @@ def _normalize_topic_token(tok: str) -> str:
     if len(t) > 4 and t.endswith("s") and not t.endswith("ss"):
         t = t[:-1]
     return t
+
+
+def _extract_wiki_topic_from_synth_query(text: str) -> str:
+    """
+    Derive a wiki lookup topic from a prior >>web synth query.
+    Example: "is feldenkrais fake" -> "feldenkrais"
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    q = re.sub(r"[?!.]+$", "", raw).strip()
+    q = re.sub(
+        r"^\s*(?:is|are|was|were|does|do|did|can|could|should|would|will|"
+        r"what(?:'s|\s+is)?|who(?:'s|\s+is)?|how|why|tell\s+me\s+about)\s+",
+        "",
+        q,
+        flags=re.IGNORECASE,
+    )
+    q = re.sub(
+        r"\b(?:fake|pseudoscience|pseudoscientific|evidence\s+based|"
+        r"effective|works?|safe|scam|good|bad|real|true)\b",
+        "",
+        q,
+        flags=re.IGNORECASE,
+    )
+    q = re.sub(r"^\s*(?:the\s+)?evidence\s+for\s+", "", q, flags=re.IGNORECASE)
+    q = re.sub(r"\s+", " ", q).strip(" -_")
+    toks = [t for t in re.findall(r"[A-Za-z][A-Za-z0-9'/-]*", q) if len(t) >= 3]
+    if not toks:
+        return q or raw
+    return " ".join(toks[:4]).strip()
 
 
 def _extract_primary_topic(text: str) -> str:
@@ -3287,6 +3319,7 @@ async def v1_chat_completions(req: Request):
     state.turn_cheatsheets_warning_line = ""
     state.turn_cheatsheets_warning_key = ""
     state.turn_quote_source_durability_guard = False
+    state.evidence_context_wiki_fallback_active = False
     cheatsheets_constraints_block = ""
     cheatsheets_deterministic_answer = ""
     quote_source_intent_now = _is_quote_source_intent(user_text)
@@ -3338,6 +3371,7 @@ async def v1_chat_completions(req: Request):
                 web_lookup_fn=_sidecar_web_evidence,
                 define_lookup_fn=_sidecar_define_query,
                 quote_source_intent=quote_source_intent_now,
+                state=state,
             )
             state.turn_footer_source_override = str(cheat.footer_source or "").strip()
             state.turn_footer_confidence_override = str(cheat.footer_confidence or "").strip().lower()
@@ -3623,6 +3657,104 @@ async def v1_chat_completions(req: Request):
     # Deterministic strict-lookup lane: for fully grounded cheatsheet
     # "who/what is" style queries, return the exact stored definition verbatim.
     # This bypasses thinker paraphrase while preserving normal footer pipeline.
+    if bool(getattr(state, "evidence_context_wiki_fallback_active", False)):
+        # One-shot follow-up fallback after >>web synth refusal suppression:
+        # attempt narrow wiki lookup on last synth topic before model-prior reply.
+        state.evidence_context_wiki_fallback_active = False
+        topic = str(getattr(state, "evidence_context_query_topic", "") or "").strip()
+        wiki_topic = _extract_wiki_topic_from_synth_query(topic)
+        if wiki_topic and _sidecar_wiki_query is not None:
+            wiki_raw = str(_sidecar_wiki_query(wiki_topic) or "").strip()
+            wiki_low = wiki_raw.lower()
+            wiki_ok = bool(
+                wiki_raw.startswith("[wiki]")
+                and (":" in wiki_raw)
+                and ("request timeout" not in wiki_low)
+                and ("not found" not in wiki_low)
+                and ("http error" not in wiki_low)
+                and ("[wiki] error:" not in wiki_low)
+            )
+            # Retry once with original synth query text if extracted topic missed.
+            if (not wiki_ok) and topic and (topic != wiki_topic):
+                wiki_raw = str(_sidecar_wiki_query(topic) or "").strip()
+                wiki_low = wiki_raw.lower()
+                wiki_ok = bool(
+                    wiki_raw.startswith("[wiki]")
+                    and (":" in wiki_raw)
+                    and ("request timeout" not in wiki_low)
+                    and ("not found" not in wiki_low)
+                    and ("http error" not in wiki_low)
+                    and ("[wiki] error:" not in wiki_low)
+                )
+            if wiki_ok:
+                title_m = re.match(r"^\[wiki\]\s*([^:]+):", wiki_raw, flags=re.IGNORECASE | re.DOTALL)
+                wiki_title = str(title_m.group(1) if title_m else wiki_topic).strip()
+                wiki_slug = _url_quote(wiki_title.replace(" ", "_"), safe="()_%-")
+                wiki_url = f"https://en.wikipedia.org/wiki/{wiki_slug}" if wiki_slug else "https://en.wikipedia.org/wiki/"
+                fallback_text = f"Results uncertain - see: {wiki_url}"
+                state.turn_footer_source_override = "Wiki"
+                state.turn_footer_confidence_override = "medium"
+                state.turn_source_url_override = ""
+                _emit_kaioken_telemetry(
+                    state=state,
+                    session_id=session_id,
+                    user_text=user_text_raw,
+                    route_class="sidecar",
+                    outcome={"stage": "web_synth_followup_wiki_fallback"},
+                )
+                return _finalize_chat_response(
+                    text=fallback_text,
+                    user_text=user_text,
+                    state=state,
+                    facts_block=facts_block,
+                    lock_active=lock_active,
+                    scratchpad_grounded=scratchpad_grounded,
+                    scratchpad_quotes=scratchpad_quotes,
+                    has_facts_block=bool((facts_block or "").strip()),
+                    stream=stream,
+                    mode="serious",
+                    sensitive_override_once=sensitive_override_once,
+                    bypass_serious_anti_loop=True,
+                    scratchpad_lock_miss=scratchpad_lock_miss,
+                    scratchpad_lock_miss_indices=scratchpad_lock_miss_indices,
+                )
+        # Wiki miss: do not fall through to model priors for this lane.
+        # Return deterministic uncertainty with Wikipedia search URL instead.
+        if topic:
+            search_q = str(wiki_topic or topic).strip()
+            wiki_search_url = (
+                f"https://en.wikipedia.org/w/index.php?search={_url_quote(search_q)}"
+                if search_q
+                else "https://en.wikipedia.org/wiki/"
+            )
+            fallback_text = f"Results uncertain - see: {wiki_search_url}"
+            state.turn_footer_source_override = "Wiki"
+            state.turn_footer_confidence_override = "medium"
+            state.turn_source_url_override = ""
+            _emit_kaioken_telemetry(
+                state=state,
+                session_id=session_id,
+                user_text=user_text_raw,
+                route_class="sidecar",
+                outcome={"stage": "web_synth_followup_wiki_search_fallback"},
+            )
+            return _finalize_chat_response(
+                text=fallback_text,
+                user_text=user_text,
+                state=state,
+                facts_block=facts_block,
+                lock_active=lock_active,
+                scratchpad_grounded=scratchpad_grounded,
+                scratchpad_quotes=scratchpad_quotes,
+                has_facts_block=bool((facts_block or "").strip()),
+                stream=stream,
+                mode="serious",
+                sensitive_override_once=sensitive_override_once,
+                bypass_serious_anti_loop=True,
+                scratchpad_lock_miss=scratchpad_lock_miss,
+                scratchpad_lock_miss_indices=scratchpad_lock_miss_indices,
+            )
+
     if cheatsheets_deterministic_answer and (not lock_active):
         try:
             if retrieval_guard_intent_now == "quote_source":

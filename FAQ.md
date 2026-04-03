@@ -769,6 +769,7 @@ These are deterministic utility tools for common retrieval/conversion tasks:
 - `>>exchange <query>`: live currency conversion (Frankfurter API)
 - `>>weather <location>`: live weather lookup (Open-Meteo API)
 - `>>web <query>`: live web search with deterministic relevance gating (provider-agnostic; ships with DuckDuckGo, supports Tavily/SearxNG/custom)
+- `>>web synth <query>`:  evidence-gated synthesis from credible web sources - requires independent, trusted results or refuses
 
 They reduce token spend and avoid unnecessary model improvisation for utility queries.
 
@@ -824,7 +825,7 @@ Showtimes is the first retrieval-intent contract schema in production. In plain 
 
 ### `>>web synth` (evidence-gated synthesis lane)
 
-`>>web synth` is a synthesis subcommand of the `>>web` sidecar. Instead of returning a ranked listing, it synthesizes a direct answer, but only when evidence passes an independence gate. No gate pass, no answer.
+`>>web synth` is a synthesis subcommand of the `>>web` sidecar. Instead of returning a ranked listing, it synthesizes a direct answer, but only when evidence passes a three-part quality gate. No gate pass, no answer.
 
 **Usage:**
 `>>web synth <question>`
@@ -837,8 +838,14 @@ Example: `>>web synth who invented the polio vaccine`
 
 Same retrieval stack. Different output contract.
 
-**Independence gate:**
-Before synthesis, retrieved results are checked for source independence by eTLD+1 (registered domain, not subdomain). Two hits from `science.nasa.gov` and `history.nasa.gov` count as one source. Gate requires `>=2` distinct domains. If it fails, hard refusal (no hedged answer, no model supplement):
+**Three-part quality gate:**
+Before synthesis, results must pass all checks:
+
+1. **UGC strip (global):** social/UGC domains are excluded (for example YouTube, Reddit, Facebook, Twitter/X, TikTok, Instagram).
+2. **Independence gate:** requires `>=2` distinct sources by eTLD+1. Two hits from `science.nasa.gov` and `history.nasa.gov` count as one source (`nasa.gov`).
+3. **Credibility floor (global):** at least one remaining source must match trusted domains (built-in + `web_search.user_trust_domains`).
+
+If any check fails, hard refusal (no hedged answer, no model supplement):
 
 ```text
 [web synth] Not enough independent high-quality web evidence to answer safely.
@@ -850,17 +857,44 @@ Confidence: unverified | Source: Model
 - `See:` links for each independent source used
 - `Confidence: medium | Source: Web`
 
+**Health query shaping:**
+Health/medical queries are retrieval-shaped toward evidence-intent terms (systematic reviews, meta-analyses, clinical guidelines) before the gate runs. This helps well-documented topics surface credible sources. Niche topics still refuse if the credibility floor is not met.
+
+**After refusal (one-shot fallback):**
+If `>>web synth` refuses and the next user turn is a follow-up (for example `best guess`), the router attempts a narrow Wikipedia fallback on the original topic:
+
+```text
+Results uncertain - see: https://en.wikipedia.org/wiki/...
+Confidence: medium | Source: Wiki
+```
+
+This is one-shot. After that turn, normal routing resumes.
+
 **Provenance guarantee:**
-`Source: Web` is emitted only when the gate passes and synthesis succeeds. Transport errors, model unavailability, and gate failures route to `Source: Model`.
+`Source: Web` is emitted only when all three checks pass and synthesis succeeds. Transport errors, model unavailability, and gate failures route to `Source: Model`.
 
 **Behavior edge cases:**
 - `>>web synth` (no query) -> `[web synth] No query provided.`
 - `>>web synthesis foo` -> treated as normal `>>web` query, not synth mode (exact token `synth` required).
 
-**Footer provenance:**
-- `Source: Web` -> real web evidence passed the relevance gate.
-- `See: <url>` -> the actual source URL, injected deterministically from retrieval metadata. Never model-generated.
-- If web retrieval fails or all results are rejected: cascades to model with `Confidence: unverified | Source: Model`.
+**Trusted domains shipped in `router_config.yaml` (non-showtimes):**
+- `pubmed.ncbi.nlm.nih.gov`
+- `pmc.ncbi.nlm.nih.gov`
+- `chiromt.biomedcentral.com`
+- `link.springer.com`
+- `researchgate.net`
+- `nih.gov`
+- `medlineplus.gov`
+- `nhs.uk`
+- `cochrane.org`
+- `mayoclinic.org`
+- `nature.com`
+- `thelancet.com`
+- `bmj.com`
+- `nejm.org`
+- `arxiv.org`
+
+Canonical source of truth is `router_config.yaml` (`web_search.user_trust_domains`).
 
 #### Other utility commands (the ones nobody told you about)
 

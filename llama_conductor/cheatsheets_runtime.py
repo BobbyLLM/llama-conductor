@@ -579,11 +579,26 @@ def _question_framing(text: str) -> bool:
     return bool(_QUESTION_FRAMING_RE.search(str(text or "")))
 
 
-def _needs_web_retrieval(*, user_text: str, q_framing: bool) -> bool:
+def _needs_web_retrieval(*, user_text: str, q_framing: bool, state: Any = None) -> bool:
     """Broad retrieval trigger (capability), intentionally separate from intent enums (safety)."""
     raw = str(user_text or "").strip()
     if not raw:
         return False
+    # Generic one-shot refusal follow-up gate for evidence contexts.
+    # Simplified rule: after any >>web synth refusal, the first plain follow-up
+    # routes to wiki fallback (router-side) and suppresses broad retrieval.
+    ctx_active = bool(getattr(state, "evidence_context_active", False))
+    ctx_outcome = str(getattr(state, "evidence_context_outcome", "") or "").strip().lower()
+    ctx_ttl = int(getattr(state, "evidence_context_ttl_turns", 0) or 0)
+    if state is not None and ctx_active and ctx_outcome == "refusal" and ctx_ttl > 0:
+        try:
+            state.evidence_context_wiki_fallback_active = True
+            return False
+        finally:
+            # One-shot consumption regardless of follow-up shape.
+            state.evidence_context_ttl_turns = max(0, ctx_ttl - 1)
+            if state.evidence_context_ttl_turns == 0:
+                state.evidence_context_active = False
     # WH-style factual prompts and explicit questions.
     if q_framing:
         return True
@@ -2131,6 +2146,7 @@ def resolve_cheatsheets_turn(
     web_lookup_fn: Optional[Callable[[str], Any]] = None,
     define_lookup_fn: Optional[Callable[[str], str]] = None,
     quote_source_intent: bool = False,
+    state: Any = None,
 ) -> CheatsheetsTurnResult:
     entries = load_cheatsheets_entries(cheatsheets_dir)
     subs = {str(s).strip().lower() for s in (subsignals or []) if str(s or "").strip()}
@@ -2383,7 +2399,7 @@ def resolve_cheatsheets_turn(
     # Track B gate:
     # Retrieval trigger is intentionally broad and separate from safety intent enums.
     showtimes_intent = _is_showtimes_intent(user_text)
-    needs_web_initial = _needs_web_retrieval(user_text=user_text, q_framing=q_framing)
+    needs_web_initial = _needs_web_retrieval(user_text=user_text, q_framing=q_framing, state=state)
     needs_web = bool(needs_web_initial)
     explicit_fact_signal = _has_explicit_fact_signal(
         user_text=user_text,

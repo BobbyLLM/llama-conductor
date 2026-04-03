@@ -4,7 +4,7 @@
 import os
 import re
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from ..config import (
     KB_PATHS,
@@ -137,6 +137,14 @@ _SIDECAR_FAIL_TOKENS_RE = re.compile(
     r"\b(request timeout|timeout|not found|no relevant results|http error|error:|parse failed|blocked request)\b",
     re.IGNORECASE,
 )
+
+_WEB_SYNTH_REFUSAL_SENTINEL = "[web synth] not enough independent high-quality web evidence to answer safely."
+_WEB_SYNTH_HEALTH_HINT_RE = re.compile(
+    r"\b(medicine|medical|health|clinical|treatment|therapy|therapist|diagnosis|disease|disorder|syndrome|"
+    r"symptom|drug|medication|vaccine|surgery|pain|injury|chiropractic|chiropractor|physiotherapy|"
+    r"osteopath|acupuncture|homeopathy|supplement|pseudoscience|evidence-based|placebo|quackery|fake|scam)\b",
+    re.IGNORECASE,
+)
 _INLINE_COMMAND_FOOTER_RE = re.compile(
     r"^\s*(?:Confidence:|Source:|Profile:).*$",
     re.IGNORECASE,
@@ -222,6 +230,48 @@ def _is_sidecar_success(text: str, prefix: str) -> bool:
     if not s.lower().startswith(prefix.lower()):
         return False
     return not bool(_SIDECAR_FAIL_TOKENS_RE.search(s))
+
+
+def _is_web_synth_refusal_output(text: str) -> bool:
+    """Canonical synth refusal detector: prefix or standalone sentinel line."""
+    s = re.sub(r"\s+", " ", str(text or "").strip()).lower()
+    if not s:
+        return False
+    if s.startswith(_WEB_SYNTH_REFUSAL_SENTINEL):
+        return True
+    if _WEB_SYNTH_REFUSAL_SENTINEL in s:
+        return True
+    lines = [re.sub(r"\s+", " ", ln.strip()).lower() for ln in str(text or "").splitlines() if ln.strip()]
+    return any(ln == _WEB_SYNTH_REFUSAL_SENTINEL for ln in lines)
+
+
+def _web_synth_intent_class_for_context(query: str) -> str:
+    return "health" if _WEB_SYNTH_HEALTH_HINT_RE.search(str(query or "")) else ""
+
+
+def _evidence_policy_ttl_turns(intent_class: str) -> int:
+    cls = str(intent_class or "").strip().lower()
+    path = f"evidence_context_policies.{cls}.on_refusal_followup.ttl_turns" if cls else ""
+    val = cfg_get(path, None) if path else None
+    if val is None:
+        val = cfg_get("evidence_context_policies.default.on_refusal_followup.ttl_turns", 1)
+    try:
+        return max(0, int(val))
+    except Exception:
+        return 1
+
+
+def _set_evidence_context_from_synth(state: SessionState, synth_query: str, raw_output: str) -> None:
+    """Populate generic evidence context from >>web synth result."""
+    refusal = _is_web_synth_refusal_output(raw_output)
+    state.evidence_context_active = True
+    state.evidence_context_intent_class = _web_synth_intent_class_for_context(synth_query)
+    state.evidence_context_source_lane = "web_synth"
+    state.evidence_context_query_topic = str(synth_query or "").strip()
+    state.evidence_context_outcome = "refusal" if refusal else "success"
+    state.evidence_context_ttl_turns = _evidence_policy_ttl_turns(state.evidence_context_intent_class)
+    # One-size fallback arming: any synth refusal primes one-shot wiki fallback.
+    state.evidence_context_wiki_fallback_active = bool(refusal)
 
 
 def _build_model_timeout_fallback_answer(*, cmd_key: str, query: str) -> str:
@@ -1832,6 +1882,15 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         state.deterministic_last_reason = ""
         state.deterministic_last_answer = ""
         state.deterministic_last_frame = {}
+        # Evidence-context reset (one-shot synth refusal follow-up state).
+        state.evidence_context_active = False
+        state.evidence_context_intent_class = ""
+        state.evidence_context_source_lane = ""
+        state.evidence_context_query_topic = ""
+        state.evidence_context_outcome = ""
+        state.evidence_context_ttl_turns = 0
+        state.evidence_context_created_turn_id = 0
+        state.evidence_context_wiki_fallback_active = False
         purged = 0
         if purge_session_memory_jsonl:
             try:
@@ -1915,9 +1974,12 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
             if not synth_query:
                 return "[web synth] No query provided."
             raw = str(handle_web_synth_query(synth_query) or "").strip()
+            _set_evidence_context_from_synth(state, synth_query, raw)
+            if _is_web_synth_refusal_output(raw):
+                raw = "[web synth] Not enough independent high-quality web evidence to answer safely."
             # Invariant: "[web synth]" prefix denotes refusal/failure path.
             # Success path must return clean prose (without this prefix).
-            if raw.lower().startswith("[web synth]"):
+            if _is_web_synth_refusal_output(raw):
                 return _append_command_footer(raw, confidence="unverified", source="Model")
             return _append_command_footer(raw, confidence="medium", source="Web")
         if not query:

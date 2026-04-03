@@ -2115,17 +2115,18 @@ def _web_synth_class(query: str) -> str:
 
 def _web_synth_load_class_policy(query_class: str) -> dict[str, Any]:
     """
-    Load synth policy for a class from config.
+    Load synth policy from config.
 
-    Values are normalized and clamped at read-time:
+    Values are normalized/clamped at read-time:
     - disallowed_domains -> normalized domain list
-    - require_trusted_domain -> bool
+    - require_one_credible_source -> bool
     - min_independent_sources -> int in [1, 5]
+
+    Policy matching uses eTLD+1 and is intentionally broad: all subdomains
+    of a trusted domain inherit trust.
     """
-    qc = str(query_class or "").strip().lower()
-    if not qc:
-        return {}
-    base = f"web_search.synth_policies.{qc}"
+    _ = str(query_class or "").strip().lower()  # classifier retained for shaping only
+    base = "web_search.synth_policies.default"
     raw = _web_cfg(base, {}) or {}
     if not isinstance(raw, dict):
         raw = {}
@@ -2136,15 +2137,27 @@ def _web_synth_load_class_policy(query_class: str) -> dict[str, Any]:
         min_raw = _WEB_SYNTH_MIN_SOURCES
     policy = {
         "disallowed_domains": disallowed,
-        "require_trusted_domain": bool(raw.get("require_trusted_domain", False)),
+        "require_one_credible_source": bool(raw.get("require_one_credible_source", False)),
         "min_independent_sources": max(1, min(5, min_raw)),
     }
     return policy
 
 
 def _web_synth_trusted_domains() -> frozenset[str]:
-    """Reserved for future soft trust weighting (built-in + user additions)."""
-    return frozenset(_effective_trust_domains())
+    """Trusted domains normalized to eTLD+1.
+
+    Uses heuristic eTLD+1 extraction via `_etld1` (not full PSL), which can
+    mis-handle some ccTLD edge cases. Accepted for current scope.
+    """
+    out: set[str] = set()
+    for d in _effective_trust_domains():
+        ds = str(d or "").strip().lower()
+        if not ds:
+            continue
+        norm = _etld1(f"https://{ds}")
+        if norm:
+            out.add(norm)
+    return frozenset(out)
 
 
 def _web_synth_shape_query(query: str, query_class: str) -> str:
@@ -2183,7 +2196,9 @@ def handle_web_synth_query(query: str) -> str:
 
     policy = _web_synth_load_class_policy(query_class)
     disallowed = frozenset(policy.get("disallowed_domains", []) or [])
+    require_one_credible = bool(policy.get("require_one_credible_source", False))
     min_sources = max(1, min(5, int(policy.get("min_independent_sources", _WEB_SYNTH_MIN_SOURCES))))
+    trusted_etld1 = _web_synth_trusted_domains()
 
     filtered_rows: list[dict[str, Any]] = []
     for row in rows:
@@ -2215,6 +2230,16 @@ def handle_web_synth_query(query: str) -> str:
         qualified_rows.append(row)
 
     if len(seen_etld1) < min_sources:
+        return _WEB_SYNTH_REFUSAL
+
+    credible_present = False
+    for row in qualified_rows:
+        u = str(row.get("url", "") or "").strip()
+        d = _etld1(u)
+        trusted_hit = bool(d and d in trusted_etld1)
+        if trusted_hit:
+            credible_present = True
+    if require_one_credible and not credible_present:
         return _WEB_SYNTH_REFUSAL
 
     fact_lines: list[str] = []
