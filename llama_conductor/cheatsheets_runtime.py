@@ -885,8 +885,8 @@ def _definition_query_term(user_text: str) -> str:
         return ""
     patterns = (
         r"(?i)^\s*define\s+(.+?)\s*[?.!]*\s*$",
-        r"(?i)^\s*what(?:'s|\s+is)\s+the\s+definition\s+of\s+(.+?)\s*[?.!]*\s*$",
-        r"(?i)^\s*what(?:'s|\s+is)\s+the\s+meaning\s+of\s+(.+?)\s*[?.!]*\s*$",
+        r"(?i)^\s*what(?:'s|s|\s+is)\s+the\s+definition\s+of\s+(.+?)\s*[?.!]*\s*$",
+        r"(?i)^\s*what(?:'s|s|\s+is)\s+the\s+meaning\s+of\s+(.+?)\s*[?.!]*\s*$",
     )
     for pat in patterns:
         m = re.match(pat, q)
