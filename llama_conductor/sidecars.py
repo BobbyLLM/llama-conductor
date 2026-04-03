@@ -2077,6 +2077,87 @@ def handle_web_query(query: str) -> str:
 _WEB_SYNTH_MIN_SOURCES: int = 2
 _WEB_SYNTH_REFUSAL = "[web synth] Not enough independent high-quality web evidence to answer safely."
 _TRANSPORT_ERROR_PREFIXES = ("[model '", "[router error")
+_WEB_SYNTH_HEALTH_SHAPE = (
+    "systematic review OR meta-analysis OR clinical guideline"
+)
+_WEB_SYNTH_HEALTH_SIGNALS: frozenset[str] = frozenset({
+    "medicine", "medical", "health", "clinical", "treatment", "therapy", "therapist",
+    "diagnosis", "disease", "disorder", "syndrome", "symptom", "drug", "medication",
+    "vaccine", "surgery", "pain", "injury", "chiropractic", "chiropractor",
+    "physiotherapy", "osteopath", "acupuncture", "homeopathy", "supplement",
+    "pseudoscience", "evidence based", "placebo", "quackery", "fake", "scam",
+})
+
+
+def _host_matches_domains(host: str, domains: set[str] | frozenset[str]) -> bool:
+    h = str(host or "").strip().lower()
+    if not h or not domains:
+        return False
+    for d in domains:
+        sd = str(d or "").strip().lower()
+        if not sd:
+            continue
+        if h == sd or h.endswith("." + sd):
+            return True
+    return False
+
+
+def _web_synth_class(query: str) -> str:
+    """Lightweight synth-local classifier for policy selection."""
+    t = " " + _web_norm_text(query) + " "
+    if not t.strip():
+        return ""
+    for kw in _WEB_SYNTH_HEALTH_SIGNALS:
+        if f" {kw} " in t:
+            return "health"
+    return ""
+
+
+def _web_synth_load_class_policy(query_class: str) -> dict[str, Any]:
+    """
+    Load synth policy for a class from config.
+
+    Values are normalized and clamped at read-time:
+    - disallowed_domains -> normalized domain list
+    - require_trusted_domain -> bool
+    - min_independent_sources -> int in [1, 5]
+    """
+    qc = str(query_class or "").strip().lower()
+    if not qc:
+        return {}
+    base = f"web_search.synth_policies.{qc}"
+    raw = _web_cfg(base, {}) or {}
+    if not isinstance(raw, dict):
+        raw = {}
+    disallowed = _normalize_domain_list(_web_cfg_list(f"{base}.disallowed_domains"))
+    try:
+        min_raw = int(raw.get("min_independent_sources", _WEB_SYNTH_MIN_SOURCES))
+    except Exception:
+        min_raw = _WEB_SYNTH_MIN_SOURCES
+    policy = {
+        "disallowed_domains": disallowed,
+        "require_trusted_domain": bool(raw.get("require_trusted_domain", False)),
+        "min_independent_sources": max(1, min(5, min_raw)),
+    }
+    return policy
+
+
+def _web_synth_trusted_domains() -> frozenset[str]:
+    """Reserved for future soft trust weighting (built-in + user additions)."""
+    return frozenset(_effective_trust_domains())
+
+
+def _web_synth_shape_query(query: str, query_class: str) -> str:
+    if query_class == "health":
+        q_lower = str(query or "").lower()
+        already_shaped = (
+            "site:" in q_lower
+            or "systematic review" in q_lower
+            or "meta-analysis" in q_lower
+        )
+        if not already_shaped:
+            return f"{query} {_WEB_SYNTH_HEALTH_SHAPE}"
+    return query
 
 
 def handle_web_synth_query(query: str) -> str:
@@ -2090,7 +2171,9 @@ def handle_web_synth_query(query: str) -> str:
     if not q:
         return "[web synth] No query provided."
 
-    ok, evidence, _err = resolve_web_evidence(q)
+    query_class = _web_synth_class(q)
+    shaped_q = _web_synth_shape_query(q, query_class)
+    ok, evidence, _err = resolve_web_evidence(shaped_q)
     if not ok or not evidence:
         return _WEB_SYNTH_REFUSAL
 
@@ -2098,14 +2181,31 @@ def handle_web_synth_query(query: str) -> str:
     if not isinstance(rows, list) or not rows:
         return _WEB_SYNTH_REFUSAL
 
-    seen_etld1: set[str] = set()
-    qualified_rows: list[dict[str, Any]] = []
+    policy = _web_synth_load_class_policy(query_class)
+    disallowed = frozenset(policy.get("disallowed_domains", []) or [])
+    min_sources = max(1, min(5, int(policy.get("min_independent_sources", _WEB_SYNTH_MIN_SOURCES))))
+
+    filtered_rows: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
         u = str(row.get("url", "") or "").strip()
         if not u:
             continue
+        host = _web_domain(u)
+        if not host:
+            continue
+        if disallowed and _host_matches_domains(host, disallowed):
+            continue
+        filtered_rows.append(row)
+
+    if not filtered_rows:
+        return _WEB_SYNTH_REFUSAL
+
+    seen_etld1: set[str] = set()
+    qualified_rows: list[dict[str, Any]] = []
+    for row in filtered_rows:
+        u = str(row.get("url", "") or "").strip()
         d = _etld1(u)
         if not d:
             continue
@@ -2114,7 +2214,7 @@ def handle_web_synth_query(query: str) -> str:
         seen_etld1.add(d)
         qualified_rows.append(row)
 
-    if len(seen_etld1) < _WEB_SYNTH_MIN_SOURCES:
+    if len(seen_etld1) < min_sources:
         return _WEB_SYNTH_REFUSAL
 
     fact_lines: list[str] = []
@@ -2135,13 +2235,16 @@ def handle_web_synth_query(query: str) -> str:
 
     facts_block = "\n".join(fact_lines)
     system_prompt = (
-        "Use ONLY web facts below. Do not use prior knowledge. Do not speculate."
+        "Use ONLY web facts below. Do not use prior knowledge. Do not speculate. "
+        "If the evidence is genuinely contradictory or too sparse to draw any conclusion, "
+        f"respond with exactly: {_WEB_SYNTH_REFUSAL} "
+        "Otherwise synthesize what the evidence shows, including uncertainty where the "
+        "sources express it. Hedged or qualified findings are valid answers."
     )
     user_prompt = (
         f"Question: {q}\n\n"
         f"Web facts:\n{facts_block}\n\n"
-        "Answer concisely using only the provided web facts. "
-        f"If insufficient or ambiguous, return exactly: {_WEB_SYNTH_REFUSAL}"
+        "Answer concisely using only the provided web facts."
     )
 
     combined_prompt = f"{system_prompt}\n\n{user_prompt}"
@@ -2150,7 +2253,7 @@ def handle_web_synth_query(query: str) -> str:
             role="thinker",
             prompt=combined_prompt,
             max_tokens=350,
-            temperature=0.1,
+            temperature=0.2,
             top_p=0.9,
         )
         or ""

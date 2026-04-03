@@ -6,7 +6,13 @@ Roadmap breadcrumb entries (incremental, may land across multiple commits) en ro
 
 - `>>web synth` lane (fully wired):
   - New command: `>>web synth <query>` now performs evidence-constrained synthesis from existing gated top-N web rows.
-  - Independence gate enforced (`>=2` distinct eTLD+1 sources) before synthesis; weak/nonsense queries hard-refuse.
+  - UGC hard floor in place for health-class queries (`youtube/facebook/reddit/x/tiktok/...` stripped before synthesis qualification).
+  - Health query shaping now uses evidence-intent terms only (`systematic review OR meta-analysis OR clinical guideline`) with no `site:` hints.
+  - Independence gate is config-driven and clamped on read (`min_independent_sources` in `[1..5]`, default `2`) using distinct eTLD+1 sources.
+  - Synthesis prompt now accepts hedged/qualified findings as valid outputs; only genuinely contradictory/sparse evidence hard-refuses.
+  - Synthesis temperature raised to `0.2` to reduce over-refusal on contested, nuance-heavy evidence.
+  - `_web_synth_trusted_domains` retained as reserved hook for future soft trust weighting (not enforced in current gate).
+  - Sparse-evidence behavior remains fail-loud (e.g. Feldenkrais single-source cases refuse cleanly).
   - Inference wiring complete via `call_model_prompt`; transport/router errors collapse to refusal (no false `Source: Web`).
   - Success path emits grounded answer with multi-`See:` URLs and `Source: Web`; `>>web` listing path remains unchanged.
 

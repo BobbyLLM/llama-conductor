@@ -136,21 +136,28 @@ web_search:
         - readingcinemas.com.au
       blocked:
         - imdb.com
-      chain_homepages:
-        reading cinemas: "https://readingcinemas.com.au"
-        event cinemas: "https://eventcinemas.com.au"
-        hoyts: "https://hoyts.com.au"
-        village cinemas: "https://villagecinemas.com.au"
-        palace cinemas: "https://palacecinemas.com.au"
-      venue_postcodes:
-        armadale wa: "6112"
-        armadale western australia: "6112"
-        belmont wa: "6104"
-      venue_urls:
-        muvitimes.com:
-          armadale wa: "cinemas/in-perth/reading-cinemas-armadale.html"
-          armadale western australia: "cinemas/in-perth/reading-cinemas-armadale.html"
-          belmont wa: "cinemas/in-perth/reading-cinemas-belmont.html"
+      ## Optional: chain-level fallback URLs used when venue verification fails.
+      ## Format: "<chain name>": "<homepage url>"
+      ## Example:
+      ## chain_homepages:
+      ##   reading cinemas: "https://readingcinemas.com.au"
+      chain_homepages: {}
+      ## Optional: venue disambiguation hints for retrieval shaping.
+      ## Format: "<suburb + state query key>": "<postcode>"
+      ## Example:
+      ## venue_postcodes:
+      ##   armadale wa: "6112"
+      venue_postcodes: {}
+      ## Optional: deterministic venue URL overrides (bypass search for known venues).
+      ## Format:
+      ## venue_urls:
+      ##   <domain>:
+      ##     "<suburb + state query key>": "<relative path>"
+      ## Example:
+      ## venue_urls:
+      ##   muvitimes.com:
+      ##     armadale wa: "cinemas/in-perth/reading-cinemas-armadale.html"
+      venue_urls: {}
   # Trust boost only (ranking bias), not verification/allowlist.
   # Built-in trusted domains remain active in code.
   # Add domains here to receive the same +1.0 trust weighting.
@@ -160,6 +167,24 @@ web_search:
     - chiromt.biomedcentral.com
     - link.springer.com
     - researchgate.net
+    - nih.gov
+    - medlineplus.gov
+    - nhs.uk
+    - cochrane.org
+    - mayoclinic.org
+  synth_policies:
+    health:
+      disallowed_domains:
+        - youtube.com
+        - facebook.com
+        - reddit.com
+        - twitter.com
+        - x.com
+        - tiktok.com
+        - instagram.com
+        - tumblr.com
+        - pinterest.com
+      min_independent_sources: 2
   # Example:
   # user_trust_domains:
   #   - bbc.co.uk
