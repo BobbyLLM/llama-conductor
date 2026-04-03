@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import math
 import requests
 from urllib.parse import quote, urlparse, parse_qs, unquote
+from .model_calls import call_model_prompt
 
 # ============================================================================
 # Data Classes
@@ -890,6 +891,44 @@ def _web_domain(url: str) -> str:
     try:
         host = (urlparse(str(url or "")).hostname or "").strip().lower()
         return host[4:] if host.startswith("www.") else host
+    except Exception:
+        return ""
+
+
+# -- eTLD+1 helper for >>web synth independence gating -----------------------
+# Heuristic only (not full PSL).
+_KNOWN_CTLD: frozenset[str] = frozenset({
+    "uk", "au", "nz", "jp", "za", "br", "in", "kr", "il", "sg",
+    "hk", "my", "ph", "th", "tw", "cn", "de", "fr", "es", "it",
+    "nl", "pl", "ru", "se", "no", "fi", "dk", "be", "at", "ch",
+    "ie", "pt", "gr", "cz", "hu", "ro", "tr", "mx", "ar", "cl",
+    "co", "pe", "ve", "id", "vn", "pk",
+})
+_KNOWN_SLD: frozenset[str] = frozenset({
+    "co", "com", "net", "org", "gov", "edu", "ac", "ne", "or",
+})
+
+
+def _etld1(url: str) -> str:
+    """
+    Return heuristic eTLD+1 for domain-independence checks.
+
+    Do not repurpose _web_domain for this: _web_domain returns full host.
+    """
+    try:
+        host = (urlparse(str(url or "")).hostname or "").strip().lower()
+        if host.startswith("www."):
+            host = host[4:]
+        parts = host.split(".")
+        if len(parts) < 2:
+            return host
+        if (
+            len(parts) >= 3
+            and parts[-1] in _KNOWN_CTLD
+            and parts[-2] in _KNOWN_SLD
+        ):
+            return ".".join(parts[-3:])
+        return ".".join(parts[-2:])
     except Exception:
         return ""
 
@@ -2032,6 +2071,107 @@ def handle_web_query(query: str) -> str:
         return f"[web] HTTP error: {code}"
     except Exception as e:
         return f"[web] Error: {e}"
+
+
+# -- >>web synth --------------------------------------------------------------
+_WEB_SYNTH_MIN_SOURCES: int = 2
+_WEB_SYNTH_REFUSAL = "[web synth] Not enough independent high-quality web evidence to answer safely."
+_TRANSPORT_ERROR_PREFIXES = ("[model '", "[router error")
+
+
+def handle_web_synth_query(query: str) -> str:
+    """
+    Evidence-constrained synthesis lane for >>web synth.
+
+    Successful synthesis output must NOT start with "[web synth]".
+    That prefix is reserved for harness refusals/errors.
+    """
+    q = re.sub(r"\s+", " ", str(query or "").strip())
+    if not q:
+        return "[web synth] No query provided."
+
+    ok, evidence, _err = resolve_web_evidence(q)
+    if not ok or not evidence:
+        return _WEB_SYNTH_REFUSAL
+
+    rows = evidence.get("rows", None)
+    if not isinstance(rows, list) or not rows:
+        return _WEB_SYNTH_REFUSAL
+
+    seen_etld1: set[str] = set()
+    qualified_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        u = str(row.get("url", "") or "").strip()
+        if not u:
+            continue
+        d = _etld1(u)
+        if not d:
+            continue
+        if d in seen_etld1:
+            continue
+        seen_etld1.add(d)
+        qualified_rows.append(row)
+
+    if len(seen_etld1) < _WEB_SYNTH_MIN_SOURCES:
+        return _WEB_SYNTH_REFUSAL
+
+    fact_lines: list[str] = []
+    see_urls: list[str] = []
+    for i, row in enumerate(qualified_rows, start=1):
+        title = str(row.get("title", "") or "").strip()
+        snippet = str(row.get("snippet", "") or "").strip()
+        url = str(row.get("url", "") or "").strip()
+        fact_lines.append(f"[{i}] {title}")
+        if snippet:
+            fact_lines.append(f"    {snippet}")
+        if url:
+            fact_lines.append(f"    URL: {url}")
+            if url.startswith("http://") or url.startswith("https://"):
+                see_urls.append(url)
+    if not fact_lines:
+        return _WEB_SYNTH_REFUSAL
+
+    facts_block = "\n".join(fact_lines)
+    system_prompt = (
+        "Use ONLY web facts below. Do not use prior knowledge. Do not speculate."
+    )
+    user_prompt = (
+        f"Question: {q}\n\n"
+        f"Web facts:\n{facts_block}\n\n"
+        "Answer concisely using only the provided web facts. "
+        f"If insufficient or ambiguous, return exactly: {_WEB_SYNTH_REFUSAL}"
+    )
+
+    combined_prompt = f"{system_prompt}\n\n{user_prompt}"
+    raw = str(
+        call_model_prompt(
+            role="thinker",
+            prompt=combined_prompt,
+            max_tokens=350,
+            temperature=0.1,
+            top_p=0.9,
+        )
+        or ""
+    ).strip()
+    if not raw:
+        return _WEB_SYNTH_REFUSAL
+    if raw.lower().startswith(_TRANSPORT_ERROR_PREFIXES):
+        return _WEB_SYNTH_REFUSAL
+    if raw.lower().startswith("[web synth]"):
+        return raw
+
+    if see_urls:
+        dedup: list[str] = []
+        seen: set[str] = set()
+        for u in see_urls:
+            if u in seen:
+                continue
+            seen.add(u)
+            dedup.append(u)
+        return f"{raw}\n\n" + "\n".join(f"See: {u}" for u in dedup)
+    return raw
 
 
 # ============================================================================

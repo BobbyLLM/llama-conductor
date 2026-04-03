@@ -46,6 +46,7 @@ try:
         flush_ctc_cache,
         handle_wiki_query,
         handle_web_query,
+        handle_web_synth_query,
         handle_define_query,
         handle_exchange_query,
         handle_weather_query,
@@ -60,6 +61,7 @@ except Exception:
     flush_ctc_cache = None  # type: ignore
     handle_wiki_query = None  # type: ignore
     handle_web_query = None  # type: ignore
+    handle_web_synth_query = None  # type: ignore
     handle_define_query = None  # type: ignore
     handle_exchange_query = None  # type: ignore
     handle_weather_query = None  # type: ignore
@@ -1903,6 +1905,21 @@ def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Op
         if not handle_web_query:
             return "[router] web not available (sidecars.py missing)"
         query = cmd[len(parts[0]):].strip()
+        # >>web synth <query> subcommand
+        q_parts = query.split()
+        first_token = q_parts[0].lower() if q_parts else ""
+        if first_token == "synth":
+            if not handle_web_synth_query:
+                return "[router] web synth not available (sidecars.py missing)"
+            synth_query = query[len("synth"):].strip()
+            if not synth_query:
+                return "[web synth] No query provided."
+            raw = str(handle_web_synth_query(synth_query) or "").strip()
+            # Invariant: "[web synth]" prefix denotes refusal/failure path.
+            # Success path must return clean prose (without this prefix).
+            if raw.lower().startswith("[web synth]"):
+                return _append_command_footer(raw, confidence="unverified", source="Model")
+            return _append_command_footer(raw, confidence="medium", source="Web")
         if not query:
             return "[web] usage: >>web <query>\nExample: >>web father give me legs quote"
         raw = str(handle_web_query(query) or "").strip()

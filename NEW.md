@@ -4,6 +4,12 @@
 
 Roadmap breadcrumb entries (incremental, may land across multiple commits) en route to 1.9.2 release.
 
+- `>>web synth` lane (fully wired):
+  - New command: `>>web synth <query>` now performs evidence-constrained synthesis from existing gated top-N web rows.
+  - Independence gate enforced (`>=2` distinct eTLD+1 sources) before synthesis; weak/nonsense queries hard-refuse.
+  - Inference wiring complete via `call_model_prompt`; transport/router errors collapse to refusal (no false `Source: Web`).
+  - Success path emits grounded answer with multi-`See:` URLs and `Source: Web`; `>>web` listing path remains unchanged.
+
 - >>web` showtimes intent contract (first registered schema instance):
    - NLP path auto-aliases to `>>web` on showtimes intent; both paths share one contract renderer with showtimes-only no-fallthrough guard.
    - `web_contracts.jsonl`: title-only extraction gate, forbidden session fields, fail-loud fallback — `showtimes` is first registered instance of reusable dynamic enumerable schema.

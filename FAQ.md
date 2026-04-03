@@ -822,6 +822,41 @@ Showtimes is the first retrieval-intent contract schema in production. In plain 
 - Session titles are sourced via the configured search provider (for example Tavily), then validated against allowed cinema domains (for example `muvitimes.com`) before emission.
 - If venue verification fails, the system falls through safely: it refuses to emit titles for that venue and returns a fail-loud message (with chain homepage fallback when available) instead of guessing.
 
+### `>>web synth` (evidence-gated synthesis lane)
+
+`>>web synth` is a synthesis subcommand of the `>>web` sidecar. Instead of returning a ranked listing, it synthesizes a direct answer, but only when evidence passes an independence gate. No gate pass, no answer.
+
+**Usage:**
+`>>web synth <question>`
+
+Example: `>>web synth who invented the polio vaccine`
+
+**How it differs from `>>web`:**
+- `>>web <query>` -> ranked result listing with snippets
+- `>>web synth <query>` -> synthesized direct answer from gated web facts
+
+Same retrieval stack. Different output contract.
+
+**Independence gate:**
+Before synthesis, retrieved results are checked for source independence by eTLD+1 (registered domain, not subdomain). Two hits from `science.nasa.gov` and `history.nasa.gov` count as one source. Gate requires `>=2` distinct domains. If it fails, hard refusal (no hedged answer, no model supplement):
+
+```text
+[web synth] Not enough independent high-quality web evidence to answer safely.
+Confidence: unverified | Source: Model
+```
+
+**On gate pass:**
+- Concise synthesized answer from web facts only (no model priors added)
+- `See:` links for each independent source used
+- `Confidence: medium | Source: Web`
+
+**Provenance guarantee:**
+`Source: Web` is emitted only when the gate passes and synthesis succeeds. Transport errors, model unavailability, and gate failures route to `Source: Model`.
+
+**Behavior edge cases:**
+- `>>web synth` (no query) -> `[web synth] No query provided.`
+- `>>web synthesis foo` -> treated as normal `>>web` query, not synth mode (exact token `synth` required).
+
 **Footer provenance:**
 - `Source: Web` -> real web evidence passed the relevance gate.
 - `See: <url>` -> the actual source URL, injected deterministically from retrieval metadata. Never model-generated.
