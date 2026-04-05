@@ -125,6 +125,14 @@ class SessionState:
     evidence_context_created_turn_id: int = 0
     # One-shot router-side signal: run narrow wiki fallback before model dispatch.
     evidence_context_wiki_fallback_active: bool = False
+    # Post-editorial follow-up lock (short TTL) to prevent meta follow-ups
+    # from being misrouted into broad web retrieval.
+    post_editorial_lock_active: bool = False
+    post_editorial_lock_ttl: int = 0
+    post_editorial_object_context: str = ""
+    # One-turn handoff: set by retrieval gate on lock follow-up turns and
+    # consumed by router during generation context assembly.
+    post_editorial_context_inject_pending: bool = False
 
 
 # Global session storage

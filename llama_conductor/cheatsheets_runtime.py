@@ -584,6 +584,70 @@ def _needs_web_retrieval(*, user_text: str, q_framing: bool, state: Any = None) 
     raw = str(user_text or "").strip()
     if not raw:
         return False
+    # Explicit sidecar command bypass: these turns route through command handling,
+    # do not consume post-editorial lock TTL here.
+    if raw.startswith(">>"):
+        if state is not None:
+            low = raw.lower()
+            if low.startswith(">>web") or low.startswith(">>wiki") or low.startswith(">>define"):
+                state.post_editorial_lock_active = False
+                state.post_editorial_lock_ttl = 0
+                state.post_editorial_object_context = ""
+                state.post_editorial_context_inject_pending = False
+        return False
+
+    def _meta_followup_short(text: str) -> bool:
+        t = str(text or "").strip().lower()
+        if not t:
+            return False
+        token_count = len(re.findall(r"[a-z0-9']+", t))
+        # Deterministic lock behavior: during post-editorial lock, any short plain
+        # follow-up should stay in model/context lane unless user explicitly invokes
+        # a sidecar command.
+        if token_count <= 8:
+            return True
+        # Additional pattern coverage for common meta/repair follow-ups.
+        if token_count > 14:
+            return False
+        if bool(
+            re.search(
+                r"^(?:"
+                r"(?:so|ok|okay|and|right|well|then)\s+what(?:'s| is)\s+(?:the\s+)?[a-z0-9][a-z0-9' -]{0,64}\??|"
+                r"where(?:'s| is)\s+(?:the\s+)?[a-z0-9][a-z0-9' -]{0,48}\??|"
+                r"and\s+the\s+[a-z0-9][a-z0-9' -]{0,48}\??|"
+                r"what\s+did\s+you\s+think\??|"
+                r"well\??|"
+                r"go\s+on(?:\s+then)?\??|"
+                r"that's\s+not\s+what\s+i\s+asked\.?\??|"
+                r"that\s+isn't\s+what\s+i\s+asked\.?\??|"
+                r"redo\.?\??|"
+                r"try\s+again\.?\??|"
+                r"where\s+is\s+the\s+[a-z0-9][a-z0-9' -]{0,48}\??"
+                r")$",
+                t,
+                flags=re.IGNORECASE,
+            )
+        ):
+            return True
+        if ("critique" in t or "feedback" in t) and ("?" in t):
+            return True
+        return False
+
+    # Post-editorial context lock (one-shot-ish TTL): consume on each plain turn.
+    if state is not None and bool(getattr(state, "post_editorial_lock_active", False)):
+        ttl = int(getattr(state, "post_editorial_lock_ttl", 0) or 0)
+        try:
+            state.post_editorial_context_inject_pending = True
+            if _meta_followup_short(raw):
+                return False
+        finally:
+            ttl = max(0, ttl - 1)
+            state.post_editorial_lock_ttl = ttl
+            if ttl == 0:
+                state.post_editorial_lock_active = False
+                state.post_editorial_object_context = ""
+                state.post_editorial_context_inject_pending = False
+
     # Generic one-shot refusal follow-up gate for evidence contexts.
     # Simplified rule: after any >>web synth refusal, the first plain follow-up
     # routes to wiki fallback (router-side) and suppresses broad retrieval.

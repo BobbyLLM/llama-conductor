@@ -7,6 +7,13 @@
   <atom:link href="https://bobbyllm.codeberg.page/llama-conductor/feed.xml" rel="self" type="application/rss+xml" />
   <lastBuildDate>Sun, 05 Apr 2026 13:52:38 GMT</lastBuildDate>
   <item>
+    <title>The Boys are back in town</title>
+    <link>https://bobbyllm.codeberg.page/llama-conductor/blog/that-old-gang-of-mine.html</link>
+    <guid isPermaLink="true">https://bobbyllm.codeberg.page/llama-conductor/blog/that-old-gang-of-mine.html</guid>
+    <pubDate>Sun, 05 Apr 2026 11:36:14 GMT</pubDate>
+    <description>As someone with ASD, I have terrible tendency to take people at their word. If you say X, I assume you mean X (not Y) and act from that basis. That&#x27;s caused me some...problems...over the years.</description>
+  </item>
+  <item>
     <title>SCP-LLM-121</title>
     <link>https://bobbyllm.codeberg.page/llama-conductor/blog/scp-llm-121.html</link>
     <guid isPermaLink="true">https://bobbyllm.codeberg.page/llama-conductor/blog/scp-llm-121.html</guid>

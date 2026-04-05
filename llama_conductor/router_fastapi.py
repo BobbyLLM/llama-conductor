@@ -294,6 +294,87 @@ def _debug_user_fragment(text: str) -> str:
     return f"<redacted len={len(raw)} sha={short_hash(raw)}>"
 
 
+_EDITORIAL_INTENT_VERB_RE = re.compile(
+    r"\b(critique|review|edit|proofread|analyse|analyze)\b",
+    re.IGNORECASE,
+)
+_EDITORIAL_PASTE_WRAPPER_LINE_RE = re.compile(
+    r"(?im)^\s*-{3,}\s*file\s*:\s*(pasted|paste|uploaded|attachment)\s*-{0,}\s*$"
+)
+_EDITORIAL_PASTE_WRAPPER_MARKERS = (
+    "--- file: pasted ---",
+    "--- file: paste ---",
+    "--- file: uploaded ---",
+    "--- file: attachment ---",
+    "[file: pasted]",
+)
+_POST_EDITORIAL_OBJECT_CONTEXT_MAX_CHARS = 3000
+
+
+def _has_editorial_paste_wrapper(text: str) -> bool:
+    t = str(text or "")
+    if not t.strip():
+        return False
+    low = t.lower()
+    if any(marker in low for marker in _EDITORIAL_PASTE_WRAPPER_MARKERS):
+        return True
+    return bool(_EDITORIAL_PASTE_WRAPPER_LINE_RE.search(t))
+
+
+def _extract_instruction_segment_before_wrapper(text: str) -> str:
+    """Extract user instruction segment before explicit file/paste wrapper lines."""
+    t = str(text or "")
+    if not t.strip():
+        return ""
+    lines = t.splitlines()
+    keep: list[str] = []
+    for ln in lines:
+        ln_s = str(ln or "").strip()
+        ln_low = ln_s.lower()
+        if _EDITORIAL_PASTE_WRAPPER_LINE_RE.search(ln_s) or ln_low in _EDITORIAL_PASTE_WRAPPER_MARKERS:
+            break
+        if ln_s:
+            keep.append(ln_s)
+        if len(keep) >= 8:
+            break
+    return "\n".join(keep).strip()
+
+
+def _extract_object_segment_after_wrapper(text: str) -> str:
+    """Extract pasted/file object segment after explicit wrapper lines."""
+    t = str(text or "")
+    if not t.strip():
+        return ""
+    lines = t.splitlines()
+    found_wrapper = False
+    out: list[str] = []
+    for ln in lines:
+        ln_s = str(ln or "").strip()
+        ln_low = ln_s.lower()
+        is_wrapper = bool(_EDITORIAL_PASTE_WRAPPER_LINE_RE.search(ln_s) or ln_low in _EDITORIAL_PASTE_WRAPPER_MARKERS)
+        if not found_wrapper:
+            if is_wrapper:
+                found_wrapper = True
+            continue
+        out.append(str(ln or ""))
+    return "\n".join(out).strip()
+
+
+def _instruction_intent_anchor_context(*, user_text_raw: str, user_text: str) -> tuple[bool, str]:
+    """One-turn KAIOKEN anchor: editorial instruction + explicit paste wrapper => classify as working."""
+    src = str(user_text_raw or user_text or "")
+    if not src.strip():
+        return False, str(user_text or "")
+    has_editorial_intent = bool(_EDITORIAL_INTENT_VERB_RE.search(src))
+    has_wrapper = _has_editorial_paste_wrapper(src)
+    if not (has_editorial_intent and has_wrapper):
+        return False, str(user_text or "")
+    instruction_segment = _extract_instruction_segment_before_wrapper(src)
+    if instruction_segment:
+        return True, instruction_segment
+    return True, str(user_text or "")
+
+
 _CHEATSHEETS_DIR = Path(__file__).resolve().parent / "cheatsheets"
 try:
     if _load_cheatsheets_entries is not None:
@@ -3030,6 +3111,12 @@ async def v1_chat_completions(req: Request):
         make_json_response=lambda t: JSONResponse(_make_openai_response(t)),
     )
     if preflight_handled:
+        raw_cmd = str(user_text_raw or "").strip().lower()
+        if raw_cmd.startswith(">>web") or raw_cmd.startswith(">>wiki") or raw_cmd.startswith(">>define"):
+            state.post_editorial_lock_active = False
+            state.post_editorial_lock_ttl = 0
+            state.post_editorial_object_context = ""
+            state.post_editorial_context_inject_pending = False
         _emit_kaioken_telemetry(
             state=state,
             session_id=session_id,
@@ -3038,6 +3125,19 @@ async def v1_chat_completions(req: Request):
             outcome={"stage": "preflight"},
         )
         return preflight_resp
+
+    editorial_instruction_anchor_active, kaioken_classifier_text = _instruction_intent_anchor_context(
+        user_text_raw=str(user_text_raw or ""),
+        user_text=str(user_text or ""),
+    )
+    if editorial_instruction_anchor_active:
+        # One-turn anchor fired on this turn; arm short post-editorial lock
+        # for the next plain follow-ups to avoid accidental auto-retrieval.
+        state.post_editorial_lock_active = True
+        state.post_editorial_lock_ttl = 2
+        obj = _extract_object_segment_after_wrapper(str(user_text_raw or user_text or ""))
+        state.post_editorial_object_context = str(obj or "")[:_POST_EDITORIAL_OBJECT_CONTEXT_MAX_CHARS].strip()
+        state.post_editorial_context_inject_pending = False
 
     _dbg(f"[DEBUG] selector={selector!r}, user_text={_debug_user_fragment(user_text)}")
 
@@ -3048,8 +3148,11 @@ async def v1_chat_completions(req: Request):
     kaioken_macro_for_vodka = "working"
     kaioken_confidence_for_vodka = "low"
     try:
-        if _kaioken_classify_register is not None:
-            cls_now = _kaioken_classify_register(str(user_text or ""))
+        if editorial_instruction_anchor_active:
+            kaioken_macro_for_vodka = "working"
+            kaioken_confidence_for_vodka = "high"
+        elif _kaioken_classify_register is not None:
+            cls_now = _kaioken_classify_register(str(kaioken_classifier_text or ""))
             macro_raw = str(getattr(cls_now, "macro", "") or "").strip().lower()
             conf_raw = str(getattr(cls_now, "confidence", "") or "").strip().lower()
             if macro_raw in {"working", "casual", "personal"}:
@@ -3279,8 +3382,11 @@ async def v1_chat_completions(req: Request):
     turn_macro = "working"
     turn_subsignals: set[str] = set()
     try:
-        if _kaioken_classify_register is not None:
-            cls_now = _kaioken_classify_register(str(user_text or ""))
+        if editorial_instruction_anchor_active:
+            turn_macro = "working"
+            turn_subsignals = set()
+        elif _kaioken_classify_register is not None:
+            cls_now = _kaioken_classify_register(str(kaioken_classifier_text or ""))
             turn_macro = str(getattr(cls_now, "macro", "working") or "working").strip().lower()
             turn_subsignals = {
                 str(s).strip().lower()
@@ -3491,6 +3597,37 @@ async def v1_chat_completions(req: Request):
             if constraints_block
             else quote_guard_constraints
         )
+    if editorial_instruction_anchor_active:
+        editorial_constraints = (
+            "Editorial instruction enforcement (one-turn):\n"
+            "- Critique-only mode.\n"
+            "- Do NOT rewrite the provided text.\n"
+            "- Do NOT summarize or validate the draft.\n"
+            "- Do NOT use encouragement/praise language.\n"
+            "- Provide concrete critique points (clarity, structure, evidence, tone) only."
+        )
+        constraints_block = (
+            f"{constraints_block}\n\n{editorial_constraints}".strip()
+            if constraints_block
+            else editorial_constraints
+        )
+    elif bool(getattr(state, "post_editorial_context_inject_pending", False)):
+        obj_ctx = str(getattr(state, "post_editorial_object_context", "") or "").strip()
+        if obj_ctx:
+            followup_ctx = (
+                "Editorial follow-up context (passive):\n"
+                "- The user is still referring to the previously pasted draft.\n"
+                "- Use this context to interpret short follow-ups.\n"
+                "- Do NOT rewrite unless explicitly asked.\n"
+                "Pasted draft context:\n"
+                f"{obj_ctx}"
+            )
+            constraints_block = (
+                f"{constraints_block}\n\n{followup_ctx}".strip()
+                if constraints_block
+                else followup_ctx
+            )
+        state.post_editorial_context_inject_pending = False
     scratchpad_exhaustive = False
     scratchpad_locked_indices = set(
         int(i)
@@ -3644,7 +3781,10 @@ async def v1_chat_completions(req: Request):
 
     # KAIOKEN phase1 soft guidance is model-chat only and should apply
     # consistently to both serious and fun/fun-rewrite generation paths.
-    kaioken_hint = _build_kaioken_soft_constraints(state=state, user_text=user_text)
+    kaioken_hint = _build_kaioken_soft_constraints(
+        state=state,
+        user_text=(kaioken_classifier_text if editorial_instruction_anchor_active else user_text),
+    )
     if kaioken_hint:
         constraints_block = (
             f"{constraints_block}\n\n{kaioken_hint}".strip()
@@ -3977,6 +4117,10 @@ async def v1_chat_completions(req: Request):
         correction_is_strong = False
         skip_correction_bind = False
         if correction_bind:
+            if editorial_instruction_anchor_active:
+                # One-turn instruction-intent anchor: editorial turns with explicit
+                # pasted/file wrapper must not be hijacked into correction-bind.
+                skip_correction_bind = True
             low = str(user_text or "").lower()
             is_definitional_turn = bool(_DEFINITIONAL_QUERY_RE.search(str(user_text or "")))
             new_v, unit_v, _old_v = _extract_numeric_correction(user_text)
