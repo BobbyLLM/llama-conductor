@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% if page.title %}{{ page.title }} | {% endif %}llama-conductor</title>
   <meta name="google-site-verification" content="X-oVkpKrZtcgUicays4QvguYOmD5x98mby9rVN5yx10" />
+  <link rel="alternate" type="application/rss+xml" title="llama-conductor RSS" href="https://bobbyllm.codeberg.page/llama-conductor/feed.xml">
   <link rel="stylesheet" href="{{ '/assets/css/site.css' | relative_url }}?v={{ site.time | date: '%s' }}">
 </head>
 <body>
@@ -14,6 +15,7 @@
     <nav>
       <a href="{{ '/' | relative_url }}">Home</a>
       <a href="{{ '/about/' | relative_url }}">About</a>
+      <a href="{{ '/feed.xml' | relative_url }}">RSS</a>
     </nav>
   </header>
   <main class="wrap">

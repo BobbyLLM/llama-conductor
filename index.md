@@ -18,4 +18,5 @@ BobbyLLM's field notes on local AI, spite engineering, and teaching a 4B model t
 
 - [Codeberg](https://codeberg.org/BobbyLLM/llama-conductor)
 - [GitHub mirror](https://github.com/BobbyLLM/llama-conductor)
+- [RSS Feed]({{ '/feed.xml' | relative_url }})
 - [About]({{ '/about/' | relative_url }})

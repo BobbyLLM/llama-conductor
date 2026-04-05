@@ -16,3 +16,7 @@ BobbyLLM's field notes on local AI, spite engineering, and teaching a 4B model t
 - [I'd like to show you my...ass](/blog/claude-in-a-can-1/)
 
 - [I hate YAML.](/blog/i-hate-yaml/)
+
+## Follow
+
+- [RSS Feed]({{ '/feed.xml' | relative_url }})
