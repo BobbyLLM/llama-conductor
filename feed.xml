@@ -1,38 +1,46 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
 <channel>
   <title>llama-conductor blog</title>
-  <link>https://bobbyllm.codeberg.page/llama-conductor/blog/</link>
+  <link>https://bobbyllm.codeberg.page/llama-conductor/blog.html</link>
   <description>deterministic routing, grounded reasoning, and operator notes</description>
   <atom:link href="https://bobbyllm.codeberg.page/llama-conductor/feed.xml" rel="self" type="application/rss+xml" />
-  <lastBuildDate>Sun, 05 Apr 2026 10:51:23 GMT</lastBuildDate>
+  <lastBuildDate>Tue, 07 Apr 2026 06:33:58 GMT</lastBuildDate>
   <item>
-    <title>SCP-LLM-121</title>
-    <link>https://bobbyllm.codeberg.page/llama-conductor/blog/scp-llm-121/</link>
-    <guid isPermaLink="true">https://bobbyllm.codeberg.page/llama-conductor/blog/scp-llm-121/</guid>
-    <pubDate>Sun, 29 Mar 2026 05:09:44 GMT</pubDate>
-    <description>**Item #:** SCP-LLM-121</description>
-  </item>
-  <item>
-    <title>I&#x27;d like to show you my...ass</title>
-    <link>https://bobbyllm.codeberg.page/llama-conductor/blog/claude-in-a-can-1/</link>
-    <guid isPermaLink="true">https://bobbyllm.codeberg.page/llama-conductor/blog/claude-in-a-can-1/</guid>
+    <title>I&apos;d like to show you my...ass</title>
+    <link>https://bobbyllm.codeberg.page/llama-conductor/blog/claude-in-a-can-1.html</link>
+    <guid isPermaLink="true">https://bobbyllm.codeberg.page/llama-conductor/blog/claude-in-a-can-1.html</guid>
     <pubDate>Thu, 26 Mar 2026 16:33:39 GMT</pubDate>
-    <description>**I&#x27;d like to show you my...ass**</description>
+    <description>**I&apos;d like to show you my...ass**</description>
   </item>
   <item>
     <title>I hate YAML.</title>
-    <link>https://bobbyllm.codeberg.page/llama-conductor/blog/i-hate-yaml/</link>
-    <guid isPermaLink="true">https://bobbyllm.codeberg.page/llama-conductor/blog/i-hate-yaml/</guid>
+    <link>https://bobbyllm.codeberg.page/llama-conductor/blog/i-hate-yaml.html</link>
+    <guid isPermaLink="true">https://bobbyllm.codeberg.page/llama-conductor/blog/i-hate-yaml.html</guid>
     <pubDate>Tue, 24 Mar 2026 11:14:17 GMT</pubDate>
-    <description>After getting sick of baked-in, pre-trained model priors (No Qwen, that&#x27;s NOT what vibe-coding means. That&#x27;s not what abliteration means. That&#x27;s not what any of this means!) I decided to add in a &quot;clever little feature&quot; Cheatsheets - see: N</description>
+    <description>After getting sick of baked-in, pre-trained model priors (No Qwen, that&apos;s NOT what vibe-coding means. That&apos;s not what abliteration means. That&apos;s not what any of this means!) I decided to add in a &quot;clever little feature&quot; Cheatsheets - see: N...</description>
   </item>
   <item>
     <title>Mom, can we get ChatGPT? Mom: we have ChatGPT at home</title>
-    <link>https://bobbyllm.codeberg.page/llama-conductor/blog/meme-test/</link>
-    <guid isPermaLink="true">https://bobbyllm.codeberg.page/llama-conductor/blog/meme-test/</guid>
+    <link>https://bobbyllm.codeberg.page/llama-conductor/blog/meme-test.html</link>
+    <guid isPermaLink="true">https://bobbyllm.codeberg.page/llama-conductor/blog/meme-test.html</guid>
     <pubDate>Tue, 17 Mar 2026 08:51:12 GMT</pubDate>
     <description>As you may (or may not) be aware, there is a current fun meme test going around (as of 02.26.26) that purports to challenge LLM reasoning abilities and world models.</description>
   </item>
+  <item>
+    <title>No dessert till after dinner</title>
+    <link>https://bobbyllm.codeberg.page/llama-conductor/blog/no-dessert-till-after-dinner.html</link>
+    <guid isPermaLink="true">https://bobbyllm.codeberg.page/llama-conductor/blog/no-dessert-till-after-dinner.html</guid>
+    <pubDate>Tue, 07 Apr 2026 06:30:17 GMT</pubDate>
+    <description>I&apos;m convinced that coding is 5% &quot;Hey, this is a cool idea&quot; and 95% &quot;Fuck me, why did I do it this way&quot; edge case bug squashing.</description>
+  </item>
+  <item>
+    <title>SCP-LLM-121</title>
+    <link>https://bobbyllm.codeberg.page/llama-conductor/blog/scp-llm-121.html</link>
+    <guid isPermaLink="true">https://bobbyllm.codeberg.page/llama-conductor/blog/scp-llm-121.html</guid>
+    <pubDate>Sun, 29 Mar 2026 05:09:44 GMT</pubDate>
+    <description>**Item #:** SCP-LLM-121</description>
+  </item>
 </channel>
 </rss>
+

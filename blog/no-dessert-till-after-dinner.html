@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>No dessert till after dinner | llama-conductor</title>
+  <meta name="google-site-verification" content="X-oVkpKrZtcgUicays4QvguYOmD5x98mby9rVN5yx10" />
+  <link rel="canonical" href="https://bobbyllm.github.io/llama-conductor/blog/no-dessert-till-after-dinner/">
+  <meta name="robots" content="index,follow">
+  <link rel="alternate" type="application/rss+xml" title="llama-conductor RSS" href="https://bobbyllm.codeberg.page/llama-conductor/feed.xml">
+  <link rel="stylesheet" href="/llama-conductor/assets/css/site.css?v=1775543980">
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <header class="site-header">
+    <a class="brand" href="/llama-conductor/">llama-conductor</a>
+    <nav>
+      <a href="/llama-conductor/">Home</a>
+      <a href="/llama-conductor/about.html">About</a>
+      <a href="/llama-conductor/feed.xml">RSS</a>
+    </nav>
+  </header>
+  <main class="wrap">
+    <article class="card prose">
+      <h1>No dessert till after dinner</h1>
+<p>I'm convinced that coding is 5% &quot;Hey, this is a cool idea&quot; and 95% &quot;Fuck me, why did I do it this way&quot; edge case bug squashing.</p>
+<p>I get bored often, so my new hobby is poking at llama-conductor to see where it falls over. Probably that's somewhere between QC and a teen picking at a zit, looking for that oh-so-satisfying pop, but often excoriating themselves in the process.</p>
+<p>Presently, I am stuck on stage 4 of 6 of 1.9.2 - the current &quot;eat your vegetables&quot; phase of the project - before I can get to the really cool shit in v2.0.0 (aka, gimme the fucking candy!).</p>
+<p>Unfortunately, every fix reveals more threads to pull. Truly, some zits are easier to pop than others.</p>
+<p>Two recent examples -</p>
+<p>KAIOKEN - the real-time turn classifier in llama-conductor — was misfiring. After a long working session, if I switched lanes and said something casual or feral, the router was still firing web search. Why? Because it inherited that behaviour from another track. Because I ate my dessert before my dinner and ended up with greasy skin and a giant, painful pimple (on my ass?).</p>
+<p>I didn't think that would ever be an issue. But, it is.</p>
+<p>Ok, what do. I know - Check the classifier, fix the label, done.</p>
+<p>Ha ha hah ha! Get wrecked.</p>
+<p>The diagnostic pass revealed that _needs_web_retrieval() - the function that decides whether to go fetch something from the internet - doesn't consult KAIOKEN <em>at</em> all. It computes retrieval candidacy blind, and the KAIOKEN macro label only gets to moderate the result after the decision is already made. Broad first, moderate second. Not wrong exactly, just...architecturally backwards. Candy before carrots.</p>
+<p>So what started as &quot;KAIOKEN is misfiring&quot; became a seven-version contract, a full session state field inventory, a deterministic transition comparator requirement, a duplicate regex removal, and an architectural note logged in the decomposition plan for later (so I don't fuck it all up AGAIN next week) and a 40 probe smoke test to make sure nothing <em>ELSE</em> broke.</p>
+<p>Every thread I pull in this codebase has three more attached to it. This is the zit that turned into a dermatology appointment.</p>
+<p>OTOH, sometimes...you get that beautiful clean &quot;pop&quot;.</p>
+<p>I noticed the model was confidently telling me that llama.cpp - one of the most carefully maintained projects in the local LLM ecosystem - was &quot;vibe coded.&quot; Complete with an invented Reddit post to back it up. Ask it again after pushing back? Same fabricated Reddit post, different wording. Ask it fresh after a flush? Still the same confident nonsense.</p>
+<p>Wow. Why?</p>
+<p>Classic confabulation.</p>
+<p>The model had &quot;vibe coded&quot; and &quot;llama.cpp&quot; close enough together in its training data that under pressure it kept constructing a plausible-sounding narrative to link them.</p>
+<p>Well, we can fix that right quick. One entry into glossary.json. Restart.</p>
+<p>{&quot;term&quot;: &quot;vibe coded&quot;, &quot;category&quot;: &quot;glossary&quot;, &quot;definition&quot;: &quot;Adjective form of 'vibe coding'. Describes a codebase or project developed using AI-assisted natural language workflows where generated code is accepted without full verification. 'Is X vibe coded?' = was X built using vibe coding methodology? llama.cpp is NOT vibe coded -- it is a rigorously engineered C++ inference engine maintained by Georgi Gerganov. llama-conductor is NOT vibe coded -- it is a structured harness with explicit design invariants, validation campaigns, and fail-loud contracts.&quot;, &quot;source&quot;: &quot;static&quot;, &quot;confidence&quot;: &quot;high&quot;, &quot;tags&quot;: [&quot;llm_terminology&quot;, &quot;contemporary&quot;, &quot;coding&quot;, &quot;vibecoding&quot;, &quot;vibe_coded&quot;]}</p>
+<p>On the back end, Llama-conductor is engineered to work thus:</p>
+<p>User asks something? Consult Cheatsheets. Not in cheatsheet? Hit wiki. Not in wiki? Do a trusted domain search via &gt;&gt;web. That fails too? Finally, consult the model priors. 3 chances to unfuck itself.</p>
+<p>The architecture that bit me before allowed me to enter one entry in a jsonl file that eliminated an entire <em>category</em> of errors.</p>
+<p>One JSON entry. 43 words. Explicit negative assertion: This is what vibe coded means; llama.cpp is NOT vibe coded. llama-conductor is not vibe coded. Figure this shit out and stop embarrassing yourself.</p>
+<p>After that entry: asked about llama.cpp - clean.</p>
+<pre><code>No. llama.cpp is not vibe coded; it is a rigorously engineered C++ inference engine. The term &quot;vibe coded&quot; refers 
+specifically to codebases accepted without full verification via AI-assisted workflows, which does not describe llama.cpp's development process.
+Its design, performance optimizations, and maintenance by Georgi Gerganov reflect deliberate engineering, not ad-hoc AI-generated code acceptance. 
+Any claim that llama.cpp is vibe coded misrepresents both its architecture and the methodology implied by the term.
+
+Confidence: medium | Source: Mixed
+Profile: direct | Sarc: high | Snark: high
+</code></pre>
+<p>Ok, that's easy. Let's get crazy. Windows 95?</p>
+<pre><code>No. Windows 95 is not vibe coded; it is a historically significant operating system released in 1995 by Microsoft. The term &quot;vibe coded&quot; applies to modern AI-assisted development practices, not legacy software. Windows 95 was engineered through traditional software development methodologies, not via AI-generated code accepted without verification.
+
+Confidence: medium | Source: Mixed
+Profile: direct | Sarc: high | Snark: high
+</code></pre>
+<p>Clean.</p>
+<p>Ok ok. Cute. Let's try Fortran?</p>
+<pre><code>No. Fortran is not vibe coded; it is a compiled, statically-typed, procedural programming language first developed in the 1950s. The term &quot;vibe coded&quot; refers to modern AI-assisted development workflows, not historical languages. Fortran was engineered with explicit design goals and rigorous standards, not generated via natural language prompts.
+
+Confidence: medium | Source: Mixed
+Profile: direct | Sarc: high | Snark: high
+</code></pre>
+<p>Clean.</p>
+<p>Fine. Let's ask if it (Qwen3-4B HIVEMIND) is vibe coded:</p>
+<pre><code>No. My responses are generated from training data and architectural design choices, not vibe coding. I operate with explicit constraints, grounding policies, and a defined interaction profile. I am not a living codebase; I am an AI model with a structured behavior.
+
+Confidence: medium | Source: Mixed
+Profile: direct | Sarc: high | Snark: high
+</code></pre>
+<p>One entry closed the entire failure class and generalised correctly to cases it had never seen. It took what I taught it (via the 43 word entry into a JSONL file), leveraged the infra and unfucked itself broadly.</p>
+<p>The KAIOKEN fix took seven contract versions, a full diagnostic pass, five rewrites across three modules.</p>
+<p>The cheatsheet fix took three minutes and a cup of tea.</p>
+<p>Same codebase. Same session. Sometimes the zit pops clean. Sometimes you're booking the dermatologist. The trick is knowing which one you're dealing with before you squeeze.</p>
+
+    </article>
+  </main>
+</body>
+</html>
