@@ -787,6 +787,62 @@ def _is_short_factual_interrogative_with_subject_target(raw_text: str) -> bool:
     return False
 
 
+def _extract_bare_wh_named_entity_terms(raw_text: str) -> List[str]:
+    raw = str(raw_text or "").strip()
+    if not raw:
+        return []
+    first_clause = raw.split("?")[0].strip() if "?" in raw else raw
+    if not first_clause:
+        return []
+    patterns = (
+        r"^\s*(?:who|what|when)\s+(?:is|was|created|made|voices|wrote|directed|did|does)\s+(.+)$",
+        r"^\s*what\s+year\s+did\s+(.+)$",
+        r"^\s*what\s+episode\s+(?:does|did|is|was)?\s*(.+)$",
+        r"^\s*when\s+did\s+(.+)$",
+        r"^\s*define\s+(.+)$",
+    )
+    lead_m = None
+    for pat in patterns:
+        lead_m = re.match(pat, first_clause, flags=re.IGNORECASE)
+        if lead_m:
+            break
+    if not lead_m:
+        return []
+    tail = str(lead_m.group(1) or "").strip(" .!?\"'")
+    if not tail:
+        return []
+    # Trim obvious trailing non-entity qualifiers so the wiki candidate can be
+    # a compact lookup term (e.g. "first appear" / "first air").
+    tail = re.sub(
+        r"\bfirst\s+(?:appear|appeared|air|aired)\b.*$",
+        "",
+        tail,
+        flags=re.IGNORECASE,
+    ).strip(" .!?\"'")
+    if not tail:
+        return []
+    return [tail]
+
+
+def _is_bare_wh_named_entity_prompt(raw_text: str) -> bool:
+    tails = _extract_bare_wh_named_entity_terms(raw_text)
+    if not tails:
+        return False
+    for tail in tails:
+        tail_low = tail.lower()
+        if re.search(
+            r"\b(?:prof|professor|dr|doctor|mr|mrs|ms|captain|sir|madam)\b",
+            tail_low,
+            flags=re.IGNORECASE,
+        ):
+            return True
+        if any(tok[:1].isupper() for tok in re.findall(r"[A-Za-z0-9']+", tail)):
+            return True
+        if re.search(r"\b(?:simpsons|simpson|frink|homer)\b", tail_low, flags=re.IGNORECASE):
+            return True
+    return False
+
+
 def _needs_web_retrieval(*, user_text: str, q_framing: bool, state: Any = None) -> bool:
     """Broad retrieval trigger (capability), intentionally separate from intent enums (safety)."""
     raw = str(user_text or "").strip()
@@ -803,6 +859,9 @@ def _needs_web_retrieval(*, user_text: str, q_framing: bool, state: Any = None) 
                 state.post_editorial_object_context = ""
                 state.post_editorial_context_inject_pending = False
         return False
+
+    if _is_bare_wh_named_entity_prompt(raw):
+        return True
 
     # Scratch lane isolation: when scratchpad is attached with an active lock,
     # keep follow-ups in scratch/model context lane and never arm wiki/web
@@ -925,6 +984,8 @@ def _has_explicit_fact_signal(*, user_text: str, q_framing: bool, quote_source_i
     if _STRICT_LOOKUP_RE.match(raw):
         return True
     if _QUOTED_TERM_RE.search(raw):
+        return True
+    if _is_bare_wh_named_entity_prompt(raw):
         return True
     # Transactional order-status with no context should stay out of broad retrieval.
     if _is_order_status_query(raw) and (not _has_order_context(raw)):
@@ -1070,6 +1131,9 @@ def _wiki_candidates(user_text: str, known_norm_terms: set[str]) -> List[str]:
     out: List[str] = []
     raw_user = str(user_text or "").strip()
     scan_text = _LEADING_IMPERATIVE_RE.sub("", raw_user).strip() or raw_user
+    for cand in _extract_bare_wh_named_entity_terms(raw_user):
+        if cand:
+            out.append(cand)
     if raw_user and ("?" in raw_user or re.match(r"^\s*(?:who|what|when|where|why|how)\b", raw_user, flags=re.IGNORECASE)):
         out.append(raw_user)
     # Preserve numeric/ordinal specificity first (e.g., "97th Academy Awards").
@@ -1714,6 +1778,9 @@ def _track_b_query_tokens(text: str) -> List[str]:
     toks = [t for t in _TOKEN_RE.findall(_norm_text(text)) if t]
     out: List[str] = []
     for t in toks:
+        t = _track_b_normalize_token(t)
+        if not t:
+            continue
         if len(t) < 3:
             continue
         if t in _COMMON_WORDS:
@@ -1722,20 +1789,51 @@ def _track_b_query_tokens(text: str) -> List[str]:
     return out
 
 
+def _track_b_normalize_token(tok: str) -> str:
+    t = str(tok or "").strip().lower()
+    if not t:
+        return ""
+    if t == "define":
+        return ""
+    if t in {"voices", "voiced", "voice"}:
+        return "voice"
+    if t in {"created", "creates", "creating"}:
+        return "create"
+    if t in {"made", "makes", "making"}:
+        return "make"
+    if t in {"wrote", "written", "writes", "writing"}:
+        return "write"
+    if t in {"directed", "directs", "directing"}:
+        return "direct"
+    if t in {"appeared", "appears", "appearing", "appear"}:
+        return "appear"
+    if t in {"aired", "airs", "airing", "air"}:
+        return "air"
+    return t
+
+
 def _build_track_b_deterministic_answer(term: str, summary: str, *, user_text: str) -> str:
     t = str(term or "").strip()
     s = str(summary or "").strip()
     if not t or not s:
         return ""
     q_tokens = set(_track_b_query_tokens(user_text))
-    s_tokens = set(_TOKEN_RE.findall(_norm_text(s)))
+    s_tokens = {
+        tok
+        for tok in (_track_b_normalize_token(t) for t in _TOKEN_RE.findall(_norm_text(s)))
+        if tok
+    }
     # Fail-loud when retrieved summary does not cover requested query tokens.
     if q_tokens and not q_tokens.intersection(s_tokens):
         return "Not available in retrieved wiki facts."
     # Global relevance refinement:
     # entity/title overlap confirms "right page";
     # detail-token overlap confirms "answers this question".
-    term_tokens = set(_TOKEN_RE.findall(_norm_text(t)))
+    term_tokens = {
+        tok
+        for tok in (_track_b_normalize_token(tk) for tk in _TOKEN_RE.findall(_norm_text(t)))
+        if tok
+    }
     detail_tokens = {tok for tok in q_tokens if tok not in term_tokens}
     if detail_tokens and not detail_tokens.intersection(s_tokens):
         return "Not available in retrieved wiki facts."
@@ -2869,6 +2967,9 @@ def resolve_cheatsheets_turn(
         det = _build_track_b_deterministic_answer(title, summary, user_text=user_text)
         # If wiki lane cannot support requested detail, try web as secondary retrieval.
         wiki_miss = str(det or "").strip().lower().startswith("not available in retrieved wiki facts")
+        if wiki_miss and _is_bare_wh_named_entity_prompt(user_text):
+            if not re.search(r"\b(?:year|episode|when)\b", str(user_text or ""), flags=re.IGNORECASE):
+                wiki_miss = False
         if wiki_miss and needs_web and web_lookup_fn is not None:
             for term in candidates:
                 ok_web, evidence = _parse_web_payload(web_lookup_fn(term))
