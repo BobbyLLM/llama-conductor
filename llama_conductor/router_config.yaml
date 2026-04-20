@@ -1,0 +1,332 @@
+﻿# llama-conductor main settings
+# version 1.8.0
+
+# -----------------------------------------------------------------------------
+# Backend / Upstream
+# -----------------------------------------------------------------------------
+# Backend upstream configuration.
+# `provider` controls START-2 launcher behavior:
+# - llama_cpp: launch local llama-server and route via configured local port
+# - vllm|ollama: do not launch local llama-server; use external upstream URLs
+# - custom: fully external backend, launcher skips upstream readiness checks
+backend:
+  provider: "llama_cpp"  # llama_cpp|vllm|ollama|custom
+  local_llama_port: 8010
+  upstream_base_url: "http://127.0.0.1:8010"
+  upstream_chat_url: "http://127.0.0.1:8010/v1/chat/completions"
+  llama_cpp:
+    # Personal/local launcher defaults (used by launch_stack.py).
+    # CLI args can override any of these at runtime.
+    exe_path: "./llama-server.exe"
+    models_dir: "./models"
+    models_preset_path: "./models/llama-router-models.ini"
+    host: "0.0.0.0"
+    port: 8010
+    ctx_size: 8192
+    threads: 12
+    threads_batch: 12
+    keep: 96
+    batch_size: 512
+    ubatch_size: 256
+    parallel: 1
+
+# Deprecated compatibility key (still read as fallback by config.py).
+# Prefer backend.upstream_chat_url for all new configs.
+llama_swap_url: "http://127.0.0.1:8010/v1/chat/completions"
+
+# -----------------------------------------------------------------------------
+# Router / Frontend / Launcher
+# -----------------------------------------------------------------------------
+# Router bind port (when running `python router_fastapi.py`)
+port: 9000
+
+# Router diagnostics (privacy-safe defaults).
+router:
+  debug: false
+  debug_log_user_text: false
+  image_emitter:
+    enabled: false
+
+# Frontend launch toggles (used by START-2.bat).
+frontend:
+  shim:
+    # true: launch shim_server.py on startup (llama.cpp WebUI + auth + rewrite layer)
+    # false: do not launch shim, use router/backend directly
+    enabled: true
+    host: "0.0.0.0"
+    port: 8088
+    # true: inject shim toolbar/scripts into WebUI responses
+    # false: proxy without UI script injection
+    inject_ui: true
+    auth_user: ""
+    auth_password: ""
+    force_vision: true
+    render_mode: "buffered"  # stream|buffered
+    ui_model_alias: "MOA"
+    router_model_id: "moa-router"
+    single_instance: true
+    takeover_existing: true
+    takeover_foreign: true
+    takeover_timeout_s: 5.0
+
+# Launcher orchestration defaults (used by launch_stack.py).
+launcher:
+  router_host: "0.0.0.0"
+  ready_timeout_s: 45
+  auto_clean_before_start: true
+
+# -----------------------------------------------------------------------------
+# Model Presets / Role Mapping
+# -----------------------------------------------------------------------------
+# llama-server router-mode preset generation.
+# This drives startup-time generation of the models-preset INI consumed by llama-server.
+llama_server:
+  models_preset:
+    enabled: true
+    defaults:
+      c: 8192
+    models:
+      Qwen3VL-4B-Instruct-Q4_K_M:
+        mmproj: "./models/mmproj.gguf"
+# Model role mapping (router passes `role=`; call_model resolves to these model IDs).
+roles:
+  thinker: "Qwen3-4B-Hivemind-Inst-Q4_K_M-imat"
+  critic: "Phi-4-mini-instruct-Q4_K_M"
+  vision: "Qwen3VL-4B-Instruct-Q4_K_M"
+  coder: "Qwen3-4B-Hivemind-Inst-Q4_K_M-imat"
+  second_op: "Nanbeige4-3B-Thinking-2511-Q4_K_M"
+  judge: "Phi-4-mini-instruct-Q4_K_M"
+# -----------------------------------------------------------------------------
+# Retrieval / Knowledge Sources
+# -----------------------------------------------------------------------------
+# Vault is Qdrant-only; Mentats uses this kb label when searching Qdrant.
+vault_kb_name: "vault"
+
+kb_paths:
+  example_kb: "docz/kb/example_kb"
+
+# Filesystem KB folders.
+# These are *not* Qdrant. They are folders containing raw docs + SUMM_*.md files. Add your own.
+rag:
+  qdrant_host: "localhost"
+  qdrant_port: 6333
+  collection: "moa_kb_docs"
+  vector_name: "e5_small_v2"
+
+# Web sidecar (>>web): provider-agnostic retrieval lane.
+web_search:
+  enabled: true
+  ## Public default: keyless DDG Lite for zero-config startup.
+  ## DDG Lite rate-limits quickly; switch to free Tavily API or your own search engine ASAP.
+  provider: "ddg_lite"   # ddg_lite|tavily|searxng|custom
+  max_results: 5
+  auto_top_n: 3          # automatic cascade keeps top N gated rows (1..5)
+  timeout_sec: 8
+  safe_search: true
+  include_domains: []     # optional allow-list (e.g. ["wikipedia.org"])
+  exclude_domains: []     # optional block-list
+  intent_domains:
+    showtimes:
+      preferred:
+        - muvitimes.com
+      permitted:
+        - readingcinemas.com.au
+      blocked:
+        - imdb.com
+      ## Optional: chain-level fallback URLs used when venue verification fails.
+      ## Format: "<chain name>": "<homepage url>"
+      ## Example:
+      ## chain_homepages:
+      ##   reading cinemas: "https://readingcinemas.com.au"
+      chain_homepages: {}
+      ## Optional: venue disambiguation hints for retrieval shaping.
+      ## Format: "<suburb + state query key>": "<postcode>"
+      ## Example:
+      ## venue_postcodes:
+      ##   armadale wa: "6112"
+      venue_postcodes: {}
+      ## Optional: deterministic venue URL overrides (bypass search for known venues).
+      ## Format:
+      ## venue_urls:
+      ##   <domain>:
+      ##     "<suburb + state query key>": "<relative path>"
+      ## Example:
+      ## venue_urls:
+      ##   muvitimes.com:
+      ##     armadale wa: "cinemas/in-perth/reading-cinemas-armadale.html"
+      venue_urls: {}
+  # Trust boost only (ranking bias), not verification/allowlist.
+  # Built-in trusted domains remain active in code.
+  # Add domains here to receive the same +1.0 trust weighting.
+  user_trust_domains:
+    # Existing medical/academic cluster
+    - nih.gov
+    - medlineplus.gov
+    - nhs.uk
+    - cochrane.org
+    - mayoclinic.org
+    - pubmed.ncbi.nlm.nih.gov
+    - pmc.ncbi.nlm.nih.gov
+    - chiromt.biomedcentral.com
+    - link.springer.com
+    - researchgate.net
+    - nature.com
+    - thelancet.com
+    - bmj.com
+    - nejm.org
+    - arxiv.org
+    # Economics / finance / policy
+    - investopedia.com
+    - rba.gov.au
+    - federalreserve.gov
+    - imf.org
+    - worldbank.org
+    - oecd.org
+    - abs.gov.au
+    - treasury.gov.au
+    # Academic / research (general)
+    - stanford.edu
+    - mit.edu
+    - ox.ac.uk
+    - cam.ac.uk
+    - anu.edu.au
+    # Science / public health institutions
+    - nasa.gov
+    - noaa.gov
+    - csiro.au
+    - who.int
+    # Law / government / regulator
+    - legislation.gov.au
+    - aph.gov.au
+    - austlii.edu.au
+    - ico.org.uk
+    # General reference / quality news
+    - britannica.com
+    - theconversation.com
+    - apnews.com
+    - bbc.com
+    - reuters.com
+    - wikipedia.org
+  synth_policies:
+    default:
+      disallowed_domains:
+        - youtube.com
+        - facebook.com
+        - reddit.com
+        - twitter.com
+        - x.com
+        - tiktok.com
+        - instagram.com
+        - tumblr.com
+        - pinterest.com
+      require_one_credible_source: true
+      min_independent_sources: 2
+  # Example:
+  # user_trust_domains:
+  #   - bbc.co.uk
+  #   - reuters.com
+  #   - pubmed.ncbi.nlm.nih.gov
+  recency_days: 0         # 0 disables recency filter
+  api_key: ""
+  tavily:
+    api_key: ""
+  searxng:
+    base_url: "http://127.0.0.1:8888/search"
+  custom:
+    base_url: ""
+
+evidence_context_policies:
+  default:
+    on_refusal_followup:
+      ttl_turns: 1
+      underspecified_followup:
+        suppress_web_retrieval: true
+        set_wiki_fallback_active: false
+  health:
+    on_refusal_followup:
+      ttl_turns: 1
+      underspecified_followup:
+        suppress_web_retrieval: true
+        set_wiki_fallback_active: true
+
+# -----------------------------------------------------------------------------
+# Memory / Footer / Profile
+# -----------------------------------------------------------------------------
+# Vodka settings (overrides vodka_filter.py defaults)
+vodka:
+  # Presets reduce knob-soup; explicit keys below still override preset values.
+  # fast|balanced|max-recall
+  preset: "balanced"
+  storage_dir: "."  # empty = cwd, or set explicit path
+  subdir: "vodka"   # writes Vodka artifacts under total_recall/vodka
+  base_ttl_days: 3
+  touch_extension_days: 5
+  max_touches: 2
+  debug: false
+  debug_dir: "."
+  n_last_messages: 12
+  keep_first: false
+  max_chars: 6000
+  enable_summary: true
+  summary_segments_per_message: 8
+
+footer:
+  profile:
+    enabled: true
+    # always|non_default|debug
+    mode: "non_default"
+
+profile:
+  # startup default for new sessions: direct|casual|turbo
+  # turbo maps to the existing feral-equivalent runtime preset.
+  default: "direct"
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Deterministic state-transition reasoning router.
+# Default mode: the ground-state mode after boot and after >>flush.
+# Legal values: "" (serious/implicit), "raw", "fun", "fun_rewrite".
+# Stickies override this; >>flush clears stickies but preserves default_mode.
+mode:
+  default: "raw"
+
+# Phase 1 scope: bounded capacity / transfer family.
+state_solver:
+  enabled: true
+  auto_route: true
+  apply_in_raw: true
+
+# Vault chunking (for >>move to vault ingestion)
+vault:
+  chunk_words: 250        # Smaller chunks = better semantic matching for queries
+  chunk_overlap_words: 50  # Overlap prevents losing context at chunk boundaries
+
+mentats:
+  debug: false
+  debug_payload: false
+
+# -----------------------------------------------------------------------------
+# Scratchpad / KAIOKEN / Watchdog / Cheatsheets
+# -----------------------------------------------------------------------------
+# Scratchpad sidecar (ephemeral session-grounding)
+scratchpad:
+  storage_dir: "."         # base dir for total_recall/session_kb
+  max_entries: 12          # max captures retained per session file
+  max_capture_chars: 12000 # per-capture hard clip
+  top_k: 3                 # retrieval hits merged into facts block
+  max_chars: 1200          # max chars contributed to facts block
+  max_age_minutes: 60      # hard expiry; pruned on scratchpad access
+  exhaustive_response_mode: "raw"  # raw|llm; raw bypasses LLM for "all facts/everything" intents
+
+# KAIOKEN v2 phase 0 (telemetry-only, fail-open).
+kaioken:
+  enabled: false
+  mode: "coerce"            # apply soft KAIOKEN guidance on model-chat turns
+  log_all_routes: true      # log model + exempt routes with suppression reason
+  session_hash_salt: "kaioken-v1"
+
+# Temporary upstream watchdog (remove later if desired).
+# Writes `total_recall/upstream_watchdog.jsonl` for router/upstream health transitions.
+cheatsheets:
+  track_b:
+    enabled: true

@@ -1,0 +1,83 @@
+﻿# docker-compose.yml
+# Universal stack for llama-conductor:
+#   Core services: router + qdrant
+#   Optional profiles: ollama backend, open-webui frontend
+#
+# Quick start:
+#   docker compose up -d qdrant router
+#   docker compose --profile ollama up -d qdrant router ollama
+#   docker compose --profile ollama --profile webui up -d
+
+name: llama-conductor
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6333/collections >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  router:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # If you publish a prebuilt image, uncomment and set ROUTER_IMAGE in docker.env.example/.env:
+    # image: ${ROUTER_IMAGE}
+    container_name: llama-conductor
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    ports:
+      - "${ROUTER_PORT:-9000}:9000"
+      - "${SHIM_PORT:-8088}:8088"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - HF_HOME=/app/.cache/huggingface
+      - MOA_ROUTER_SINGLE_INSTANCE=true
+    volumes:
+      # Docker-safe config (qdrant host is service name "qdrant")
+      - ./docker/router_config.docker.yaml:/app/llama_conductor/router_config.yaml:rw
+      - router_cache:/app/.cache
+      - router_data:/app/total_recall
+    command: ["llama-conductor", "serve", "--host", "0.0.0.0", "--port", "9000"]
+
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  open-webui:
+    profiles: ["webui"]
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    depends_on:
+      - router
+    ports:
+      - "${WEBUI_PORT:-3000}:8080"
+    environment:
+      - OPENAI_API_BASE_URL=http://router:9000/v1
+      - OPENAI_API_KEY=dummy
+    volumes:
+      - open_webui_data:/app/backend/data
+
+volumes:
+  qdrant_data:
+  router_cache:
+  router_data:
+  ollama_data:
+  open_webui_data:

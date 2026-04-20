@@ -1,0 +1,2617 @@
+﻿# commands/handlers.py
+"""Main command handling logic."""
+
+import os
+import re
+import hashlib
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Set
+
+from ..config import (
+    KB_PATHS,
+    VAULT_KB_NAME,
+    CHEAT_SHEET_PATH,
+    FS_TOP_K,
+    FS_MAX_CHARS,
+    cfg_get,
+)
+from ..session_state import SessionState
+from ..interaction_profile import (
+    SETTABLE_FIELDS,
+    compute_effective_strength,
+    profile_set,
+    render_profile_show,
+    reset_profile,
+)
+from ..helpers import is_command, strip_cmd_prefix, parse_args
+from ..vault_ops import summ_new_in_kb, move_summ_to_vault
+from ..model_calls import call_model_prompt
+from .registry import resolve_command_key
+
+# Optional imports (feature-detected)
+try:
+    from ..fs_rag import build_fs_facts_block, find_summ_file_matches, find_summ_file_candidates  # type: ignore
+except Exception:
+    build_fs_facts_block = None  # type: ignore
+    find_summ_file_matches = None  # type: ignore
+    find_summ_file_candidates = None  # type: ignore
+
+try:
+    from ..sidecars import (  # type: ignore
+        parse_and_eval_calc,
+        format_calc_result,
+        list_vodka_memories,
+        format_memory_list,
+        find_quote_in_kbs,
+        format_quote_result,
+        flush_ctc_cache,
+        handle_wiki_query,
+        handle_web_query,
+        handle_web_synth_query,
+        resolve_web_evidence,
+        handle_define_query,
+        handle_exchange_query,
+        handle_weather_query,
+    )
+except Exception:
+    parse_and_eval_calc = None  # type: ignore
+    format_calc_result = None  # type: ignore
+    list_vodka_memories = None  # type: ignore
+    format_memory_list = None  # type: ignore
+    find_quote_in_kbs = None  # type: ignore
+    format_quote_result = None  # type: ignore
+    flush_ctc_cache = None  # type: ignore
+    handle_wiki_query = None  # type: ignore
+    handle_web_query = None  # type: ignore
+    handle_web_synth_query = None  # type: ignore
+    resolve_web_evidence = None  # type: ignore
+    handle_define_query = None  # type: ignore
+    handle_exchange_query = None  # type: ignore
+    handle_weather_query = None  # type: ignore
+
+try:
+    from ..trust_pipeline import (  # type: ignore
+        handle_trust_command,
+        generate_recommendations,
+        format_recommendations,
+    )
+except Exception:
+    handle_trust_command = None  # type: ignore
+    generate_recommendations = None  # type: ignore
+    format_recommendations = None  # type: ignore
+
+try:
+    from ..scratchpad_sidecar import (  # type: ignore
+        get_session_scratchpad_path,
+        clear_scratchpad,
+        list_scratchpad_records,
+        capture_scratchpad_output,
+        delete_scratchpad_by_index,
+        delete_scratchpad_by_query,
+        build_scratchpad_dump_text,
+        build_scratchpad_facts_block,
+    )
+except Exception:
+    get_session_scratchpad_path = None  # type: ignore
+    clear_scratchpad = None  # type: ignore
+    list_scratchpad_records = None  # type: ignore
+    capture_scratchpad_output = None  # type: ignore
+    delete_scratchpad_by_index = None  # type: ignore
+    delete_scratchpad_by_query = None  # type: ignore
+    build_scratchpad_dump_text = None  # type: ignore
+    build_scratchpad_facts_block = None  # type: ignore
+
+try:
+    from ..vodka_filter import purge_session_memory_jsonl, VodkaFilter  # type: ignore
+except Exception:
+    purge_session_memory_jsonl = None  # type: ignore
+    VodkaFilter = None  # type: ignore
+
+try:
+    from ..cheatsheets_runtime import load_cheatsheets_entries  # type: ignore
+except Exception:
+    load_cheatsheets_entries = None  # type: ignore
+
+try:
+    from ..judge_worker import (  # type: ignore
+        parse_judge_payload,
+        run_judge,
+        format_judge_run,
+        USAGE_TEXT as JUDGE_USAGE_TEXT,
+    )
+except Exception:
+    parse_judge_payload = None  # type: ignore
+    run_judge = None  # type: ignore
+    format_judge_run = None  # type: ignore
+    JUDGE_USAGE_TEXT = "[judge] unavailable"
+
+
+def _resolve_judge_audit_dir() -> str:
+    """Resolve judge audit JSONL directory from config with safe default."""
+    p = str(cfg_get("judge.audit_dir", "") or "").strip()
+    if not p:
+        p = str(cfg_get("judge.audit_jsonl_dir", "") or "").strip()
+    if not p:
+        p = os.path.join("total_recall", "judge")
+    return p
+
+
+def _collect_summ_paths(folder: str) -> Set[str]:
+    out: Set[str] = set()
+    base = str(folder or "").strip()
+    if not base or not os.path.isdir(base):
+        return out
+    for root, _, files in os.walk(base):
+        for fn in files:
+            if fn.startswith("SUMM_") and fn.lower().endswith(".md"):
+                out.add(os.path.abspath(os.path.join(root, fn)))
+    return out
+
+
+def _run_codex_update_for_summ(summ_path: str, *, notes: List[str]) -> None:
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(here, "..", ".."))
+    script = os.path.join(repo_root, "llama_conductor", "codex_update.py")
+    codex_root = os.path.join(repo_root, "codex")
+    docz_root = os.path.join(repo_root, "docz")
+    if not os.path.isfile(script):
+        notes.append(f"codex_update missing: {script}")
+        return
+    cmd = [
+        sys.executable,
+        script,
+        str(summ_path),
+        "--codex-root",
+        codex_root,
+        "--docz-root",
+        docz_root,
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if proc.returncode != 0:
+            out = (proc.stdout or "").strip()
+            err = (proc.stderr or "").strip()
+            msg = f"codex_update failed rc={proc.returncode} SUMM={summ_path}"
+            if err:
+                msg += f" stderr={err[:300]}"
+            elif out:
+                msg += f" stdout={out[:300]}"
+            notes.append(msg)
+    except Exception as e:
+        notes.append(f"codex_update exception SUMM={summ_path}: {e}")
+
+
+def _run_codex_maintenance(subcommand: str) -> Dict[str, Any]:
+    """Run codex_update.py maintenance command and return structured result."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(here, "..", ".."))
+    script = os.path.join(repo_root, "llama_conductor", "codex_update.py")
+    codex_root = os.path.join(repo_root, "codex")
+    out: Dict[str, Any] = {
+        "ok": False,
+        "rc": 1,
+        "stdout": "",
+        "stderr": "",
+        "error": "",
+        "cmd": [],
+    }
+    if not os.path.isfile(script):
+        out["error"] = f"codex_update missing: {script}"
+        return out
+
+    sub = str(subcommand or "").strip().lower()
+    if sub == "rebuild":
+        cmd = [sys.executable, script, "--rebuild", "--codex-root", codex_root]
+    elif sub == "doctor":
+        cmd = [sys.executable, script, "--doctor", "--codex-root", codex_root]
+    elif sub == "lint":
+        cmd = [sys.executable, script, "--lint", "--codex-root", codex_root]
+    elif sub == "clean":
+        cmd = [sys.executable, script, "--clean", "--codex-root", codex_root]
+    else:
+        out["error"] = f"unknown codex subcommand: {subcommand}"
+        return out
+
+    out["cmd"] = cmd
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        out["rc"] = int(proc.returncode)
+        out["stdout"] = str(proc.stdout or "").strip()
+        out["stderr"] = str(proc.stderr or "").strip()
+        out["ok"] = bool(proc.returncode == 0)
+        return out
+    except Exception as e:
+        out["error"] = str(e)
+        return out
+
+
+_SIDECAR_FAIL_TOKENS_RE = re.compile(
+    r"\b(request timeout|timeout|not found|no relevant results|http error|error:|parse failed|blocked request)\b",
+    re.IGNORECASE,
+)
+
+_WEB_SYNTH_REFUSAL_SENTINEL = "[web synth] not enough independent high-quality web evidence to answer safely."
+_WEB_SYNTH_HEALTH_HINT_RE = re.compile(
+    r"\b(medicine|medical|health|clinical|treatment|therapy|therapist|diagnosis|disease|disorder|syndrome|"
+    r"symptom|drug|medication|vaccine|surgery|pain|injury|chiropractic|chiropractor|physiotherapy|"
+    r"osteopath|acupuncture|homeopathy|supplement|pseudoscience|evidence-based|placebo|quackery|fake|scam)\b",
+    re.IGNORECASE,
+)
+_INLINE_COMMAND_FOOTER_RE = re.compile(
+    r"^\s*(?:Confidence:|Source:|Profile:).*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_command_footer_lines(text: str) -> str:
+    lines = []
+    for ln in str(text or "").splitlines():
+        if _INLINE_COMMAND_FOOTER_RE.match(str(ln or "").strip()):
+            continue
+        lines.append(ln)
+    return "\n".join(lines).strip()
+
+
+def _append_command_footer(text: str, *, confidence: str, source: str) -> str:
+    body = _strip_command_footer_lines(text)
+    footer = f"Confidence: {confidence} | Source: {source}"
+    return f"{body}\n\n{footer}".strip() if body else footer
+
+
+def _norm_lookup_text(s: str) -> str:
+    t = str(s or "").strip().lower()
+    t = re.sub(r"[^a-z0-9\s]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _cheatsheet_timeout_fallback(term: str) -> Optional[str]:
+    if load_cheatsheets_entries is None:
+        return None
+    try:
+        base = Path(__file__).resolve().parents[1] / "cheatsheets"
+        entries = list(load_cheatsheets_entries(base))
+        qn = _norm_lookup_text(term)
+        if not qn:
+            return None
+        for e in entries:
+            if _norm_lookup_text(getattr(e, "term", "")) == qn:
+                t = str(getattr(e, "term", "") or "").strip()
+                d = str(getattr(e, "definition", "") or "").strip()
+                if t and d:
+                    return f"{t}: {d}"
+                if d:
+                    return d
+                if t:
+                    return t
+        return None
+    except Exception:
+        return None
+
+
+def _is_transient_sidecar_failure(text: str) -> bool:
+    s = str(text or "").lower()
+    if "timeout" in s:
+        return True
+    m = re.search(r"http error:\s*(\d+)", s)
+    if m:
+        try:
+            code = int(m.group(1))
+            return code >= 500 or code in {408, 429}
+        except Exception:
+            return False
+    return False
+
+
+def _is_clean_not_found(text: str) -> bool:
+    s = str(text or "").lower()
+    return "not found" in s and "parse failed" not in s
+
+
+def _is_integrity_failure(text: str) -> bool:
+    s = str(text or "").lower()
+    return bool(
+        "parse failed" in s
+        or "error:" in s
+        or "http error:" in s
+        or "blocked request" in s
+    )
+
+
+def _is_sidecar_success(text: str, prefix: str) -> bool:
+    s = str(text or "").strip()
+    if not s.lower().startswith(prefix.lower()):
+        return False
+    return not bool(_SIDECAR_FAIL_TOKENS_RE.search(s))
+
+
+def _is_web_synth_refusal_output(text: str) -> bool:
+    """Canonical synth refusal detector: prefix or standalone sentinel line."""
+    s = re.sub(r"\s+", " ", str(text or "").strip()).lower()
+    if not s:
+        return False
+    if s.startswith(_WEB_SYNTH_REFUSAL_SENTINEL):
+        return True
+    if _WEB_SYNTH_REFUSAL_SENTINEL in s:
+        return True
+    lines = [re.sub(r"\s+", " ", ln.strip()).lower() for ln in str(text or "").splitlines() if ln.strip()]
+    return any(ln == _WEB_SYNTH_REFUSAL_SENTINEL for ln in lines)
+
+
+def _web_synth_intent_class_for_context(query: str) -> str:
+    return "health" if _WEB_SYNTH_HEALTH_HINT_RE.search(str(query or "")) else ""
+
+
+def _evidence_policy_ttl_turns(intent_class: str) -> int:
+    cls = str(intent_class or "").strip().lower()
+    path = f"evidence_context_policies.{cls}.on_refusal_followup.ttl_turns" if cls else ""
+    val = cfg_get(path, None) if path else None
+    if val is None:
+        val = cfg_get("evidence_context_policies.default.on_refusal_followup.ttl_turns", 1)
+    try:
+        return max(0, int(val))
+    except Exception:
+        return 1
+
+
+def _set_evidence_context_from_synth(state: SessionState, synth_query: str, raw_output: str) -> None:
+    """Populate generic evidence context from >>web synth result."""
+    refusal = _is_web_synth_refusal_output(raw_output)
+    state.evidence_context_active = True
+    state.evidence_context_intent_class = _web_synth_intent_class_for_context(synth_query)
+    state.evidence_context_source_lane = "web_synth"
+    state.evidence_context_query_topic = str(synth_query or "").strip()
+    state.evidence_context_outcome = "refusal" if refusal else "success"
+    state.evidence_context_ttl_turns = _evidence_policy_ttl_turns(state.evidence_context_intent_class)
+    # One-size fallback arming: any synth refusal primes one-shot wiki fallback.
+    state.evidence_context_wiki_fallback_active = bool(refusal)
+
+
+def _clear_evidence_followup_state(state: SessionState) -> None:
+    """Clear one-shot evidence follow-up state (used to isolate scratch lane)."""
+    state.evidence_context_active = False
+    state.evidence_context_intent_class = ""
+    state.evidence_context_source_lane = ""
+    state.evidence_context_query_topic = ""
+    state.evidence_context_outcome = ""
+    state.evidence_context_ttl_turns = 0
+    state.evidence_context_created_turn_id = 0
+    state.evidence_context_wiki_fallback_active = False
+
+
+def _judge_max_items_hint() -> Optional[int]:
+    m = re.search(r"constraints:\s*\d+\s*-\s*(\d+)\s*items", str(JUDGE_USAGE_TEXT or ""), re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        v = int(m.group(1))
+        return v if v > 0 else None
+    except Exception:
+        return None
+
+
+def _scratch_online_receipt(*, sidecar: str, records: int, chars: int) -> str:
+    side = str(sidecar or "").strip().lower()
+    n = max(0, int(records))
+    c = max(0, int(chars))
+    tip = f"Source: {side} | >>scratch list to review, >>lock <n> before >>judge"
+    mx = _judge_max_items_hint()
+    if mx is not None:
+        tip += f" (max {mx} items)"
+    return (
+        f"[scratchpad] online {side} loaded: {n} record(s), ~{c} chars (scratchpad auto-attached)\n"
+        f"{tip}"
+    )
+
+
+def _is_wiki_disambiguation_output(text: str) -> bool:
+    s = str(text or "")
+    low = s.lower()
+    if "may refer to:" in low:
+        return True
+    if "most commonly refers to:" in low:
+        return True
+    if re.search(r"\brefers to:\b", low):
+        return True
+    m = re.match(r"^\s*\[wiki\]\s*([^:]+)\s*:\s*", s, flags=re.IGNORECASE)
+    if m and "disambiguation" in m.group(1).lower():
+        return True
+    return False
+
+
+def _snapshot_id_for_web_rows(rows: List[Dict[str, Any]]) -> str:
+    urls: List[str] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        u = str(row.get("url", "") or "").strip()
+        if u:
+            urls.append(u)
+    joined = "\n".join(urls)
+    return hashlib.sha1(joined.encode("utf-8", errors="ignore")).hexdigest()[:12] if joined else ""
+
+
+def _build_model_timeout_fallback_answer(*, cmd_key: str, query: str) -> str:
+    prompt = (
+        f"The upstream >>{cmd_key} sidecar timed out.\n"
+        f"User query: {query}\n\n"
+        "Provide a concise fallback answer from model priors only.\n"
+        "- Keep it to 2-4 sentences.\n"
+        "- Do not mention internal tooling or sidecars.\n"
+        "- Do not add confidence/source/profile lines."
+    )
+    return str(
+        call_model_prompt(
+            role="thinker",
+            prompt=prompt,
+            max_tokens=220,
+            temperature=0.25,
+            top_p=0.9,
+        )
+        or ""
+    ).strip()
+
+
+def _purge_judge_audit_jsonl(audit_dir: str) -> int:
+    """Delete JSONL judge audit artifacts in the configured audit directory."""
+    deleted = 0
+    d = str(audit_dir or "").strip()
+    if not d:
+        return 0
+    try:
+        if not os.path.isdir(d):
+            return 0
+        for name in os.listdir(d):
+            if not str(name).lower().endswith(".jsonl"):
+                continue
+            path = os.path.join(d, name)
+            if not os.path.isfile(path):
+                continue
+            try:
+                os.remove(path)
+                deleted += 1
+            except Exception:
+                continue
+        return deleted
+    except Exception:
+        return deleted
+
+
+def _core_help_text() -> str:
+    return (
+        "# Router Help (Core)\n\n"
+        "Use `>>faq` for FAQ navigation, or `>>help full` for the full command sheet.\n\n"
+        "## Essentials\n"
+        "Attach docs, lock a source, and inspect session state.\n"
+        "- `>>status` | `>>status full` | `>>status raw`\n"
+        "- `>>attach <kb>` | `>>detach <kb>` | `>>detach all`\n"
+        "- `>>list_kb` | `>>list_files` | `>>lock <SUMM_*.md>` | `>>unlock`\n"
+        "- `>>scratch` | `>>attach scratchpad` | `>>scratch status|lock|unlock|find` | `>>scratchpad status|list|show|find|clear|add|delete`\n"
+        "\n"
+        "## Modes\n"
+        "Changes response style; does not change grounding contracts.\n"
+        "- `>>fun` / `>>fun off`\n"
+        "- `>>fr` / `>>fr off`\n"
+        "- `>>raw` / `>>raw off`\n\n"
+        "## Profile + Presets\n"
+        "Tune tone and memory behavior for this session.\n"
+        "- `>>profile show|set|reset|on|off`\n"
+        "- `>>profile <casual|feral|turbo>`\n"
+        "- `>>kaioken status|on|off|log`\n"
+        "- `>>memory status|show|clear`\n"
+        "- `>>preset <fast|balanced|max-recall>`\n"
+        "- `>>preset show|set <fast|balanced|max-recall>|reset`\n\n"
+        "## Utilities\n"
+        "Quick tools, memory commands, and one-turn forced selectors.\n"
+        "- `>>flush`\n"
+        "- `>>faq`\n"
+        "- `>>trust <query>`\n"
+        "- `>>wiki <topic>` | `>>web <query>` | `>>define <word>` | `>>exchange <query>` | `>>weather <location>`\n"
+        "- `>>judge <criterion> : item1, item2, item3 [--verbose]`\n"
+        "- `>>trust` recommends routes; execution remains manual.\n"
+        "- Sidecars are deterministic utility lookups/conversions.\n"
+        "- `!! <text>` | `!! forget <query>` | `!! nuke`\n"
+        "- `?? <query>` | `?? list`\n"
+        "- `##mentats <q>` | `##fun <q>` | `##vision <q>` | `##ocr <q>`\n\n"
+        "## Common first steps\n"
+        "1. `>>status`\n"
+        "2. Ask your question normally\n"
+        "3. If using docs: `>>attach <your kb name>`\n"
+        "4. Optional strict grounding: `>>list_files` then `>>lock SUMM_<name>.md`\n"
+        "5. Need deep retrieval? Use `##mentats <query>`\n"
+    )
+
+
+def _faq_md_path() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(here, "..", ".."))
+    return os.path.join(repo_root, "FAQ.md")
+
+
+def _anchor_slug(text: str) -> str:
+    """Best-effort GitHub-style anchor slug."""
+    t = (text or "").strip().lower()
+    t = re.sub(r"[`*_~\[\]\(\)\"'.,:;!?/\\|]", "", t)
+    t = t.replace("&", "and")
+    t = re.sub(r"\s+", "-", t)
+    t = re.sub(r"-{2,}", "-", t).strip("-")
+    return t
+
+
+def _extract_faq_sections(max_items: int = 32) -> List[Dict[str, str]]:
+    path = _faq_md_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except Exception:
+        return []
+
+    sections: List[Dict[str, str]] = []
+    in_faq_section = False
+    current_title = ""
+    current_body: List[str] = []
+
+    def _flush_current() -> None:
+        nonlocal current_title, current_body
+        if not current_title:
+            return
+        body = "\n".join(current_body).strip()
+        sections.append({"title": current_title, "body": body})
+        current_title = ""
+        current_body = []
+
+    for line in lines:
+        s = line.strip()
+        if s.lower() == "## frequently asked questions (faq)":
+            in_faq_section = True
+            continue
+        if in_faq_section and s.startswith("## ") and s.lower() != "## frequently asked questions (faq)":
+            _flush_current()
+            break
+        if not in_faq_section:
+            continue
+        if s.startswith("### "):
+            _flush_current()
+            title = s[4:].strip()
+            if title:
+                current_title = title
+            continue
+        if not current_title:
+            continue
+        current_body.append(line)
+
+    _flush_current()
+    # Append curated late-file reference/ops sections that live outside the
+    # main FAQ block but are still operator-relevant.
+    include_titles = {
+        "Advanced: How does provenance work?",
+        "TIPS",
+        "What's new (latest)?",
+        "What does `Profile | Sarc | Snark` mean?",
+        "How state changes over time",
+        "Output impact",
+        "Manual control and shortcuts",
+        "What do Confidence and Source mean?",
+        "Questions and Help",
+    }
+    seen = {str(s.get("title", "")).strip() for s in sections}
+
+    all_sections: List[Dict[str, str]] = []
+    current_title = ""
+    current_body = []
+
+    def _flush_all() -> None:
+        nonlocal current_title, current_body
+        if not current_title:
+            return
+        all_sections.append({"title": current_title, "body": "\n".join(current_body).strip()})
+        current_title = ""
+        current_body = []
+
+    for line in lines:
+        s = line.strip()
+        if s.startswith("### "):
+            _flush_all()
+            current_title = s[4:].strip()
+            continue
+        if current_title:
+            current_body.append(line)
+    _flush_all()
+
+    for sec in all_sections:
+        title = str(sec.get("title", "")).strip()
+        if title in include_titles and title not in seen:
+            sections.append(sec)
+            seen.add(title)
+
+    return sections[:max_items]
+
+
+def _faq_nav_text() -> str:
+    path = _faq_md_path()
+    if not os.path.exists(path):
+        return "[faq] FAQ.md not found in repo root."
+
+    sections = _extract_faq_sections(max_items=40)
+    lines = [
+        "# FAQ Navigator",
+        "",
+        "Primary doc: FAQ.md",
+        f"Local path: {path}",
+        "",
+    ]
+    if sections:
+        lines.append("Top sections:")
+        for i, sec in enumerate(sections, 1):
+            title = str(sec.get("title", "")).strip()
+            if not title:
+                continue
+            lines.append(f"{i}. {title}")
+    else:
+        lines.extend([
+            "Top sections:",
+            "- (could not parse headings; open FAQ.md directly)",
+        ])
+    lines.extend([
+        "",
+        "Tips:",
+        "- Use `>>faq` anytime to reopen this navigator.",
+        "- Use `>>faq <n>` to print a specific FAQ section.",
+        "- Use `>>faq list` to reprint section numbers.",
+        "- Use `>>help advanced` for the full command reference.",
+    ])
+    return "\n".join(lines)
+
+
+def _faq_show_text(selector: str) -> str:
+    path = _faq_md_path()
+    if not os.path.exists(path):
+        return "[faq] FAQ.md not found in repo root."
+    sections = _extract_faq_sections(max_items=64)
+    if not sections:
+        return "[faq] could not parse FAQ sections. Open FAQ.md directly."
+
+    sel = (selector or "").strip()
+    if not sel:
+        return "[faq] usage: >>faq show <number>"
+
+    # Numeric selector (primary path)
+    try:
+        idx = int(sel)
+    except Exception:
+        idx = -1
+    if idx >= 1 and idx <= len(sections):
+        sec = sections[idx - 1]
+        title = str(sec.get("title", "")).strip()
+        body = str(sec.get("body", "")).strip()
+        slug = _anchor_slug(title)
+        out = [
+            f"# FAQ {idx}: {title}",
+            "",
+            f"Source: FAQ.md#{slug}",
+            "",
+            body or "(section has no body text)",
+            "",
+            "Tip: `>>faq` returns to the main list.",
+        ]
+        return "\n".join(out)
+
+    return f"[faq] invalid section number '{sel}'. Use `>>faq list`."
+
+
+def load_help_text(*, advanced: bool = False) -> str:
+    """Load command help text."""
+    if not advanced:
+        return _core_help_text()
+    try:
+        with open(CHEAT_SHEET_PATH, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return f"[help missing: {e}]"
+
+
+def _clear_locked_summ(state: SessionState) -> str:
+    """Clear current lock and return previous locked filename (if any)."""
+    if not state.locked_summ_path:
+        return ""
+    prev = state.locked_summ_file or os.path.basename(state.locked_summ_path)
+    state.locked_summ_file = ""
+    state.locked_summ_kb = ""
+    state.locked_summ_path = ""
+    state.locked_summ_rel_path = ""
+    state.locked_last_fact_lines = 0
+    return prev
+
+
+def _clear_pending_lock(state: SessionState) -> None:
+    state.pending_lock_candidate = ""
+
+
+def _reset_profile_runtime_state(state: SessionState, cfg_get: Optional[Callable[..., object]] = None) -> None:
+    """Reset session interaction-profile state and re-apply configured default profile."""
+    reset_profile(state.interaction_profile)
+    try:
+        default_profile = ""
+        if cfg_get is not None:
+            default_profile = str(cfg_get("profile.default", "") or "").strip().lower()
+        p = state.interaction_profile
+        if default_profile == "direct":
+            profile_set(p, "correction_style", "direct")
+            profile_set(p, "verbosity", "compact")
+            profile_set(p, "snark_tolerance", "medium")
+            profile_set(p, "sarcasm_level", "low")
+            profile_set(p, "profanity_ok", "false")
+        elif default_profile == "casual":
+            profile_set(p, "correction_style", "direct")
+            profile_set(p, "verbosity", "compact")
+            profile_set(p, "snark_tolerance", "high")
+            profile_set(p, "sarcasm_level", "medium")
+            profile_set(p, "profanity_ok", "false")
+        elif default_profile in {"turbo", "feral"}:
+            profile_set(p, "correction_style", "direct")
+            profile_set(p, "verbosity", "compact")
+            profile_set(p, "snark_tolerance", "high")
+            profile_set(p, "sarcasm_level", "high")
+            profile_set(p, "profanity_ok", "true")
+    except Exception:
+        pass
+    state.profile_turn_counter = 0
+    state.profile_effective_strength = 0.0
+    state.profile_output_compliance = 0.0
+    state.profile_blocked_nicknames.clear()
+    state.serious_ack_reframe_streak = 0
+    state.serious_last_body_signature = ""
+    state.serious_repeat_streak = 0
+    state.pending_sensitive_confirm_query = ""
+    state.pending_vodka_comment_ctx_id = ""
+    state.pending_vodka_comment_text = ""
+
+
+def _list_lockable_summ_files(state: SessionState) -> List[str]:
+    """Return lockable SUMM files across attached filesystem KBs."""
+    rows: List[str] = []
+    source_kbs = sorted(
+        k for k in state.attached_kbs if k and k in KB_PATHS and k not in (VAULT_KB_NAME, "scratchpad")
+    )
+    for kb in source_kbs:
+        root = KB_PATHS.get(kb)
+        if not root or not os.path.isdir(root):
+            continue
+        for dirpath, _, filenames in os.walk(root):
+            if "original" in {p.lower() for p in dirpath.split(os.sep)}:
+                continue
+            for fn in sorted(filenames):
+                if not (fn.startswith("SUMM_") and fn.lower().endswith(".md")):
+                    continue
+                abs_path = os.path.join(dirpath, fn)
+                rel = os.path.relpath(abs_path, root)
+                mark = ""
+                if (
+                    state.locked_summ_path
+                    and os.path.abspath(abs_path).lower() == os.path.abspath(state.locked_summ_path).lower()
+                ):
+                    mark = " [LOCKED]"
+                rel_norm = rel.replace("\\", "/")
+                rel_part = f" rel={rel_norm}" if rel_norm != fn else ""
+                rows.append(f"- kb={kb} file={fn}{rel_part}{mark}")
+    rows.sort()
+    return rows
+
+
+def _source_filesystem_kbs(state: SessionState) -> set:
+    return {
+        k
+        for k in state.attached_kbs
+        if k and k in KB_PATHS and k not in (VAULT_KB_NAME, "scratchpad")
+    }
+
+
+def _memory_status_snapshot(session_id: str, state: SessionState) -> Dict[str, object]:
+    out: Dict[str, object] = {
+        "unit_count": "n/a",
+        "last_update_turn": "n/a",
+    }
+    try:
+        if state.vodka and hasattr(state.vodka, "get_session_memory_status"):
+            payload = state.vodka.get_session_memory_status(
+                session_id=session_id,
+                user_turn_hint=int(getattr(state, "profile_turn_counter", 0) or 0),
+            )
+            out["unit_count"] = int(payload.get("unit_count", 0) or 0)
+            out["last_update_turn"] = int(payload.get("last_update_turn", 0) or 0)
+    except Exception:
+        pass
+    return out
+
+
+def _parse_scratch_lock_indices(arg: str) -> Set[int]:
+    out: Set[int] = set()
+    for piece in re.split(r"[\s,]+", str(arg or "").strip()):
+        if not piece:
+            continue
+        if not piece.isdigit():
+            continue
+        n = int(piece)
+        if n > 0:
+            out.add(n)
+    return out
+
+
+def _render_status_raw(session_id: str, state: SessionState) -> str:
+    # Keep status snapshots truthful on fresh sessions by recomputing on read.
+    state.profile_effective_strength = compute_effective_strength(
+        state.interaction_profile,
+        enabled=state.profile_enabled,
+        output_compliance=state.profile_output_compliance,
+    )
+    cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip()
+    effective_preset = (state.vodka_preset_override or cfg_preset or "balanced").strip()
+    kaioken_enabled = bool(getattr(state, "kaioken_enabled", bool(cfg_get("kaioken.enabled", True))))
+    p = state.interaction_profile
+    if (
+        str(p.correction_style) == "direct"
+        and str(p.verbosity) == "compact"
+        and str(p.snark_tolerance) == "high"
+        and str(p.sarcasm_level) == "high"
+        and bool(p.profanity_ok)
+    ):
+        profile_mode = "turbo"
+    elif (
+        str(p.correction_style) == "neutral"
+        and str(p.verbosity) == "standard"
+        and str(p.snark_tolerance) == "low"
+        and str(p.sarcasm_level) == "off"
+        and (not bool(p.profanity_ok))
+    ):
+        profile_mode = "default"
+    else:
+        profile_mode = "custom"
+    scratch_lock = sorted(int(i) for i in (getattr(state, "scratchpad_locked_indices", set()) or set()) if int(i) > 0)
+    return (
+        "[status]\n"
+        f"session_id={session_id}\n"
+        f"kaioken_enabled={kaioken_enabled}\n"
+        f"attached_kbs={sorted(state.attached_kbs)}\n"
+        f"locked_summ_file={state.locked_summ_file!r}\n"
+        f"locked_summ_kb={state.locked_summ_kb!r}\n"
+        f"pending_lock_candidate={state.pending_lock_candidate!r}\n"
+        f"pending_sensitive_confirm_query={state.pending_sensitive_confirm_query!r}\n"
+        f"fun_sticky={state.fun_sticky}\n"
+        f"fun_rewrite_sticky={state.fun_rewrite_sticky}\n"
+        f"profile_enabled={state.profile_enabled}\n"
+        f"profile_confidence={state.interaction_profile.confidence:.2f}\n"
+        f"profile_effective_strength={state.profile_effective_strength:.2f}\n"
+        f"profile_mode={profile_mode}\n"
+        f"profile_output_compliance={state.profile_output_compliance:.2f}\n"
+        f"profile_blocked_nicknames={sorted(state.profile_blocked_nicknames)!r}\n"
+        f"profile_last_updated_turn={state.interaction_profile.last_updated_turn}\n"
+        f"serious_ack_reframe_streak={state.serious_ack_reframe_streak}\n"
+        f"serious_repeat_streak={state.serious_repeat_streak}\n"
+        f"scratchpad_lock={scratch_lock!r}\n"
+        f"last_query={state.rag_last_query!r}\n"
+        f"last_hits={state.rag_last_hits}\n"
+        f"vault_last_query={state.vault_last_query!r}\n"
+        f"vault_last_hits={state.vault_last_hits}\n"
+        f"vodka_preset={effective_preset!r}\n"
+    )
+
+
+def _render_status(session_id: str, state: SessionState) -> str:
+    # Keep status snapshots truthful on fresh sessions by recomputing on read.
+    state.profile_effective_strength = compute_effective_strength(
+        state.interaction_profile,
+        enabled=state.profile_enabled,
+        output_compliance=state.profile_output_compliance,
+    )
+    cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip()
+    effective_preset = (state.vodka_preset_override or cfg_preset or "balanced").strip()
+    kaioken_enabled = bool(getattr(state, "kaioken_enabled", bool(cfg_get("kaioken.enabled", True))))
+    p = state.interaction_profile
+    if (
+        str(p.correction_style) == "direct"
+        and str(p.verbosity) == "compact"
+        and str(p.snark_tolerance) == "high"
+        and str(p.sarcasm_level) == "high"
+        and bool(p.profanity_ok)
+    ):
+        profile_mode = "TURBO"
+    elif (
+        str(p.correction_style) == "neutral"
+        and str(p.verbosity) == "standard"
+        and str(p.snark_tolerance) == "low"
+        and str(p.sarcasm_level) == "off"
+        and (not bool(p.profanity_ok))
+    ):
+        profile_mode = "DEFAULT"
+    else:
+        profile_mode = "CUSTOM"
+    modes: List[str] = []
+    if state.serious_sticky:
+        modes.append("serious")
+    elif state.raw_sticky:
+        modes.append("raw")
+    elif state.fun_rewrite_sticky:
+        modes.append("fun rewrite")
+    elif state.fun_sticky:
+        modes.append("fun")
+    else:
+        dm = str(getattr(state, "default_mode", "") or "").strip().lower()
+        if dm in ("fun", "fun_rewrite", "raw", "serious"):
+            modes.append(f"{dm} (default)")
+        else:
+            modes.append("serious (default)")
+    lock_label = "none"
+    if state.locked_summ_file:
+        kb = state.locked_summ_kb or "unknown"
+        lock_label = f"{state.locked_summ_file}@{kb}"
+    attached = sorted(state.attached_kbs)
+    if len(attached) <= 4:
+        attach_label = ", ".join(attached) if attached else "none"
+    else:
+        attach_label = f"{len(attached)} attached"
+    memory = _memory_status_snapshot(session_id, state)
+    scratch_lock = sorted(int(i) for i in (getattr(state, "scratchpad_locked_indices", set()) or set()) if int(i) > 0)
+    scratch_lock_label = ",".join(str(i) for i in scratch_lock) if scratch_lock else "none"
+    return (
+        "# Router Status\n\n"
+        f"- `Session`: `{session_id}`\n"
+        f"- `Mode`: `{', '.join(modes)}`\n"
+        f"- `Kaioken`: `{'ON' if kaioken_enabled else 'OFF'}`\n"
+        f"- `Grounding`: attached=`{attach_label}` | lock=`{lock_label}`\n"
+        f"- `Memory`: preset=`{effective_preset}` | units=`{memory.get('unit_count')}` | last_update_turn=`{memory.get('last_update_turn')}`\n"
+        f"- `Retrieval`: fs_hits=`{state.rag_last_hits}` | vault_hits=`{state.vault_last_hits}`\n"
+        f"- `Scratchpad`: lock=`{scratch_lock_label}`\n"
+        f"- `Profile`: enabled=`{state.profile_enabled}` | strength=`{state.profile_effective_strength:.2f}` | profile mode=`{profile_mode}`\n"
+    )
+
+
+def _render_status_full(session_id: str, state: SessionState) -> str:
+    # Keep status snapshots truthful on fresh sessions by recomputing on read.
+    state.profile_effective_strength = compute_effective_strength(
+        state.interaction_profile,
+        enabled=state.profile_enabled,
+        output_compliance=state.profile_output_compliance,
+    )
+    cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip()
+    effective_preset = (state.vodka_preset_override or cfg_preset or "balanced").strip()
+    kaioken_enabled = bool(getattr(state, "kaioken_enabled", bool(cfg_get("kaioken.enabled", True))))
+    p = state.interaction_profile
+    if (
+        str(p.correction_style) == "direct"
+        and str(p.verbosity) == "compact"
+        and str(p.snark_tolerance) == "high"
+        and str(p.sarcasm_level) == "high"
+        and bool(p.profanity_ok)
+    ):
+        profile_mode = "turbo"
+    elif (
+        str(p.correction_style) == "neutral"
+        and str(p.verbosity) == "standard"
+        and str(p.snark_tolerance) == "low"
+        and str(p.sarcasm_level) == "off"
+        and (not bool(p.profanity_ok))
+    ):
+        profile_mode = "default"
+    else:
+        profile_mode = "custom"
+    scratch_lock = sorted(int(i) for i in (getattr(state, "scratchpad_locked_indices", set()) or set()) if int(i) > 0)
+    return (
+        "# Router Status (Full)\n\n"
+        "## Session\n"
+        f"- `session_id`: `{session_id}`\n"
+        f"- `attached_kbs`: `{sorted(state.attached_kbs)}`\n"
+        f"- `locked_summ_file`: `{state.locked_summ_file}`\n"
+        f"- `locked_summ_kb`: `{state.locked_summ_kb}`\n"
+        "\n"
+        "## Modes\n"
+        f"- `fun_sticky`: `{state.fun_sticky}`\n"
+        f"- `fun_rewrite_sticky`: `{state.fun_rewrite_sticky}`\n"
+        f"- `raw_sticky`: `{state.raw_sticky}`\n"
+        f"- `kaioken_enabled`: `{kaioken_enabled}`\n"
+        "\n"
+        "## Profile\n"
+        f"- `profile_enabled`: `{state.profile_enabled}`\n"
+        f"- `profile_confidence`: `{state.interaction_profile.confidence:.2f}`\n"
+        f"- `profile_effective_strength`: `{state.profile_effective_strength:.2f}`\n"
+        f"- `profile_mode`: `{profile_mode}`\n"
+        f"- `profile_output_compliance`: `{state.profile_output_compliance:.2f}`\n"
+        f"- `profile_blocked_nicknames`: `{sorted(state.profile_blocked_nicknames)!r}`\n"
+        f"- `profile_last_updated_turn`: `{state.interaction_profile.last_updated_turn}`\n"
+        "\n"
+        "## Retrieval\n"
+        f"- `last_query`: `{state.rag_last_query}`\n"
+        f"- `last_hits`: `{state.rag_last_hits}`\n"
+        f"- `vault_last_query`: `{state.vault_last_query}`\n"
+        f"- `vault_last_hits`: `{state.vault_last_hits}`\n"
+        f"- `scratchpad_lock`: `{scratch_lock}`\n"
+        "\n"
+        "## Runtime Control\n"
+        f"- `vodka_preset`: `{effective_preset}`\n"
+        f"- `pending_lock_candidate`: `{state.pending_lock_candidate}`\n"
+        f"- `pending_sensitive_confirm_query`: `{state.pending_sensitive_confirm_query}`\n"
+        f"- `serious_ack_reframe_streak`: `{state.serious_ack_reframe_streak}`\n"
+        f"- `serious_repeat_streak`: `{state.serious_repeat_streak}`\n"
+        "\n"
+        "Tip: use `>>status raw` for machine-readable key/value output.\n"
+    )
+
+
+def _dispatch_exact_early(low: str, *, state: SessionState, session_id: str) -> Optional[str]:
+    if low in ("status full", "statusfull"):
+        return _render_status_full(session_id, state)
+    if low in ("status raw", "statusraw"):
+        return _render_status_raw(session_id, state)
+    handlers: Dict[str, Callable[[], str]] = {
+        "status": lambda: _render_status(session_id, state),
+    }
+    fn = handlers.get(low)
+    return fn() if fn else None
+
+
+def _dispatch_exact_fun(low: str, *, state: SessionState) -> Optional[str]:
+    def _fun_on() -> str:
+        state.fun_sticky = True
+        state.fun_rewrite_sticky = False
+        return "[router] fun mode ON (sticky)"
+
+    def _fun_off() -> str:
+        state.fun_sticky = False
+        return "[router] fun mode OFF"
+
+    def _fr_on() -> str:
+        state.fun_rewrite_sticky = True
+        state.fun_sticky = False
+        return "[router] fun rewrite ON (sticky)"
+
+    def _fr_off() -> str:
+        state.fun_rewrite_sticky = False
+        return "[router] fun rewrite OFF"
+
+    def _serious_on() -> str:
+        state.serious_sticky = True
+        state.fun_sticky = False
+        state.fun_rewrite_sticky = False
+        state.raw_sticky = False
+        return "[router] serious mode ON (sticky)"
+
+    def _serious_off() -> str:
+        state.serious_sticky = False
+        return "[router] serious mode OFF"
+
+    handlers: Dict[str, Callable[[], str]] = {
+        "fun": _fun_on,
+        "f": _fun_on,
+        "fun off": _fun_off,
+        "f off": _fun_off,
+        "fun_rewrite": _fr_on,
+        "fr": _fr_on,
+        "fun_rewrite off": _fr_off,
+        "fr off": _fr_off,
+        "serious": _serious_on,
+        "serious off": _serious_off,
+    }
+    fn = handlers.get(low)
+    return fn() if fn else None
+
+
+def _dispatch_exact_listing(low: str, *, state: SessionState) -> Optional[str]:
+    if low in ("list_kb", "list", "kbs"):
+        known = sorted(set(KB_PATHS.keys()) | {"scratchpad"})
+        return "[router] known KBs: " + ", ".join(known)
+
+    return None
+
+
+def _handle_unlock(parts: List[str], *, state: SessionState) -> Optional[str]:
+    if not (parts and parts[0].lower() == "unlock"):
+        return None
+    _clear_pending_lock(state)
+    prev = _clear_locked_summ(state)
+    if not prev:
+        return "[router] no locked file"
+    return f"[router] unlocked file: {prev}"
+
+
+def _handle_list_files(low: str, *, state: SessionState) -> Optional[str]:
+    if low not in ("list_files", "list files"):
+        return None
+    rows = _list_lockable_summ_files(state)
+    if not rows:
+        return "[router] No lockable SUMM files found in attached filesystem KBs."
+    return "[router] lockable SUMM files:\n" + "\n".join(rows[:300])
+
+
+def _handle_list_known_kbs(low: str) -> Optional[str]:
+    if low not in ("list_kb", "list", "kbs"):
+        return None
+    known = sorted(set(KB_PATHS.keys()) | {"scratchpad"})
+    return "[router] known KBs: " + ", ".join(known)
+
+
+def handle_command(cmd_text: str, *, state: SessionState, session_id: str) -> Optional[str]:
+    """Return immediate reply if handled, else None."""
+    if not is_command(cmd_text):
+        return None
+
+    cmd = strip_cmd_prefix(cmd_text)
+    if not cmd:
+        return "[router] empty command"
+
+    low = cmd.strip().lower()
+    low = low.replace("-", "_")
+    parts = parse_args(cmd)
+
+    # Alias: >>list scratchpad -> >>scratchpad list
+    if len(parts) >= 2 and parts[0].lower() == "list" and parts[1].lower() == "scratchpad":
+        low = "scratchpad list"
+        parts = ["scratchpad", "list"]
+    # Alias: >>list contents -> >>scratchpad list (only when scratchpad attached)
+    if len(parts) >= 2 and parts[0].lower() == "list" and parts[1].lower() == "contents":
+        if "scratchpad" in (state.attached_kbs or set()):
+            low = "scratchpad list"
+            parts = ["scratchpad", "list"]
+    # Alias bridge: >>lock scratchpad <n[,m,...]> / >>lock scratch <n[,m,...]>
+    if len(parts) >= 3 and parts[0].lower() == "lock" and parts[1].lower() in {"scratchpad", "scratch"}:
+        low = "scratchpad lock " + " ".join(parts[2:])
+        parts = ["scratchpad", "lock", *parts[2:]]
+
+    cmd_key = resolve_command_key(low, parts)
+
+    # Scratchpad shorthand aliases
+    # - >>add <text>  -> auto-attach scratchpad + add
+    # - >>list        -> >>scratchpad list (only when scratchpad attached)
+    if parts and parts[0].lower() == "add":
+        if not capture_scratchpad_output:
+            return "[scratchpad] add unavailable"
+        payload = cmd[len(parts[0]) :].strip()
+        if not payload:
+            return "[scratchpad] usage: >>add <text>"
+        _clear_evidence_followup_state(state)
+        state.attached_kbs.add("scratchpad")
+        rec = capture_scratchpad_output(
+            session_id=session_id,
+            source_command=">>add",
+            text=payload,
+        )
+        if not rec:
+            return "[scratchpad] add failed"
+        return f"[scratchpad] added sha={str(rec.get('sha256', ''))[:12]}"
+
+    if "scratchpad" in state.attached_kbs:
+        if low == "list" and list_scratchpad_records:
+            recs = list_scratchpad_records(session_id, limit=20)
+            if not recs:
+                return "[scratchpad] empty"
+            lines = [f"[scratchpad] last {len(recs)} capture(s):"]
+            start = max(0, len(recs) - 20)
+            for i, rec in enumerate(recs[start:], 1):
+                src = str(rec.get("source_command", "unknown"))
+                txt = str(rec.get("text", "") or "")
+                preview = str(rec.get("preview", "") or "").strip()
+                if not preview:
+                    compact = " ".join(txt.split()).strip()
+                    preview = compact[:219] + "..." if len(compact) > 220 else compact
+                lines.append(f"{i}. {src} chars={len(txt)}")
+                lines.append(f"   {preview}")
+            return "\n".join(lines)
+
+    # status/help (exact dispatch, behavior-preserving)
+    out = _dispatch_exact_early(low, state=state, session_id=session_id)
+    if out is not None:
+        return out
+
+    # help surface tiering
+    if cmd_key == "help":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub in ("advanced", "full"):
+            return load_help_text(advanced=True)
+        return load_help_text(advanced=False)
+
+    # local FAQ navigator (docs only)
+    if cmd_key == "faq":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub in ("", "list", "toc", "index"):
+            return _faq_nav_text()
+        if sub == "show":
+            selector = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+            return _faq_show_text(selector)
+        # convenience: allow >>faq <number>
+        if sub.isdigit():
+            return _faq_show_text(sub)
+        return "[faq] usage: >>faq | >>faq list | >>faq show <number>"
+
+    # runtime preset controls (session-scoped override)
+    if cmd_key == "preset":
+        sub = parts[1].lower() if len(parts) > 1 else "show"
+        allowed = {"fast", "balanced", "max-recall", "max_recall"}
+        cfg_default = str(cfg_get("vodka.preset", "balanced") or "balanced").strip() or "balanced"
+        if sub == "max" and len(parts) > 2 and parts[2].lower() == "recall":
+            sub = "max-recall"
+        if sub == "show":
+            current = (state.vodka_preset_override or cfg_default).strip()
+            return (
+                "[preset]\n"
+                f"default={cfg_default}\n"
+                f"current={current}\n"
+                "available=fast, balanced, max-recall\n"
+                "usage: >>preset set <name> | >>preset <name> | >>preset reset"
+            )
+        if sub in ("set", "use"):
+            if len(parts) < 3:
+                return "[preset] usage: >>preset set <fast|balanced|max-recall>"
+            name = " ".join(parts[2:]).strip().lower().replace("_", "-")
+            if name == "max recall":
+                name = "max-recall"
+            if name not in allowed:
+                return "[preset] invalid preset. allowed: fast, balanced, max-recall"
+            if name == "max_recall":
+                name = "max-recall"
+            state.vodka_preset_override = name
+            return f"[preset] runtime preset set: {name}"
+        if sub in ("reset", "clear"):
+            state.vodka_preset_override = ""
+            return f"[preset] runtime preset reset (using default: {cfg_default})"
+        if sub in allowed:
+            name = "max-recall" if sub == "max_recall" else sub
+            state.vodka_preset_override = name
+            return f"[preset] runtime preset set: {name}"
+        return "[preset] usage: >>preset show|set <fast|balanced|max-recall>|reset"
+
+    # vodka trim observability
+    if cmd_key == "vodka":
+        sub = parts[1].lower() if len(parts) > 1 else "debug"
+        if sub == "debug":
+            log = list(getattr(state, "vodka_trim_log", None) or [])
+            if not log:
+                return "[vodka] no trim events this session"
+            lines = ["[vodka] trim log (most recent last):"]
+            for e in log:
+                reason = str(e.get("reason", "?") or "?")
+                turn = e.get("turn", "?")
+                before = e.get("units_before", "?")
+                after = e.get("units_after", "?")
+                chars = e.get("chars_trimmed")
+                ts = str(e.get("timestamp", "") or "")[:16]
+                chars_str = f" | -{chars}ch" if chars is not None else ""
+                lines.append(f"  [{ts}] turn={turn} {reason}: {before}->{after} units{chars_str}")
+            return "\n".join(lines)
+        return "[vodka] usage: >>vodka debug"
+
+    # memory observability
+    if cmd_key == "memory":
+        sub = parts[1].lower() if len(parts) > 1 else "status"
+        if sub in ("status", "show", "clear"):
+            if state.vodka is None and VodkaFilter is not None:
+                try:
+                    state.vodka = VodkaFilter()
+                    vodka_cfg = dict(cfg_get("vodka", {}))
+                    state.vodka.valves.storage_dir = str(vodka_cfg.get("storage_dir", state.vodka.valves.storage_dir) or state.vodka.valves.storage_dir)
+                    state.vodka.valves.subdir = str(vodka_cfg.get("subdir", state.vodka.valves.subdir) or state.vodka.valves.subdir)
+                    state.vodka.valves.enable_summary = bool(vodka_cfg.get("enable_summary", state.vodka.valves.enable_summary))
+                    state.vodka.valves.summary_require_session_id = bool(
+                        vodka_cfg.get("summary_require_session_id", state.vodka.valves.summary_require_session_id)
+                    )
+                    state.vodka.valves.summary_every_n_user_msgs = int(
+                        vodka_cfg.get("summary_every_n_user_msgs", state.vodka.valves.summary_every_n_user_msgs)
+                    )
+                    state.vodka.valves.summary_inject_max_units = int(
+                        vodka_cfg.get("summary_inject_max_units", state.vodka.valves.summary_inject_max_units)
+                    )
+                    state.vodka.valves.summary_inject_max_chars = int(
+                        vodka_cfg.get("summary_inject_max_chars", state.vodka.valves.summary_inject_max_chars)
+                    )
+                except Exception:
+                    pass
+            if not state.vodka or not hasattr(state.vodka, "get_session_memory_status"):
+                return "[memory] unavailable (Vodka not initialized)"
+
+            if sub == "clear":
+                try:
+                    sid = str(session_id or "").strip()
+                    if hasattr(state.vodka, "_normalize_session_id"):
+                        sid = str(state.vodka._normalize_session_id(sid))
+                    path = ""
+                    if hasattr(state.vodka, "_session_memory_file"):
+                        path = str(state.vodka._session_memory_file(sid) or "")
+                    removed = 0
+                    if path and os.path.exists(path):
+                        try:
+                            if hasattr(state.vodka, "_load_memory_units_jsonl"):
+                                removed = len(state.vodka._load_memory_units_jsonl(path))
+                        except Exception:
+                            removed = 0
+                    if path and hasattr(state.vodka, "_reset_session_memory_store"):
+                        state.vodka._reset_session_memory_store(sid, path)
+                    elif path:
+                        try:
+                            os.remove(path)
+                        except Exception:
+                            pass
+                    return f"[memory] cleared session memory (sid={sid}, removed_units={removed})"
+                except Exception as e:
+                    return f"[memory] clear failed: {e.__class__.__name__}"
+
+            try:
+                payload = state.vodka.get_session_memory_status(
+                    session_id=session_id,
+                    user_turn_hint=int(getattr(state, "profile_turn_counter", 0) or 0),
+                )
+            except Exception as e:
+                return f"[memory] status unavailable: {e.__class__.__name__}"
+
+            if sub == "show":
+                try:
+                    path = str(payload.get("memory_file") or "").strip()
+                    units = []
+                    if path and hasattr(state.vodka, "_load_memory_units_jsonl"):
+                        units = list(state.vodka._load_memory_units_jsonl(path))
+                    if not units:
+                        return "[memory show]\n(no units)"
+                    lines = [
+                        "[memory show]",
+                        f"session_id={payload.get('session_id')}",
+                        f"unit_count={len(units)}",
+                    ]
+                    for i, rec in enumerate(units[:10], 1):
+                        txt = str(rec.get("text") or "").strip().replace("\n", " ")
+                        if len(txt) > 180:
+                            txt = txt[:177].rstrip() + "..."
+                        tr = rec.get("turn_range") or [0, 0]
+                        tags = rec.get("tags") or []
+                        tag_txt = ", ".join(str(t) for t in tags[:4]) if tags else "-"
+                        lines.append(f"{i}. turn={tr} tags={tag_txt}")
+                        lines.append(f"   {txt}")
+                    return "\n".join(lines)
+                except Exception as e:
+                    return f"[memory] show unavailable: {e.__class__.__name__}"
+
+            cfg_preset = str(cfg_get("vodka.preset", "balanced") or "balanced").strip() or "balanced"
+            active_preset = (state.vodka_preset_override or cfg_preset).strip()
+            return (
+                "[memory]\n"
+                f"preset={active_preset}\n"
+                f"enabled_summary={payload.get('enabled_summary')}\n"
+                f"require_session_id={payload.get('require_session_id')}\n"
+                f"summary_every_n_user_msgs={payload.get('summary_every_n_user_msgs')}\n"
+                f"memory_file_exists={payload.get('memory_file_exists')}\n"
+                f"unit_count={payload.get('unit_count')}\n"
+                f"last_update_turn={payload.get('last_update_turn')}\n"
+                f"last_inject_turn={payload.get('last_inject_turn')}\n"
+                f"last_inject_units={payload.get('last_inject_units')}\n"
+                f"last_candidate_count={payload.get('last_candidate_count')}\n"
+                f"last_query={payload.get('last_query')!r}\n"
+            )
+        return "[memory] usage: >>memory status|show|clear"
+
+    # profile controls
+    if cmd_key == "profile":
+        def _norm_level(v: str) -> str:
+            low_v = (v or "").strip().lower()
+            if low_v in ("med", "mid"):
+                return "medium"
+            return low_v
+
+        def _as_bool_text(v: str) -> str:
+            low_v = (v or "").strip().lower()
+            if low_v in ("on", "yes", "y", "1", "true"):
+                return "true"
+            if low_v in ("off", "no", "n", "0", "false"):
+                return "false"
+            return low_v
+
+        sub = parts[1].lower() if len(parts) > 1 else "show"
+        # User-friendly shorthand aliases.
+        if sub in ("direct", "neutral", "softened"):
+            ok, msg = profile_set(state.interaction_profile, "correction_style", sub)
+            return msg if ok else f"[profile] invalid style: {sub}"
+        if sub in ("snark", "sarcasm", "profanity", "verbosity", "sensitive_override", "sensitive"):
+            if len(parts) < 3:
+                if sub == "snark":
+                    return "[profile] usage: >>profile snark <low|medium|high>"
+                if sub == "sarcasm":
+                    return "[profile] usage: >>profile sarcasm <off|low|medium|high>"
+                if sub == "profanity":
+                    return "[profile] usage: >>profile profanity <on|off>"
+                if sub == "verbosity":
+                    return "[profile] usage: >>profile verbosity <compact|standard|expanded>"
+                return "[profile] usage: >>profile sensitive <on|off>"
+            raw_val = " ".join(parts[2:]).strip()
+            if sub == "snark":
+                return profile_set(state.interaction_profile, "snark_tolerance", _norm_level(raw_val))[1]
+            if sub == "sarcasm":
+                return profile_set(state.interaction_profile, "sarcasm_level", _norm_level(raw_val))[1]
+            if sub == "profanity":
+                return profile_set(state.interaction_profile, "profanity_ok", _as_bool_text(raw_val))[1]
+            if sub == "verbosity":
+                return profile_set(state.interaction_profile, "verbosity", raw_val)[1]
+            return profile_set(state.interaction_profile, "sensitive_override", _as_bool_text(raw_val))[1]
+        if sub in ("casual", "feral", "turbo"):
+            # Shortcut presets.
+            p = state.interaction_profile
+            if sub == "casual":
+                profile_set(p, "correction_style", "direct")
+                profile_set(p, "verbosity", "compact")
+                profile_set(p, "snark_tolerance", "high")
+                profile_set(p, "sarcasm_level", "medium")
+                profile_set(p, "profanity_ok", "false")
+                return "[profile] override applied: casual"
+            # 'feral' and 'turbo' are equivalent.
+            profile_set(p, "correction_style", "direct")
+            profile_set(p, "verbosity", "compact")
+            profile_set(p, "snark_tolerance", "high")
+            profile_set(p, "sarcasm_level", "high")
+            profile_set(p, "profanity_ok", "true")
+            return "[profile] override applied: feral"
+
+        if sub in ("override", "preset", "turbo"):
+            name = "feral" if sub == "turbo" else (parts[2].lower() if len(parts) > 2 else "")
+            p = state.interaction_profile
+            if name == "direct":
+                profile_set(p, "correction_style", "direct")
+                profile_set(p, "verbosity", "compact")
+                profile_set(p, "snark_tolerance", "medium")
+                profile_set(p, "sarcasm_level", "low")
+                profile_set(p, "profanity_ok", "false")
+                return "[profile] override applied: direct"
+            if name == "casual":
+                profile_set(p, "correction_style", "direct")
+                profile_set(p, "verbosity", "compact")
+                profile_set(p, "snark_tolerance", "high")
+                profile_set(p, "sarcasm_level", "medium")
+                profile_set(p, "profanity_ok", "false")
+                return "[profile] override applied: casual"
+            if name == "feral":
+                profile_set(p, "correction_style", "direct")
+                profile_set(p, "verbosity", "compact")
+                profile_set(p, "snark_tolerance", "high")
+                profile_set(p, "sarcasm_level", "high")
+                profile_set(p, "profanity_ok", "true")
+                return "[profile] override applied: feral"
+            return "[profile] usage: >>profile override <direct|casual|feral> (alias: >>profile turbo)"
+        if sub == "show":
+            state.profile_effective_strength = compute_effective_strength(
+                state.interaction_profile,
+                enabled=state.profile_enabled,
+                output_compliance=state.profile_output_compliance,
+            )
+            return render_profile_show(
+                state.interaction_profile,
+                enabled=state.profile_enabled,
+                effective_strength=state.profile_effective_strength,
+            )
+        if sub == "reset":
+            _reset_profile_runtime_state(state, cfg_get)
+            return "[profile] reset to defaults"
+        if sub == "on":
+            state.profile_enabled = True
+            return "[profile] enabled"
+        if sub == "off":
+            state.profile_enabled = False
+            return "[profile] disabled"
+        if sub == "set":
+            if len(parts) < 3 or "=" not in " ".join(parts[2:]):
+                return "[profile] usage: >>profile set <field>=<value>"
+            rhs = " ".join(parts[2:]).strip()
+            field_name, value = rhs.split("=", 1)
+            ok, msg = profile_set(state.interaction_profile, field_name.strip(), value.strip())
+            if not ok and field_name.strip() in SETTABLE_FIELDS:
+                return msg
+            return msg
+        return (
+            "[profile] usage: >>profile show|set|reset|on|off | "
+            ">>profile <direct|neutral|softened> | "
+            ">>profile snark <low|medium|high> | "
+            ">>profile sarcasm <off|low|medium|high> | "
+            ">>profile profanity <on|off>"
+        )
+
+    # kaioken runtime controls (session-scoped; fail-open)
+    if cmd_key == "kaioken":
+        sub = parts[1].lower() if len(parts) > 1 else "status"
+        if sub in ("status", "show"):
+            enabled = bool(getattr(state, "kaioken_enabled", bool(cfg_get("kaioken.enabled", True))))
+            mode = str(getattr(state, "kaioken_mode", str(cfg_get("kaioken.mode", "log_only") or "log_only")) or "log_only").strip().lower()
+            turn_idx = int(getattr(state, "kaioken_turn_counter", 0) or 0)
+            return (
+                "[kaioken]\n"
+                f"enabled={str(enabled).lower()}\n"
+                f"mode={mode}\n"
+                f"turns_logged={turn_idx}\n"
+                "note=phase1 applies soft guidance on model-chat turns only; deterministic/sidecar/control/vision are exempt"
+            )
+        if sub == "on":
+            state.kaioken_enabled = True
+            state.kaioken_mode = "coerce"
+            return "[kaioken] enabled (mode=coerce)"
+        if sub in ("off", "disable"):
+            state.kaioken_enabled = False
+            state.kaioken_mode = "off"
+            return "[kaioken] disabled"
+        if sub in ("log", "log_only"):
+            state.kaioken_enabled = True
+            state.kaioken_mode = "log_only"
+            return "[kaioken] enabled (mode=log_only)"
+        return "[kaioken] usage: >>kaioken status|on|off|log"
+
+    # scratchpad controls
+    if cmd_key == "scratchpad":
+        if not get_session_scratchpad_path or not clear_scratchpad or not list_scratchpad_records:
+            return "[scratchpad] unavailable (scratchpad_sidecar.py missing)"
+        # Scratch lane isolation: do not inherit one-shot web/wiki follow-up state.
+        _clear_evidence_followup_state(state)
+
+        # UX: bare >>scratch acts as attach (idempotent), not status.
+        if parts[0].lower() == "scratch" and len(parts) == 1:
+            state.attached_kbs.add("scratchpad")
+            return (
+                f"[router] attached: {sorted(state.attached_kbs)}\n"
+                "cmd: >>attach scratchpad | >>detach scratchpad | >>scratch status|lock|unlock|find | >>scratch list\n"
+                "see >>help for full scratchpad commands"
+            )
+
+        sub = parts[1].lower() if len(parts) > 1 else "status"
+        if sub in ("strict", "free", "assist", "assisted"):
+            return "[scratchpad] mode controls removed; unified scratch behavior is active."
+
+        if sub == "online":
+            if not capture_scratchpad_output:
+                return "[scratchpad] online unavailable"
+            tail = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+            if not tail:
+                return "[scratchpad] usage: >>scratch online <web|wiki|web synth> <query>"
+
+            tail_l = tail.lower()
+            sidecar = ""
+            query = ""
+            if tail_l.startswith("web synth "):
+                sidecar = "web synth"
+                query = tail[len("web synth ") :].strip()
+            elif tail_l.startswith("web "):
+                sidecar = "web"
+                query = tail[len("web ") :].strip()
+            elif tail_l.startswith("wiki "):
+                sidecar = "wiki"
+                query = tail[len("wiki ") :].strip()
+            else:
+                state.pending_scratch_online_query = tail
+                return (
+                    f"Retrieval mode for \"{tail}\":\n"
+                    "  [1] web       - search listing (multiple sources, snippets)\n"
+                    "  [2] wiki      - single reference article\n"
+                    "  [3] web synth - gated synthesis (refuses if evidence is weak)\n\n"
+                    "Reply: 1 | 2 | 3 (or >>web | >>wiki | >>web synth)"
+                )
+
+            if not query:
+                return "[scratchpad] usage: >>scratch online <web|wiki|web synth> <query>"
+
+            if sidecar == "web":
+                if not handle_web_query:
+                    return "[router] web not available (sidecars.py missing)"
+                raw = str(handle_web_query(query) or "").strip()
+                if not _is_sidecar_success(raw, "[web]"):
+                    return f"[scratchpad] online web: nothing loaded - {raw}".strip()
+
+                rows: List[Dict[str, Any]] = []
+                if resolve_web_evidence:
+                    try:
+                        ok, evidence, _err = resolve_web_evidence(query)
+                        if ok and isinstance(evidence, dict):
+                            raw_rows = evidence.get("rows", [])
+                            if isinstance(raw_rows, list):
+                                rows = [r for r in raw_rows if isinstance(r, dict)]
+                    except Exception:
+                        rows = []
+                state.last_web_results = list(rows)
+                state.last_web_results_load_id = ""
+
+                loaded = 0
+                chars = 0
+                if rows:
+                    for row in rows:
+                        title = str(row.get("title", "") or "").strip()
+                        snippet = str(row.get("snippet", "") or "").strip()
+                        url = str(row.get("url", "") or "").strip()
+                        if not (snippet or url):
+                            continue
+                        block = f"[Web] {title or '(untitled)'}\n{snippet}\nSource: {url}".strip()
+                        rec = capture_scratchpad_output(
+                            session_id=session_id,
+                            source_command=">>scratch online web",
+                            text=block,
+                        )
+                        if rec:
+                            loaded += 1
+                            chars += len(block)
+                else:
+                    body = _strip_command_footer_lines(raw)
+                    if body:
+                        rec = capture_scratchpad_output(
+                            session_id=session_id,
+                            source_command=">>scratch online web",
+                            text=body,
+                        )
+                        if rec:
+                            loaded = 1
+                            chars = len(body)
+                if loaded <= 0:
+                    return "[scratchpad] online web: nothing loaded - no usable rows"
+                state.attached_kbs.add("scratchpad")
+                return _scratch_online_receipt(sidecar="web", records=loaded, chars=chars)
+
+            if sidecar == "wiki":
+                if not handle_wiki_query:
+                    return "[router] wiki not available (sidecars.py missing)"
+                raw = str(handle_wiki_query(query) or "").strip()
+                if _is_clean_not_found(raw) or _is_integrity_failure(raw) or _is_transient_sidecar_failure(raw):
+                    return f"[scratchpad] online wiki: nothing loaded - {raw}".strip()
+                if not _is_sidecar_success(raw, "[wiki]"):
+                    return f"[scratchpad] online wiki: nothing loaded - {raw}".strip()
+                body = _strip_command_footer_lines(raw)
+                rec = capture_scratchpad_output(
+                    session_id=session_id,
+                    source_command=">>scratch online wiki",
+                    text=body,
+                )
+                if not rec:
+                    return "[scratchpad] online wiki: nothing loaded - capture failed"
+                state.attached_kbs.add("scratchpad")
+                receipt = _scratch_online_receipt(sidecar="wiki", records=1, chars=len(body))
+                if _is_wiki_disambiguation_output(raw):
+                    receipt += (
+                        "\n[wiki] disambiguation returned - re-run with specific term "
+                        "(e.g. '>>scratch online wiki mercury planet')"
+                    )
+                return receipt
+
+            if sidecar == "web synth":
+                if not handle_web_synth_query:
+                    return "[router] web synth not available (sidecars.py missing)"
+                raw = str(handle_web_synth_query(query) or "").strip()
+                if _is_web_synth_refusal_output(raw):
+                    return "[scratchpad] online web synth: nothing loaded - synth refused (insufficient independent evidence)"
+                body = _strip_command_footer_lines(raw)
+                if not body:
+                    return "[scratchpad] online web synth: nothing loaded - empty output"
+                rec = capture_scratchpad_output(
+                    session_id=session_id,
+                    source_command=">>scratch online web synth",
+                    text=body,
+                )
+                if not rec:
+                    return "[scratchpad] online web synth: nothing loaded - capture failed"
+                state.attached_kbs.add("scratchpad")
+                return _scratch_online_receipt(sidecar="web synth", records=1, chars=len(body))
+
+        if sub == "load" and len(parts) > 2 and parts[2].lower() == "web":
+            rows = [r for r in (getattr(state, "last_web_results", []) or []) if isinstance(r, dict)]
+            if not rows:
+                return "no web results in this session - run >>web <query> or >>scratch online web <query> first"
+            snapshot_id = _snapshot_id_for_web_rows(rows)
+            if snapshot_id and str(getattr(state, "last_web_results_load_id", "") or "") == snapshot_id:
+                return f"already loaded (snapshot={snapshot_id}) - run >>web <new query> to refresh"
+            if not capture_scratchpad_output:
+                return "[scratchpad] load web unavailable"
+            loaded = 0
+            chars = 0
+            for row in rows:
+                title = str(row.get("title", "") or "").strip()
+                snippet = str(row.get("snippet", "") or "").strip()
+                url = str(row.get("url", "") or "").strip()
+                if not (snippet or url):
+                    continue
+                block = f"[Web] {title or '(untitled)'}\n{snippet}\nSource: {url}".strip()
+                rec = capture_scratchpad_output(
+                    session_id=session_id,
+                    source_command=">>scratch load web",
+                    text=block,
+                )
+                if rec:
+                    loaded += 1
+                    chars += len(block)
+            if loaded <= 0:
+                return "[scratchpad] online web: nothing loaded - no usable rows"
+            state.last_web_results_load_id = snapshot_id
+            state.attached_kbs.add("scratchpad")
+            return _scratch_online_receipt(sidecar="web", records=loaded, chars=chars)
+
+        if sub == "lock":
+            arg = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+            if not arg:
+                return "[scratchpad] usage: >>scratch lock <index|index,index,...>"
+            if arg.lower() in {"off", "none", "clear", "reset"}:
+                state.scratchpad_locked_indices.clear()
+                return "[scratchpad] lock cleared"
+            recs = list_scratchpad_records(session_id, limit=1000000)
+            n_total = len(recs)
+            wanted = _parse_scratch_lock_indices(arg)
+            if not wanted:
+                return "[scratchpad] usage: >>scratch lock <index|index,index,...>"
+            invalid = sorted(i for i in wanted if i < 1 or i > n_total)
+            if invalid:
+                return (
+                    "[scratchpad] lock failed: invalid index(es): "
+                    + ", ".join(str(i) for i in invalid)
+                    + f" (valid range: 1..{max(1, n_total)})"
+                )
+            state.scratchpad_locked_indices = set(sorted(wanted))
+            return "[scratchpad] locked indices: " + ", ".join(str(i) for i in sorted(state.scratchpad_locked_indices))
+
+        if sub == "unlock":
+            state.scratchpad_locked_indices.clear()
+            return "[scratchpad] unlocked (all records eligible)"
+
+        if sub in ("clear", "flush"):
+            ok = clear_scratchpad(session_id)
+            state.scratchpad_locked_indices.clear()
+            return "[scratchpad] cleared" if ok else "[scratchpad] clear failed"
+
+        if sub in ("list", "ls"):
+            recs = list_scratchpad_records(session_id, limit=1000000)
+            if not recs:
+                return "[scratchpad] empty"
+            state.scratchpad_locked_indices = {
+                i for i in (getattr(state, "scratchpad_locked_indices", set()) or set())
+                if isinstance(i, int) and 1 <= i <= len(recs)
+            }
+            shown = recs[-20:]
+            lines = [f"[scratchpad] last {len(recs)} capture(s):"]
+            start = max(0, len(recs) - 20)
+            for i, rec in enumerate(shown, start + 1):
+                src = str(rec.get("source_command", "unknown"))
+                txt = str(rec.get("text", "") or "")
+                preview = str(rec.get("preview", "") or "").strip()
+                if not preview:
+                    compact = " ".join(txt.split()).strip()
+                    preview = compact[:219] + "..." if len(compact) > 220 else compact
+                lines.append(f"{i}. {src} chars={len(txt)}")
+                lines.append(f"   {preview}")
+            return "\n".join(lines)
+
+        if sub in ("show", "dump"):
+            if not build_scratchpad_dump_text:
+                return "[scratchpad] show unavailable"
+            query = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+            if not query:
+                query = "all"
+            # Parity/UX: treat bare "all" as exhaustive dump.
+            if query.lower() == "all":
+                query = "all facts"
+            recs_all = list_scratchpad_records(session_id, limit=1000000)
+            state.scratchpad_locked_indices = {
+                i for i in (getattr(state, "scratchpad_locked_indices", set()) or set())
+                if isinstance(i, int) and 1 <= i <= len(recs_all)
+            }
+            locked = set(getattr(state, "scratchpad_locked_indices", set()) or set())
+            return build_scratchpad_dump_text(session_id=session_id, query=query, locked_indices=locked)
+
+        if sub == "find":
+            if not build_scratchpad_dump_text:
+                return "[scratchpad] find unavailable"
+            query = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+            if not query:
+                return "[scratchpad] usage: >>scratch find <query>"
+            recs_all = list_scratchpad_records(session_id, limit=1000000)
+            state.scratchpad_locked_indices = {
+                i for i in (getattr(state, "scratchpad_locked_indices", set()) or set())
+                if isinstance(i, int) and 1 <= i <= len(recs_all)
+            }
+            locked = set(getattr(state, "scratchpad_locked_indices", set()) or set())
+            if build_scratchpad_facts_block:
+                sp_top_k = int(cfg_get("scratchpad.top_k", 3))
+                sp_max_chars = int(cfg_get("scratchpad.max_chars", 1200))
+                facts = build_scratchpad_facts_block(
+                    session_id=session_id,
+                    query=query,
+                    top_k=sp_top_k,
+                    max_chars=sp_max_chars,
+                    locked_indices=locked,
+                )
+                if facts:
+                    rows: List[str] = []
+                    for ln in facts.splitlines():
+                        s = (ln or "").strip()
+                        if not s.startswith("- [scratchpad "):
+                            continue
+                        if "] " in s:
+                            rows.append("- " + s.split("] ", 1)[1].strip())
+                    if rows:
+                        return "[scratchpad find]\n" + "\n".join(rows)
+            out = build_scratchpad_dump_text(session_id=session_id, query=query, locked_indices=locked)
+            if out.startswith("[scratchpad dump]"):
+                out = out.replace("[scratchpad dump]", "[scratchpad find]", 1)
+            return out
+
+        if sub == "add":
+            if not capture_scratchpad_output:
+                return "[scratchpad] add unavailable"
+            payload = cmd[len(parts[0]) :].strip()
+            payload = payload[len(parts[1]) :].strip() if len(parts) > 1 else payload
+            if not payload:
+                return "[scratchpad] usage: >>scratchpad add <text>"
+            rec = capture_scratchpad_output(
+                session_id=session_id,
+                source_command=">>scratchpad add",
+                text=payload,
+            )
+            if not rec:
+                return "[scratchpad] add failed"
+            return f"[scratchpad] added sha={str(rec.get('sha256', ''))[:12]}"
+
+        if sub == "delete":
+            if len(parts) < 3:
+                return "[scratchpad] usage: >>scratchpad delete <index|query>"
+            arg = " ".join(parts[2:]).strip()
+            if not arg:
+                return "[scratchpad] usage: >>scratchpad delete <index|query>"
+            if arg.isdigit():
+                if not delete_scratchpad_by_index:
+                    return "[scratchpad] delete unavailable"
+                ok = delete_scratchpad_by_index(session_id, int(arg))
+                return "[scratchpad] deleted 1 record" if ok else "[scratchpad] delete failed"
+            if not delete_scratchpad_by_query:
+                return "[scratchpad] delete unavailable"
+            n = delete_scratchpad_by_query(session_id, arg)
+            return f"[scratchpad] deleted {n} record(s)"
+
+        recs = list_scratchpad_records(session_id, limit=1000000)
+        state.scratchpad_locked_indices = {
+            i for i in (getattr(state, "scratchpad_locked_indices", set()) or set())
+            if isinstance(i, int) and 1 <= i <= len(recs)
+        }
+        attached = "scratchpad" in state.attached_kbs
+        locked = sorted(int(i) for i in (getattr(state, "scratchpad_locked_indices", set()) or set()) if int(i) > 0)
+        locked_str = ",".join(str(i) for i in locked) if locked else "none"
+        return (
+            "[scratchpad status]\n"
+            f"attached={attached}\n"
+            f"lock={locked_str}\n"
+            f"captures={len(recs)}\n"
+            "tip: raw captures are stored in total_recall/session_kb/<session_id>.jsonl\n"
+            "cmd: >>attach scratchpad | >>detach scratchpad | >>scratch status|lock|unlock|find | >>scratch list\n"
+            "see >>help for full scratchpad commands"
+        )
+
+    # trust mode (tool recommendation)
+    if cmd_key == "trust":
+        if not handle_trust_command or not generate_recommendations or not format_recommendations:
+            return "[router] trust_pipeline not available"
+        
+        query = " ".join(parts[1:]).strip()
+        if not query:
+            return "[router] usage: >>trust <query>"
+        
+        recommendations = generate_recommendations(
+            query=query,
+            attached_kbs=state.attached_kbs,
+            kb_paths=KB_PATHS,
+            vault_kb_name=VAULT_KB_NAME
+        )
+        
+        # Store recommendations for A/B/C response handling
+        state.pending_trust_query = query
+        state.pending_trust_recommendations = recommendations
+        
+        # Format and return recommendations
+        return format_recommendations(recommendations, query=query)
+
+    # attach/detach/list
+    if cmd_key == "attach":
+        if len(parts) < 2:
+            return "[router] usage: >>attach <kb|all>"
+
+        target = parts[1].strip().lower()
+        if target == "scratch":
+            target = "scratchpad"
+
+        if target == "all":
+            # Attach all filesystem KBs that exist on disk (+scratchpad).
+            missing: List[str] = []
+            for k in sorted(KB_PATHS.keys()):
+                if not k:
+                    continue
+                folder = KB_PATHS.get(k, "")
+                if folder and os.path.isdir(folder):
+                    state.attached_kbs.add(k)
+                else:
+                    missing.append(f"- {k} -> {folder}")
+            state.attached_kbs.add("scratchpad")
+            msg = f"[router] attached: {sorted(state.attached_kbs)}"
+            if missing:
+                msg += "\n[router] skipped KBs with missing folders (create path or update router_config.yaml):\n"
+                msg += "\n".join(missing[:25])
+            return msg
+
+        # Scratchpad virtual KB
+        if target == "scratchpad":
+            state.attached_kbs.add("scratchpad")
+            return (
+                f"[router] attached: {sorted(state.attached_kbs)}\n"
+                "cmd: >>attach scratchpad | >>detach scratchpad | >>scratch status | >>scratch list\n"
+                "see >>help for full scratchpad commands"
+            )
+
+        # Special error for vault (Qdrant collection, not filesystem KB)
+        if target == VAULT_KB_NAME:
+            return (
+                f"[error] '{VAULT_KB_NAME}' is the Qdrant collection, not a filesystem KB.\n"
+                f"\n"
+                f"To search Vault:\n"
+                f"  - Use ##mentats <query> (automatically searches Qdrant)\n"
+                f"\n"
+                f"Available filesystem KBs:\n"
+                f"  - {', '.join(sorted(KB_PATHS.keys()))}\n"
+                f"\n"
+                f"Use >>attach <kb> to attach a filesystem KB."
+            )
+
+        # Only allow filesystem KBs
+        if target in KB_PATHS:
+            folder = KB_PATHS.get(target, "")
+            if not folder or not os.path.isdir(folder):
+                return (
+                    f"[router] cannot attach '{target}': folder missing. "
+                    f"Please create {folder} or update router_config.yaml."
+                )
+            state.attached_kbs.add(target)
+            return f"[router] attached: {sorted(state.attached_kbs)}"
+
+        return f"[router] unknown kb: '{target}' (known: {sorted(KB_PATHS.keys())})"
+
+    if cmd_key == "detach":
+        if len(parts) < 2:
+            return "[router] usage: >>detach <kb|all>"
+        target = parts[1].strip().lower()
+        if target == "scratch":
+            target = "scratchpad"
+        if target == "all":
+            scratchpad_deleted = False
+            scratchpad_count = 0
+            prev_locked = _clear_locked_summ(state)
+            _clear_pending_lock(state)
+            _reset_profile_runtime_state(state, cfg_get)
+            # Detach-all contract: reset scratch mode/locks so next attach starts strict.
+            state.scratchpad_mode = "strict"
+            state.scratchpad_locked_indices.clear()
+            if "scratchpad" in state.attached_kbs and list_scratchpad_records and clear_scratchpad:
+                recs = list_scratchpad_records(session_id, limit=1000000)
+                scratchpad_count = len(recs)
+                scratchpad_deleted = bool(clear_scratchpad(session_id))
+            state.attached_kbs.clear()
+            unlock_note = f" and unlocked '{prev_locked}'" if prev_locked else ""
+            if scratchpad_deleted:
+                return (
+                    f"[router] detached ALL and deleted scratchpad data ({scratchpad_count} records dumped)"
+                    f"{unlock_note}"
+                )
+            return f"[router] detached ALL{unlock_note}"
+        if target in state.attached_kbs:
+            unlock_note = ""
+            if target in KB_PATHS and state.locked_summ_path and state.locked_summ_kb == target:
+                prev_locked = _clear_locked_summ(state)
+                if prev_locked:
+                    unlock_note = f" and unlocked '{prev_locked}'"
+            if target in KB_PATHS:
+                _clear_pending_lock(state)
+            if target == "scratchpad":
+                # Detach-scratchpad contract: reset mode/locks for next attach/run.
+                state.scratchpad_mode = "strict"
+                state.scratchpad_locked_indices.clear()
+            if target == "scratchpad" and list_scratchpad_records and clear_scratchpad:
+                recs = list_scratchpad_records(session_id, limit=1000000)
+                n = len(recs)
+                deleted = bool(clear_scratchpad(session_id))
+                state.attached_kbs.remove(target)
+                if not deleted:
+                    return f"[router] detached 'scratchpad' (warning: scratchpad delete failed){unlock_note}"
+                return f"[router] detached 'scratchpad' and deleted scratchpad data ({n} records dumped){unlock_note}"
+            state.attached_kbs.remove(target)
+            return f"[router] detached '{target}'{unlock_note}"
+        return f"[router] kb not attached: '{target}'"
+
+    out = _handle_list_files(low, state=state)
+    if out is not None:
+        return out
+
+    out = _handle_list_known_kbs(low)
+    if out is not None:
+        return out
+
+    out = _dispatch_exact_listing(low, state=state)
+    if out is not None:
+        return out
+
+    # lock / unlock SUMM source file (filesystem KB grounding scope)
+    if cmd_key == "lock":
+        if len(parts) < 2:
+            return "[router] usage: >>lock SUMM_<name>.md"
+
+        target_file = " ".join(parts[1:]).strip()
+        # Scratch soft-alias: numeric lock forms target scratchpad indices when attached.
+        if "scratchpad" in (state.attached_kbs or set()):
+            m = re.fullmatch(r"\[?\s*(\d+(?:\s*,\s*\d+)*)\s*\]?", target_file)
+            if m:
+                if not list_scratchpad_records:
+                    return "[scratchpad] lock unavailable"
+                recs = list_scratchpad_records(session_id, limit=1000000)
+                n_total = len(recs)
+                wanted = _parse_scratch_lock_indices(m.group(1))
+                if not wanted:
+                    return "[scratchpad] usage: >>scratch lock <index|index,index,...>"
+                invalid = sorted(i for i in wanted if i < 1 or i > n_total)
+                if invalid:
+                    return (
+                        "[scratchpad] lock failed: invalid index(es): "
+                        + ", ".join(str(i) for i in invalid)
+                        + f" (valid range: 1..{max(1, n_total)})"
+                    )
+                state.scratchpad_locked_indices = set(sorted(wanted))
+                return "[scratchpad] locked indices: " + ", ".join(str(i) for i in sorted(state.scratchpad_locked_indices))
+
+        low_target = target_file.lower()
+
+        source_kbs = _source_filesystem_kbs(state)
+        if not source_kbs:
+            return "[router] No filesystem KBs attached. Attach KB(s) first, then: >>lock SUMM_<name>.md"
+
+        if not find_summ_file_matches:
+            return "[router] lock unavailable (fs_rag missing)"
+
+        # Full-name lock path: SUMM_*.md
+        if low_target.startswith("summ_") and low_target.endswith(".md"):
+            matches = find_summ_file_matches(target_file, source_kbs, KB_PATHS)
+            if not matches:
+                return f"[router] lock target not found in attached KBs: {target_file}"
+        else:
+            # Partial-name lock path: suggest candidate then require Y/N confirm.
+            if not find_summ_file_candidates:
+                return "[router] lock unavailable (fs_rag missing)"
+            matches = find_summ_file_candidates(target_file, source_kbs, KB_PATHS)
+            if not matches:
+                return f"[router] lock target not found in attached KBs: {target_file}"
+            if len(matches) == 1:
+                _kb, _abs_path, _rel_path, fn = matches[0]
+                state.pending_lock_candidate = fn
+                return f"[router] Did you mean: >>lock {fn} ? [Y/N]"
+
+        if len(matches) > 1:
+            lines = [f"[router] lock target is ambiguous: {target_file}"]
+            for kb, _abs_path, rel_path, fn in matches[:10]:
+                lines.append(f"- kb={kb} file={fn} rel={rel_path}")
+            lines.append("Tip: detach unrelated KBs, then retry >>lock.")
+            _clear_pending_lock(state)
+            return "\n".join(lines)
+
+        kb, abs_path, rel_path, fn = matches[0]
+        _clear_pending_lock(state)
+        state.locked_summ_file = fn
+        state.locked_summ_kb = kb
+        state.locked_summ_path = abs_path
+        state.locked_summ_rel_path = rel_path
+        state.locked_last_fact_lines = 0
+        return f"[router] locked file: kb={kb} file={fn}"
+
+    out = _handle_unlock(parts, state=state)
+    if out is not None:
+        return out
+
+    # fun toggles (exact dispatch, behavior-preserving)
+    out = _dispatch_exact_fun(low, state=state)
+    if out is not None:
+        return out
+
+    # peek
+    if cmd_key == "peek":
+        q = cmd[len(parts[0]):].strip()
+        if not q:
+            return "[router] usage: >>peek <query>"
+        if not build_fs_facts_block:
+            return "[router] fs_rag not available"
+        facts = build_fs_facts_block(q, state.attached_kbs, KB_PATHS, top_k=FS_TOP_K, max_chars=FS_MAX_CHARS)
+        return "[peek]\n" + (facts or "(no facts)")
+
+    # summ / ingest (alias)
+    if cmd_key == "summ":
+        # target: NEW (summarize in currently attached KBs), or a kb name, or ALL
+        target = parts[1].lower() if len(parts) >= 2 else "new"
+
+        if target == "new":
+            if not state.attached_kbs:
+                return "[router] No KBs attached. Attach a KB, then: >>summ new"
+            total_created = 0
+            total_skipped = 0
+            notes: List[str] = []
+            for kb in sorted(state.attached_kbs):
+                if kb == VAULT_KB_NAME:
+                    continue
+                folder = KB_PATHS.get(kb)
+                before = _collect_summ_paths(folder or "")
+                res = summ_new_in_kb(kb, folder or "")
+                after = _collect_summ_paths(folder or "")
+                for summ_path in sorted(after - before):
+                    _run_codex_update_for_summ(summ_path, notes=notes)
+                total_created += int(res.get("summ_created", 0))
+                total_skipped += int(res.get("summ_skipped", 0))
+                notes.extend(res.get("notes", []) or [])
+            msg = f"[router] SUMM complete: created={total_created} skipped={total_skipped}"
+            if notes:
+                msg += "\n" + "\n".join("- " + n for n in notes[:25])
+            return msg
+
+        if target == "all":
+            # Summ in every kb folder
+            total_created = 0
+            total_skipped = 0
+            notes: List[str] = []
+            for kb, folder in sorted(KB_PATHS.items()):
+                if kb == VAULT_KB_NAME:
+                    continue
+                res = summ_new_in_kb(kb, folder)
+                total_created += int(res.get("summ_created", 0))
+                total_skipped += int(res.get("summ_skipped", 0))
+                notes.extend(res.get("notes", []) or [])
+            msg = f"[router] SUMM ALL complete: created={total_created} skipped={total_skipped}"
+            if notes:
+                msg += "\n" + "\n".join("- " + n for n in notes[:25])
+            return msg
+
+        # single kb
+        kb = target
+        folder = KB_PATHS.get(kb)
+        if not folder:
+            return f"[router] unknown kb '{kb}'"
+        before = _collect_summ_paths(folder)
+        res = summ_new_in_kb(kb, folder)
+        after = _collect_summ_paths(folder)
+        notes = res.get("notes", []) or []
+        for summ_path in sorted(after - before):
+            _run_codex_update_for_summ(summ_path, notes=notes)
+        msg = f"[router] SUMM {kb}: created={res.get('summ_created', 0)} skipped={res.get('summ_skipped', 0)}"
+        if notes:
+            msg += "\n" + "\n".join("- " + n for n in notes[:25])
+        return msg
+
+    # >>codex rebuild|doctor (operator maintenance commands)
+    if cmd_key == "codex":
+        sub = parts[1].strip().lower() if len(parts) >= 2 else ""
+        if not sub:
+            return (
+                ">>codex rebuild - rebuild index from filesystem\n"
+                ">>codex doctor - inspect structure, report issues\n"
+                ">>codex lint - run read-only quality diagnostics\n"
+                ">>codex clean - remove stale SUMM-backed Codex content"
+            )
+        if sub not in {"rebuild", "doctor", "lint", "clean"}:
+            return (
+                ">>codex rebuild - rebuild index from filesystem\n"
+                ">>codex doctor - inspect structure, report issues\n"
+                ">>codex lint - run read-only quality diagnostics\n"
+                ">>codex clean - remove stale SUMM-backed Codex content"
+            )
+        run = _run_codex_maintenance(sub)
+        if not run.get("ok", False):
+            err = str(run.get("error", "") or "").strip()
+            stderr = str(run.get("stderr", "") or "").strip()
+            stdout = str(run.get("stdout", "") or "").strip()
+            details = stderr or stdout or err or "unknown error"
+            return (
+                f"[codex] {sub} failed rc={run.get('rc', 1)}\n"
+                f"{details}"
+            )
+        body = str(run.get("stdout", "") or "").strip()
+        if not body:
+            body = f">>codex {sub}: complete"
+        return body
+
+    # move to vault
+    if (
+        low.startswith("move to vault")
+        or low.startswith("move_to_vault")
+        or low.startswith("mtv")
+        or low.startswith("move new to vault")
+    ):
+        # parse:
+        # - >>move to vault [all]
+        # - >>move new to vault
+        # - >>move_to_vault new
+        # - >>mtv new
+        arg = parts[-1].lower() if parts else ""
+        newest_only = low.startswith("move new to vault") or arg == "new"
+        if arg == "all":
+            src = set(k for k in KB_PATHS.keys() if k and k != VAULT_KB_NAME)
+        else:
+            src = set(k for k in state.attached_kbs if k and k != VAULT_KB_NAME)
+
+        if not src:
+            return "[router] No source KBs to promote. Attach KB(s) then: >>move to vault"
+
+        res = move_summ_to_vault(src, newest_only=newest_only)
+        mode = "newest-only " if newest_only else ""
+        msg = f"[router] {mode}move-to-vault complete: files={res.get('files', 0)} chunks={res.get('chunks', 0)}"
+        notes = res.get("notes", []) or []
+        if notes:
+            msg += "\n" + "\n".join("- " + n for n in notes[:25])
+        return msg
+
+    # send to vault (operator/archive shorthand; not a router runtime archive implementation)
+    if cmd_key == "send_to_vault" or low.startswith("send to vault") or low.startswith("send_to_vault"):
+        return "[router] `>>send to vault` is an external archive/operator flow. In-router Vault promotion is `>>move to vault`."
+
+    # =========================================================================
+    # SIDECAR COMMANDS (non-LLM utilities)
+    # =========================================================================
+
+    # >>calc <expression>
+    if cmd_key == "calc":
+        if not parse_and_eval_calc:
+            return "[router] calc not available (sidecars.py missing)"
+        expr = cmd[len(parts[0]):].strip()
+        if not expr:
+            return "[calc] usage: >>calc <expression>\nExamples: >>calc 30% of 79.95, >>calc 14*365, >>calc sqrt(16)"
+        result = parse_and_eval_calc(expr)
+        return f"[calc] {expr} = {format_calc_result(result)}"
+
+    # >>list (Vodka memories)
+    if low == "list" and cmd.startswith(">>"):
+        # Note: This is >>list (not ??)
+        if not list_vodka_memories or not state.vodka:
+            return "[list] vodka not available"
+        entries = list_vodka_memories(state.vodka)
+        return format_memory_list(entries)
+
+    # >>find <query> (search KBs)
+    if cmd_key == "find":
+        if not find_quote_in_kbs:
+            return "[router] find not available (sidecars.py missing)"
+        query = cmd[len(parts[0]):].strip()
+        if not query:
+            return "[find] usage: >>find <text to search for>"
+        if not state.attached_kbs:
+            return "[find] No KBs attached. >>attach <kb> first"
+        result = find_quote_in_kbs(query, state.attached_kbs, KB_PATHS)
+        return format_quote_result(result)
+
+    # >>flush (CTC cache)
+    if low == "flush":
+        # User-requested behavior: flush also resets profile/session-style identity.
+        _reset_profile_runtime_state(state, cfg_get)
+        state.rag_last_query = ""
+        state.rag_last_hits = 0
+        state.vault_last_query = ""
+        state.vault_last_hits = 0
+        state.fun_sticky = False
+        state.fun_rewrite_sticky = False
+        state.raw_sticky = False
+        state.serious_sticky = False
+        # default_mode is NOT reset — it survives flush.
+        # Clear conversational carry snapshots.
+        state.last_user_text = ""
+        state.last_assistant_text = ""
+        state.deterministic_last_family = ""
+        state.deterministic_last_reason = ""
+        state.deterministic_last_answer = ""
+        state.deterministic_last_frame = {}
+        state.deterministic_last_query_norm = ""
+        # Reset KAIOKEN topic/distress carry state.
+        state.kaioken_active_topic = ""
+        state.kaioken_open_topics = []
+        state.kaioken_closed_topics = set()
+        state.kaioken_threads = {}
+        state.kaioken_active_thread_id = ""
+        state.kaioken_thread_seq = 0
+        state.kaioken_last_topic_switch_turn = 0
+        state.kaioken_last_resolution_turn = -9999
+        state.kaioken_distress_topics = set()
+        state.kaioken_recent_assistant_bodies = []
+        state.kaioken_recent_user_turns = []
+        # Some KAIOKEN fields are populated via setattr during runtime.
+        setattr(state, "kaioken_recent_user_nouns", [])
+        setattr(state, "kaioken_short_fallback_distress_lane", False)
+        # Evidence-context reset (one-shot synth refusal follow-up state).
+        state.evidence_context_active = False
+        state.evidence_context_intent_class = ""
+        state.evidence_context_source_lane = ""
+        state.evidence_context_query_topic = ""
+        state.evidence_context_outcome = ""
+        state.evidence_context_ttl_turns = 0
+        state.evidence_context_created_turn_id = 0
+        state.evidence_context_wiki_fallback_active = False
+        state.pending_scratch_online_query = ""
+        state.vodka_trim_log = []
+        state.last_web_results = []
+        state.last_web_results_load_id = ""
+        state.recent_idiom_terms = []
+        state.recent_assistant_openers = []
+        state.recent_fun_body_fingerprints = []
+        state.recent_fun_fallback_bodies = []
+        state.turn_kaioken_macro = ""
+        state.last_turn_kaioken_macro = ""
+        state.turn_feral_register_detected = False
+        state.turn_distress_hint_score = 0
+        state.turn_empathy_override_applied = False
+        state.turn_playful_override = False
+        state.distress_turn_count = 0
+        purged = 0
+        if purge_session_memory_jsonl:
+            try:
+                base = ""
+                subdir = str(cfg_get("vodka.subdir", "vodka") or "vodka").strip()
+                if state.vodka is not None and hasattr(state.vodka, "valves"):
+                    base = str(getattr(state.vodka.valves, "storage_dir", "") or "").strip()
+                    subdir = str(getattr(state.vodka.valves, "subdir", subdir) or subdir).strip()
+                purged = int(purge_session_memory_jsonl(base, vodka_subdir=subdir))
+            except Exception:
+                purged = 0
+        # Scratchpad parity: clear session captures + reset lock state.
+        scratch_deleted = 0
+        scratch_cleared = False
+        if list_scratchpad_records:
+            try:
+                scratch_deleted = len(list_scratchpad_records(session_id=session_id, limit=1000))
+            except Exception:
+                scratch_deleted = 0
+        if clear_scratchpad:
+            try:
+                scratch_cleared = bool(clear_scratchpad(session_id=session_id))
+            except Exception:
+                scratch_cleared = False
+        state.scratchpad_locked_indices.clear()
+        judge_audit_dir = _resolve_judge_audit_dir()
+        judge_deleted = _purge_judge_audit_jsonl(judge_audit_dir)
+        _dm = str(getattr(state, "default_mode", "") or "").strip().lower()
+        _dm_line = f"\n[flush] default_mode={_dm}" if _dm else ""
+        if not flush_ctc_cache or not state.vodka:
+            return (
+                "[flush] profile/session identity reset; CTC step not applicable for this session "
+                f"(no Vodka cache initialized yet). Other reset actions completed. Session-memory deleted={purged}.\n"
+                f"[flush] scratchpad deleted={scratch_deleted} cleared={str(scratch_cleared).lower()} lock=cleared.\n"
+                f"[flush] judge-audit deleted={judge_deleted} ({judge_audit_dir}).{_dm_line}"
+            )
+        ctc_msg = flush_ctc_cache(state.vodka)
+        return (
+            f"{ctc_msg}\n"
+            f"[flush] profile/session identity reset.\n"
+            f"[flush] session-memory deleted={purged}.\n"
+            f"[flush] scratchpad deleted={scratch_deleted} cleared={str(scratch_cleared).lower()} lock=cleared.\n"
+            f"[flush] judge-audit deleted={judge_deleted} ({judge_audit_dir}).{_dm_line}"
+        )
+
+    # >>wiki <topic> (Wikipedia summary)
+    if cmd_key == "wiki":
+        if not handle_wiki_query:
+            return "[router] wiki not available (sidecars.py missing)"
+        topic = cmd[len(parts[0]):].strip()
+        if not topic:
+            return "[wiki] usage: >>wiki <topic>\nExample: >>wiki Albert Einstein"
+        raw = str(handle_wiki_query(topic) or "").strip()
+        if _is_sidecar_success(raw, "[wiki]"):
+            return _append_command_footer(raw, confidence="medium", source="Wiki")
+        if _is_transient_sidecar_failure(raw):
+            hdr = "[wiki timeout: regenerate to try again. Answer below uses model priors.]"
+            cs = _cheatsheet_timeout_fallback(topic)
+            if cs:
+                body = f"{hdr}\n\n{cs}"
+                return _append_command_footer(body, confidence="high", source="Cheatsheets")
+            model_ans = _build_model_timeout_fallback_answer(cmd_key="wiki", query=topic)
+            body = f"{hdr}\n\n{model_ans}".strip()
+            return _append_command_footer(body, confidence="unverified", source="Model (due to timeout)")
+        if _is_clean_not_found(raw):
+            return _append_command_footer(raw, confidence="medium", source="Wiki")
+        if _is_integrity_failure(raw):
+            return _append_command_footer(raw, confidence="unverified", source="Wiki")
+        return _append_command_footer(raw, confidence="unverified", source="Wiki")
+
+    # >>web <query> (provider-agnostic web search sidecar)
+    if cmd_key == "web":
+        if not handle_web_query:
+            return "[router] web not available (sidecars.py missing)"
+        query = cmd[len(parts[0]):].strip()
+        # >>web synth <query> subcommand
+        q_parts = query.split()
+        first_token = q_parts[0].lower() if q_parts else ""
+        if first_token == "synth":
+            if not handle_web_synth_query:
+                return "[router] web synth not available (sidecars.py missing)"
+            synth_query = query[len("synth"):].strip()
+            if not synth_query:
+                return "[web synth] No query provided."
+            raw = str(handle_web_synth_query(synth_query) or "").strip()
+            _set_evidence_context_from_synth(state, synth_query, raw)
+            if _is_web_synth_refusal_output(raw):
+                raw = "[web synth] Not enough independent high-quality web evidence to answer safely."
+            # Invariant: "[web synth]" prefix denotes refusal/failure path.
+            # Success path must return clean prose (without this prefix).
+            if _is_web_synth_refusal_output(raw):
+                return _append_command_footer(raw, confidence="unverified", source="Model")
+            return _append_command_footer(raw, confidence="medium", source="Web")
+        if not query:
+            return "[web] usage: >>web <query>\nExample: >>web father give me legs quote"
+        raw = str(handle_web_query(query) or "").strip()
+        if resolve_web_evidence:
+            try:
+                ok, evidence, _err = resolve_web_evidence(query)
+                if ok and isinstance(evidence, dict):
+                    rows = evidence.get("rows", [])
+                    if isinstance(rows, list):
+                        state.last_web_results = [r for r in rows if isinstance(r, dict)]
+                        state.last_web_results_load_id = ""
+            except Exception:
+                pass
+        if _is_sidecar_success(raw, "[web]"):
+            return _append_command_footer(raw, confidence="medium", source="Web")
+        # Provenance invariant: only successful, relevance-gated web evidence may
+        # carry Source: Web. Miss/error remains unverified model provenance.
+        return _append_command_footer(raw, confidence="unverified", source="Model")
+
+    # >>define <word> (Etymonline etymology)
+    if cmd_key == "define":
+        if not handle_define_query:
+            return "[router] define not available (sidecars.py missing)"
+        term = cmd[len(parts[0]):].strip()
+        if not term:
+            return "[define] usage: >>define <word>\nExample: >>define potable"
+        raw = str(handle_define_query(term) or "").strip()
+        if _is_sidecar_success(raw, "[define]"):
+            return _append_command_footer(raw, confidence="medium", source="Define")
+        if _is_transient_sidecar_failure(raw):
+            hdr = "[define timeout: regenerate to try again. Answer below uses model priors.]"
+            cs = _cheatsheet_timeout_fallback(term)
+            if cs:
+                body = f"{hdr}\n\n{cs}"
+                return _append_command_footer(body, confidence="high", source="Cheatsheets")
+            model_ans = _build_model_timeout_fallback_answer(cmd_key="define", query=term)
+            body = f"{hdr}\n\n{model_ans}".strip()
+            return _append_command_footer(body, confidence="unverified", source="Model (due to timeout)")
+        if _is_clean_not_found(raw):
+            return _append_command_footer(raw, confidence="medium", source="Define")
+        if _is_integrity_failure(raw):
+            return _append_command_footer(raw, confidence="unverified", source="Define")
+        return _append_command_footer(raw, confidence="unverified", source="Define")
+
+    # >>exchange <query> (Currency conversion)
+    if cmd_key == "exchange":
+        if not handle_exchange_query:
+            return "[router] exchange not available (sidecars.py missing)"
+        query = cmd[len(parts[0]):].strip()
+        if not query:
+            return "[exchange] usage: >>exchange <query>\nExamples: >>exchange 1 USD to EUR, >>exchange GBP to JPY"
+        return handle_exchange_query(query)
+
+    # >>weather <location> (Current weather)
+    if cmd_key == "weather":
+        if not handle_weather_query:
+            return "[router] weather not available (sidecars.py missing)"
+        location = cmd[len(parts[0]):].strip()
+        if not location:
+            return "[weather] usage: >>weather <location>\nExample: >>weather Perth"
+        return handle_weather_query(location)
+
+    # >>judge <criterion> : item1, item2, item3 [--verbose]
+    if cmd_key == "judge":
+        if not parse_judge_payload or not run_judge or not format_judge_run:
+            return "[router] judge not available (judge_worker.py missing)"
+        payload = cmd[len(parts[0]) :].strip()
+        criterion, items, verbose, err = parse_judge_payload(payload, min_items=2, max_items=4)
+        if err:
+            return err if err.strip() else JUDGE_USAGE_TEXT
+
+        # v1 role routing: explicit judge role, then fallback to critic/thinker.
+        judge_role = "judge"
+        if not str(cfg_get("roles.judge", "") or "").strip():
+            if str(cfg_get("roles.critic", "") or "").strip():
+                judge_role = "critic"
+            elif str(cfg_get("roles.thinker", "") or "").strip():
+                judge_role = "thinker"
+
+        # Optional grounding: if scratchpad is attached, inject scratch evidence
+        # (locked indices respected) into judge comparisons.
+        evidence_block = ""
+        evidence_source = "none"
+        evidence_locked_indices: List[int] = []
+        scratch_locked_raw_chars = 0
+        if "scratchpad" in (state.attached_kbs or set()) and build_scratchpad_facts_block:
+            locked = sorted(
+                int(i)
+                for i in (getattr(state, "scratchpad_locked_indices", set()) or set())
+                if int(i) > 0
+            )
+            if locked and list_scratchpad_records:
+                try:
+                    recs_all = list_scratchpad_records(session_id=session_id, limit=1000000)
+                    total = 0
+                    for idx in locked:
+                        if 1 <= idx <= len(recs_all):
+                            total += len(str(recs_all[idx - 1].get("text", "") or ""))
+                    scratch_locked_raw_chars = total
+                except Exception:
+                    scratch_locked_raw_chars = 0
+            scratch_query = f"{criterion} :: " + ", ".join(items)
+            sp_top_k = int(cfg_get("scratchpad.top_k", 3))
+            # Slightly larger cap than generic chat facts to preserve judge signal.
+            sp_max_chars = int(cfg_get("judge.scratch_max_chars", 1800))
+            evidence_block = build_scratchpad_facts_block(
+                session_id=session_id,
+                query=scratch_query,
+                top_k=max(1, sp_top_k),
+                max_chars=max(300, sp_max_chars),
+                locked_indices=set(locked),
+            )
+            if evidence_block.strip():
+                evidence_source = "scratchpad_locked" if locked else "scratchpad"
+                evidence_locked_indices = locked
+            elif locked:
+                return (
+                    "[judge] no usable evidence found in locked scratch indices for this criterion/options.\n"
+                    "Use >>scratch find <query>, adjust >>scratch lock <n>, or >>scratch unlock."
+                )
+
+        run = run_judge(
+            criterion=criterion,
+            items=items,
+            role=judge_role,
+            call_model_prompt_fn=call_model_prompt,
+            verbose=verbose,
+            audit_dir=_resolve_judge_audit_dir(),
+            evidence_block=evidence_block,
+            evidence_source=evidence_source,
+            evidence_locked_indices=evidence_locked_indices,
+            scratch_locked_raw_chars=scratch_locked_raw_chars,
+        )
+        return format_judge_run(run)
+
+    # >>raw (Raw mode toggle)
+    if low == "raw":
+        state.raw_sticky = True
+        return "[router] raw mode ON (sticky, no Serious formatting)"
+
+    if low == "raw off":
+        state.raw_sticky = False
+        return "[router] raw mode OFF"
+
+    # >>default <mode> — set/query the default mode that survives >>flush
+    if low == "default" or low.startswith("default "):
+        from ..session_state import _validate_default_mode
+        parts = low.split()
+        if len(parts) < 2:
+            current = str(getattr(state, "default_mode", "") or "").strip()
+            display = current if current else "serious (implicit)"
+            return (
+                f"[router] current default mode: {display}\n"
+                f"[router] usage: >>default <serious|raw|fun|fun_rewrite|off>"
+            )
+        choice = parts[1].strip().lower()
+        if choice in ("off", "reset"):
+            state.default_mode = ""
+            return "[router] default mode reset to serious (implicit)"
+        if choice == "serious":
+            state.default_mode = ""
+            return "[router] default mode set to serious (implicit)"
+        try:
+            state.default_mode = _validate_default_mode(choice)
+        except ValueError as exc:
+            return f"[router] {exc}"
+        # Clear conflicting stickies for consistency.
+        state.fun_sticky = False
+        state.fun_rewrite_sticky = False
+        state.raw_sticky = False
+        state.serious_sticky = False
+        return f"[router] default mode set to {choice} (survives >>flush)"
+
+    return f"[router] unknown command: {cmd}"
+
+

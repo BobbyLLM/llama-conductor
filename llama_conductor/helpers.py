@@ -1,0 +1,218 @@
+# helpers.py
+"""Helper functions for message parsing and manipulation."""
+
+import re
+from typing import Any, Dict, List, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Message Parsing
+# ---------------------------------------------------------------------------
+
+_IMAGE_BLOCK_TYPES = {"image", "image_url", "input_image"}
+
+
+def _extract_text_from_blocks(blocks: List[Dict[str, Any]]) -> str:
+    parts: List[str] = []
+    for b in blocks:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") in ("text", "input_text"):
+            t = b.get("text")
+            if isinstance(t, str) and t.strip():
+                parts.append(t.strip())
+    return "\n".join(parts).strip()
+
+
+def has_image_signal(value: Any) -> bool:
+    """Best-effort detector for image-bearing payloads in OpenAI/WebUI-like shapes."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().lower().startswith("data:image/")
+    if isinstance(value, list):
+        return any(has_image_signal(v) for v in value)
+    if not isinstance(value, dict):
+        return False
+
+    typ = str(value.get("type", "")).strip().lower()
+    if typ in _IMAGE_BLOCK_TYPES:
+        return True
+
+    mime = str(
+        value.get("mime_type")
+        or value.get("content_type")
+        or value.get("mimetype")
+        or ""
+    ).strip().lower()
+    if mime.startswith("image/"):
+        return True
+
+    image_url = value.get("image_url")
+    if isinstance(image_url, str) and image_url.strip().lower().startswith("data:image/"):
+        return True
+    if isinstance(image_url, dict):
+        url = str(image_url.get("url") or "").strip().lower()
+        if url.startswith("data:image/"):
+            return True
+
+    for key in ("url", "uri", "src"):
+        v = value.get(key)
+        if isinstance(v, str) and v.strip().lower().startswith("data:image/"):
+            return True
+
+    for key in ("image", "images", "image_url", "file", "files", "attachments", "content", "parts", "data"):
+        if key in value and has_image_signal(value.get(key)):
+            return True
+    return False
+
+
+def _has_image_blocks(blocks: List[Dict[str, Any]]) -> bool:
+    for b in blocks:
+        if has_image_signal(b):
+            return True
+    return False
+
+
+def has_images_in_messages(messages: List[Dict[str, Any]]) -> bool:
+    """Check if any message in the list contains images."""
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        c = m.get("content", "")
+        if has_image_signal(c):
+            return True
+        if has_image_signal(m.get("files")) or has_image_signal(m.get("attachments")):
+            return True
+    return False
+
+
+def has_mentats_in_recent_history(messages: List[Dict[str, Any]], last_n: int = 5) -> bool:
+    """Check if any of the last N messages contains Mentats output markers."""
+    recent = messages[-last_n:] if len(messages) > last_n else messages
+    for m in recent:
+        c = m.get("content", "")
+        if isinstance(c, str) and ("[ZARDOZ HATH SPOKEN]" in c or "Sources: Vault" in c):
+            return True
+    return False
+
+
+def normalize_history(raw_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert possibly-multimodal content into text-only messages for non-vision pipelines."""
+    out: List[Dict[str, Any]] = []
+    for m in raw_messages or []:
+        role = m.get("role", "")
+        c = m.get("content", "")
+        if isinstance(c, str):
+            text = c
+        elif isinstance(c, list):
+            text = _extract_text_from_blocks(c)
+            if _has_image_blocks(c):
+                text = (text + "\n[image]") if text else "[image]"
+        else:
+            text = ""
+        out.append({"role": role, "content": text})
+    return out
+
+
+def last_user_message(messages: List[Dict[str, Any]]) -> Tuple[str, int]:
+    """Extract the last user message text and its index."""
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            c = messages[i].get("content", "")
+            if isinstance(c, str):
+                return c, i
+            if isinstance(c, list):
+                return _extract_text_from_blocks(c), i
+            return "", i
+    return "", -1
+
+
+# ---------------------------------------------------------------------------
+# Command/Selector Parsing
+# ---------------------------------------------------------------------------
+
+_LEADING_ZERO_WIDTH_RE = re.compile(r"^[\u200b\u200c\u200d\u2060\ufeff]+")
+_FILE_PASTED_BANNER_RE = re.compile(r"^---\s*File:\s*.*?---\s*$", re.I)
+
+
+def _normalize_command_prefix(s: str) -> str:
+    """Normalize leading transport artifacts before command/selector checks."""
+    t = (s or "").lstrip()
+    t = _LEADING_ZERO_WIDTH_RE.sub("", t)
+    # Some clients prepend a file banner line before pasted content.
+    # If the next non-empty line starts with a command sigil, recover it.
+    if t:
+        lines = t.splitlines()
+        if lines and _FILE_PASTED_BANNER_RE.match(lines[0].strip()):
+            rest = "\n".join(lines[1:]).lstrip()
+            if rest:
+                t = rest
+    # Normalize common mojibake command sigils to literal guillemet.
+    if t.startswith("\u00c3\u201a\u00c2\u00bb"):  # "Ã‚Â»"
+        t = "\u00bb" + t[len("\u00c3\u201a\u00c2\u00bb") :]
+    elif t.startswith("\u00c2\u00bb"):  # "Â»"
+        t = "\u00bb" + t[len("\u00c2\u00bb") :]
+    return t
+
+
+def is_command(s: str) -> bool:
+    """Check if string is a session command (>>). Does NOT match ?? (Vodka recall)."""
+    t = _normalize_command_prefix(s)
+    return t.startswith(">>") or t.startswith("\u00bb")
+
+def strip_cmd_prefix(s: str) -> str:
+    """Strip command prefix (>> or «guillemet» variants)."""
+    s = _normalize_command_prefix(s)
+    if s.startswith(">>"):
+        return s[2:].strip()
+    if s.startswith("\u00bb"):
+        return s[1:].strip()
+    return s.strip()
+
+def split_selector(user_text: str) -> Tuple[str, str]:
+    """Return (selector, text). selector is one of: '', 'mentats','fun','vision','ocr'."""
+    t = _normalize_command_prefix(user_text)
+
+    # Support command-style aliases for vision/OCR:
+    # - >>vision / >>vl / >>v
+    # - >>ocr / >>read
+    # Also supports mojibake command sigils handled by strip_cmd_prefix.
+    if is_command(t):
+        cmd = strip_cmd_prefix(t)
+        m_cmd = re.match(r"^([A-Za-z_]+)\b(.*)$", cmd, flags=re.I | re.S)
+        if m_cmd:
+            head = (m_cmd.group(1) or "").strip().lower()
+            rest = (m_cmd.group(2) or "").lstrip()
+            if head in ("vision", "vl", "v"):
+                return "vision", rest
+            if head in ("ocr", "read"):
+                return "ocr", rest
+        return "", user_text
+
+    if not t.startswith("##"):
+        return "", user_text
+
+    # allow: ##m, ##mentats, ##fun, ##vision, ##ocr
+    m = re.match(r"^##\s*([A-Za-z_]+)\b(.*)$", t, flags=re.I | re.S)
+    if not m:
+        return "", user_text
+
+    sel = (m.group(1) or "").strip().lower()
+    rest = (m.group(2) or "").lstrip()
+
+    if sel in ("m", "mentats"):
+        return "mentats", rest
+    if sel in ("fun",):
+        return "fun", rest
+    if sel in ("vision",):
+        return "vision", rest
+    if sel in ("ocr",):
+        return "ocr", rest
+
+    return "", user_text
+
+
+def parse_args(cmd: str) -> List[str]:
+    """Parse space-separated arguments from command string."""
+    return [p for p in (cmd or "").split() if p]

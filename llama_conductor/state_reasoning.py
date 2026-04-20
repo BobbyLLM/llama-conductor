@@ -1,0 +1,2411 @@
+"""Deterministic state-transition and constraint-decision helpers.
+
+Purpose:
+- classify machine-checkable state-transition prompts
+- solve common bounded-capacity transfer/addition and balance-update problems deterministically
+- solve high-precision feasibility decisions via hard preconditions
+- fail loud on partial parse for high-signal state questions
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import math
+import re
+from typing import Any, Dict, Optional
+
+
+_NUM_RE = re.compile(r"(?<![A-Za-z])(\d+(?:\.\d+)?)")
+_STATE_INTENT_RE = re.compile(
+    r"\b("
+    r"add|pour|transfer|overflow|capacity|cup|container|bucket|bottle|already has|over capacity|"
+    r"inventory|stock|queue|seat|seats|slot|slots|round|rounds|batch|batches|schedule|scheduled|"
+    r"passenger|passengers|account|balance|budget|wallet|warehouse|clinic|room|rooms|worker|workers|"
+    r"board|leave|arrive|ship|receive|deposit|withdraw|spend|remaining|left"
+    r")\b",
+    re.IGNORECASE,
+)
+_STATE_VERB_HINT_RE = re.compile(
+    r"\b(add|added|adding|pour|transfer|receive|received|receives|board|boarded|boards|"
+    r"arrive|arrived|arrives|leave|left|leaves|remove|removed|spend|spent|deposit|deposited|"
+    r"withdraw|withdrew|ship|shipped|ships|restock|restocked|remaining|remain|remains|"
+    r"process|processed|processes|handle|handled|handles|complete|completed|completes|finish|finished)\b",
+    re.IGNORECASE,
+)
+_ASK_OVERFLOW_RE = re.compile(r"\b(over capacity|overflow|spill(?:ed|s|ing)?)\b", re.IGNORECASE)
+_SCHEMA_MARKER_RE = re.compile(
+    r"\b(start|cap|ops|unit|ask)\s*=",
+    re.IGNORECASE,
+)
+_SCHEMA_START_RE = re.compile(r"\bstart\s*=\s*(?P<v>[^,;\]\n]+)", re.IGNORECASE)
+_SCHEMA_CAP_RE = re.compile(r"\bcap\s*=\s*(?P<v>[^,;\]\n]+)", re.IGNORECASE)
+_SCHEMA_UNIT_RE = re.compile(r"\bunit\s*=\s*(?P<v>[a-zA-Z]+)", re.IGNORECASE)
+_SCHEMA_ASK_RE = re.compile(r"\bask\s*=\s*(?P<v>[a-zA-Z_]+)", re.IGNORECASE)
+_SCHEMA_OPS_RE = re.compile(r"\bops\s*=\s*\[(?P<v>[^\]]*)\]", re.IGNORECASE)
+
+_FIRST_ADD_RE = re.compile(
+    r"""
+    (?P<cap>\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces|fluid\s*ounces?)\s*cup
+    [^.!?\n]{0,120}?
+    with\s*(?P<start>\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces|fluid\s*ounces?)
+    [^.!?\n]{0,160}?
+    (?:add|added|adding|pour(?:\s+in)?|put(?:\s+in)?)\s*(?P<delta>\d+(?:\.\d+)?)\s*(?:more\s*)?(?:oz|ounce|ounces|fluid\s*ounces?)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_FIRST_POUR_RE = re.compile(
+    r"""
+    pour\s*(?P<input>\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces|fluid\s*ounces?)\s*(?:of\s+[a-z]+\s*)?
+    into\s*(?:a\s*)?(?P<cap1>\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces|fluid\s*ounces?)\s*cup
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_SECOND_POUR_EVERYTHING_RE = re.compile(
+    r"""
+    then\s+pour\s+everything[^\n]{0,200}?
+    into\s*(?:a\s*)?(?P<cap2>\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces|fluid\s*ounces?)\s*cup
+    (?:[^\n]{0,120}?already\s+has\s*(?P<start2>\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces|fluid\s*ounces?))?
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_ASK_FINAL_TARGET_RE = re.compile(
+    r"\bhow much\b[^.!?\n]{0,120}\bin\b[^.!?\n]{0,80}\b(?:cup|container|bucket|bottle)\b",
+    re.IGNORECASE,
+)
+_DIRECT_TOTAL_CAP_RE = re.compile(
+    r"""
+    (?P<total>\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces|fluid\s*ounces?)
+    [^.!?\n]{0,120}?
+    in(?:\s+a)?\s+(?P<cap>\d+(?:\.\d+)?)(?:\s*-\s*|\s+)?(?:oz|ounce|ounces|fluid\s*ounces?)\s*cup
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_CONTAINER_OZ_CONTEXT_RE = re.compile(
+    r"\b(?:cup|container|bucket|bottle)\b[^\n]{0,80}\b(?:oz|ounce|ounces|fluid\s*ounces?)\b"
+    r"|\b(?:oz|ounce|ounces|fluid\s*ounces?)\b[^\n]{0,80}\b(?:cup|container|bucket|bottle)\b",
+    re.IGNORECASE,
+)
+_CONTAINER_CAP_OZ_RE = re.compile(
+    r"(?P<cap>\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces|fluid\s*ounces?)\s*cup",
+    re.IGNORECASE,
+)
+_CONTAINER_CAPACITY_RE = re.compile(
+    r"(?P<cap>\d+(?:\.\d+)?)\s*(?P<cap_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)\s*(?:cup|container|bucket|bottle)",
+    re.IGNORECASE,
+)
+_CONTAINER_CAPACITY_NL_RE = re.compile(
+    r"(?:cup|container|bucket|bottle)\b[^\n]{0,80}?"
+    r"(?:can\s+)?(?:contain|contains|hold|holds|capacity(?:\s+is|\s+of)?|max(?:imum)?(?:\s+is|\s+of)?)\s*"
+    r"(?P<cap>\d+(?:\.\d+)?)\s*(?P<cap_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)",
+    re.IGNORECASE,
+)
+_CONTAINER_START_RE = re.compile(
+    r"(?:with|already\s+has|currently\s+has|holding)\s*"
+    r"(?P<start>\d+(?:\.\d+)?)\s*(?P<start_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)",
+    re.IGNORECASE,
+)
+_SINGLE_CONTAINER_TRANSFER_RE = re.compile(
+    r"\b(?:add|added|adding|pour|poured|pouring|put|putting)\s*"
+    r"(?P<delta>\d+(?:\.\d+)?)\s*(?:more\s*)?(?P<delta_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)"
+    r"(?:\s+(?:of\s+)?[a-z]+(?:\s+[a-z]+){0,2})?\s*(?:into|in)\s*"
+    r"(?:it|the\s*(?:cup|container|bucket|bottle)|this\s*(?:cup|container|bucket|bottle)|that\s*(?:cup|container|bucket|bottle))\b",
+    re.IGNORECASE,
+)
+_SINGLE_CONTAINER_FILL_RE = re.compile(
+    r"\b(?:fill|filled|filling)\s*"
+    r"(?:it|the\s*(?:cup|container|bucket|bottle)|this\s*(?:cup|container|bucket|bottle)|that\s*(?:cup|container|bucket|bottle))\s*"
+    r"with\s*(?P<delta>\d+(?:\.\d+)?)\s*(?P<delta_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)"
+    r"(?:\s+(?:of\s+)?[a-z]+(?:\s+[a-z]+){0,2})?\b",
+    re.IGNORECASE,
+)
+_SPLIT_EQUAL_NL_RE = re.compile(
+    r"""
+    (?:
+        (?:remaining|have|with|holding)\s*(?P<total1>\d+(?:\.\d+)?)\s*(?P<unit1>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)?
+        [^.!?\n]{0,180}?
+        (?:divide|split)\s*(?:it|that|the\s+\w+)?\s*(?:equally|evenly)?
+        [^.!?\n]{0,120}?
+        (?:among|between|across|into)\s*(?P<n1>\d+(?:\.\d+)?)\s*(?:cups?|containers?|buckets?|bottles?)
+    )
+    |
+    (?:
+        (?:divide|split)\s*(?P<total2>\d+(?:\.\d+)?)\s*(?P<unit2>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)?
+        [^.!?\n]{0,120}?
+        (?:equally|evenly)?
+        [^.!?\n]{0,80}?
+        (?:among|between|across|into)\s*(?P<n2>\d+(?:\.\d+)?)\s*(?:cups?|containers?|buckets?|bottles?)
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_SPLIT_REMAINING_AFTER_OP_RE = re.compile(
+    r"""
+    (?:have|with|holding|contains?|currently\s+has|starts?\s+with|starting\s+with)\s*
+    (?P<start>\d+(?:\.\d+)?)\s*
+    (?P<start_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)?
+    [^.!?\n]{0,180}?
+    (?P<verb>drink|drank|consume|consumed|remove|removed|use|used|spend|spent|withdraw|withdrew|take\s+out|took\s+out)\s*
+    (?P<delta>\d+(?:\.\d+)?)\s*
+    (?P<delta_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)?
+    [^.!?\n]{0,220}?
+    (?:divide|split)
+    [^.!?\n]{0,120}?
+    (?:remaining|rest)
+    [^.!?\n]{0,120}?
+    (?:among|between|across|into)\s*
+    (?P<n>\d+(?:\.\d+)?)\s*
+    (?:new\s*)?(?:cups?|containers?|buckets?|bottles?)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_ASK_CAPACITY_PER_CUP_RE = re.compile(
+    r"\b(capacity\s+of\s+each\s+cup|each\s+cup\s+capacity|capacity\s+per\s+cup)\b",
+    re.IGNORECASE,
+)
+_INTO_CONTAINER_RE = re.compile(
+    r"\binto\s*(?:a\s*)?(?P<cap>\d+(?:\.\d+)?)\s*"
+    r"(?P<unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)\s*"
+    r"(?:cup|container|bucket|bottle)\b",
+    re.IGNORECASE,
+)
+_FOLLOWUP_SPLIT_COUNT_RE = re.compile(
+    r"(?:"
+    r"(?:among|between|across|into)\s*(?P<n>\d+(?:\.\d+)?)\s*(?:other\s+|new\s*)?(?:cups?|containers?|buckets?|bottles?)"
+    r"|"
+    r"(?:other\s+)?(?P<n2>\d+(?:\.\d+)?)\s*(?:cups?|containers?|buckets?|bottles?)"
+    r")",
+    re.IGNORECASE,
+)
+_FOLLOWUP_SPLIT_REDUCTION_RE = re.compile(
+    r"\b(?:drink|drank|consume|consumed|remove|removed|use|used|spend|spent|withdraw|withdrew|take\s+out|took\s+out)\b",
+    re.IGNORECASE,
+)
+_FOLLOWUP_LEFT_RE = re.compile(r"\b(?:left|remaining|remain)\b", re.IGNORECASE)
+
+_BALANCE_START_STRONG_RE = re.compile(
+    r"""
+    (?:starts?\s+with|starting\s+with|currently\s+has|already\s+has)\s*
+    (?P<start>\d+(?:\.\d+)?)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_BALANCE_START_WEAK_RE = re.compile(
+    r"""
+    (?:has|with)\s*(?P<start>\d+(?:\.\d+)?)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_BALANCE_CAP_RE = re.compile(
+    r"""
+    (?P<cap>\d+(?:\.\d+)?)\s*
+    (?:seat|seats|slot|slots|capacity|max(?:imum)?|limit|spaces?|tickets?)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_ASK_REMAINING_RE = re.compile(r"\b(how much|how many|remaining|left|now)\b", re.IGNORECASE)
+_GOVERNANCE_STATE_RE = re.compile(r"\bstate\b", re.IGNORECASE)
+_GOVERNANCE_CUE_RE = re.compile(
+    r"\b("
+    r"authority|statutory|jurisdiction|federal|regulator|regulatory|permit|permits|"
+    r"policy|compliance|council|agency|classification|pathway|act-\d+|law|laws"
+    r")\b",
+    re.IGNORECASE,
+)
+_SCHED_TASKS_RE = re.compile(
+    r"\b(?P<n>\d+(?:\.\d+)?)\s*(tasks?|jobs?|patients?|orders?|tickets?|items?|units?)\b",
+    re.IGNORECASE,
+)
+_SCHED_RESOURCE_RE = re.compile(
+    r"\b(?P<n>\d+(?:\.\d+)?)\s*(rooms?|lanes?|servers?|workers?|stations?|desks?)\b",
+    re.IGNORECASE,
+)
+_SCHED_PER_RESOURCE_RE = re.compile(
+    r"\b(?P<n>\d+(?:\.\d+)?)\s*(tasks?|jobs?|patients?|orders?|tickets?|items?|units?)\s*per\s*"
+    r"(room|lane|server|worker|station|desk|slot|round|batch)\b",
+    re.IGNORECASE,
+)
+_SCHED_ASK_RE = re.compile(r"\b(how many|slots?|rounds?|batches?|waves?)\b", re.IGNORECASE)
+
+_POS_VERBS = (
+    "add", "added", "adding",
+    "receive", "received", "receives",
+    "gain", "gained", "gains",
+    "deposit", "deposited", "deposits",
+    "board", "boarded", "boards",
+    "enter", "entered", "enters",
+    "arrive", "arrived", "arrives",
+    "restock", "restocked", "restocks",
+)
+_NEG_VERBS = (
+    "remove", "removed", "removes",
+    "take out", "takes out", "taking out", "took out",
+    "spend", "spent", "spends",
+    "withdraw", "withdrew", "withdrawn", "withdraws",
+    "leave", "left", "leaves",
+    "exit", "exited", "exits",
+    "sell", "sold", "sells",
+    "ship", "shipped", "ships",
+    "use", "used", "uses",
+    "offload", "offloaded", "offloads",
+    "drink", "drank", "drinks",
+    "consume", "consumed", "consumes",
+)
+_POS_VERB_RE = "|".join(re.escape(v) for v in _POS_VERBS)
+_NEG_VERB_RE = "|".join(re.escape(v) for v in _NEG_VERBS)
+_POS_VERB_NUM_RE = re.compile(
+    rf"\b(?P<verb>{_POS_VERB_RE})\b\s*(?:an?\s*)?(?P<num>\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_NEG_VERB_NUM_RE = re.compile(
+    rf"\b(?P<verb>{_NEG_VERB_RE})\b\s*(?:an?\s*)?(?P<num>\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_POS_NUM_VERB_RE = re.compile(
+    rf"(?P<num>\d+(?:\.\d+)?)\s*(?:people|persons|passengers|units?|items?|tickets?|oz|ounces?|dollars?|bucks|usd|\$)?\s*(?P<verb>{_POS_VERB_RE})\b",
+    re.IGNORECASE,
+)
+_NEG_NUM_VERB_RE = re.compile(
+    rf"(?P<num>\d+(?:\.\d+)?)\s*(?:people|persons|passengers|units?|items?|tickets?|oz|ounces?|dollars?|bucks|usd|\$)?\s*(?P<verb>{_NEG_VERB_RE})\b",
+    re.IGNORECASE,
+)
+_OPERATION_MENTION_RE = re.compile(
+    r"\b("
+    r"add|added|adding|receive|received|receives|gain|gained|gains|deposit|deposited|deposits|"
+    r"board|boarded|boards|enter|entered|enters|arrive|arrived|arrives|restock|restocked|restocks|"
+    r"remove|removed|removes|take\s+out|takes\s+out|taking\s+out|took\s+out|"
+    r"spend|spent|spends|withdraw|withdrew|withdrawn|withdraws|"
+    r"leave|left|leaves|exit|exited|exits|sell|sold|sells|ship|shipped|ships|"
+    r"use|used|uses|offload|offloaded|offloads|"
+    r"pour|poured|pouring|transfer|transferred|transferring"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_DECISION_INTENT_RE = re.compile(r"\b(should i|should we|do i|do we)\b", re.IGNORECASE)
+_DECISION_SHORTHAND_RE = re.compile(
+    r"\b("
+    r"walk\s+or\s+drive|drive\s+or\s+walk|"
+    r"walk\s*/\s*drive|drive\s*/\s*walk|"
+    r"walk\s+vs\.?\s+drive|drive\s+vs\.?\s+walk|"
+    r"is\s+your\s+advice\s+to\s+walk\s+or\s+drive|"
+    r"advice\s+to\s+walk\s+or\s+drive"
+    r")\b",
+    re.IGNORECASE,
+)
+_DECISION_OR_RE = re.compile(r"\bor\b", re.IGNORECASE)
+_OPT_WALK_RE = re.compile(r"\bwalk(?:ing)?\b", re.IGNORECASE)
+_OPT_DRIVE_RE = re.compile(r"\bdrive|driving\b", re.IGNORECASE)
+_ASSET_PATTERN = r"(?:car|truck|van|bus|train|tram|boat|ship|motorcycle|motorbike|bike|scooter)"
+_GENERIC_ASSET_ACTION_RE = re.compile(
+    r"\b(?:wash|service|repair|fuel|charge|park|move|tow|transport|clean)\s+(?:my|the)\s+(?P<asset>[a-z][a-z0-9_-]*(?:\s+[a-z][a-z0-9_-]*){0,3})\b",
+    re.IGNORECASE,
+)
+_ASSET_NEEDS_WASH_RE = re.compile(
+    r"\b(?:my|the)\s+(?P<asset>[a-z][a-z0-9_-]*(?:\s+[a-z][a-z0-9_-]*){0,3})\s+needs?\s+wash\b",
+    re.IGNORECASE,
+)
+_ASSET_TASK_RE = re.compile(
+    r"\b("
+    rf"wash\s+(?:my|the)\s+{_ASSET_PATTERN}"
+    rf"|{_ASSET_PATTERN}\s+wash"
+    rf"|(?:my|the)\s+{_ASSET_PATTERN}\s+needs?\s+wash"
+    rf"|take\s+(?:my|the)\s+{_ASSET_PATTERN}\s+to"
+    rf"|service\s+(?:my|the)\s+{_ASSET_PATTERN}"
+    rf"|repair\s+(?:my|the)\s+{_ASSET_PATTERN}"
+    rf"|fuel\s+(?:my|the)\s+{_ASSET_PATTERN}"
+    rf"|charge\s+(?:my|the)\s+{_ASSET_PATTERN}"
+    rf"|park\s+(?:my|the)\s+{_ASSET_PATTERN}"
+    rf"|(?:my|the)\s+{_ASSET_PATTERN}\s+.*\b(mechanic|garage|dealership|service\s+center|wash|gas\s+station|petrol\s+station|charging\s+station|depot)\b"
+    r")\b",
+    re.IGNORECASE,
+)
+_FOLLOWUP_QUERY_RE = re.compile(
+    r"\b(then what|now what|what now|are you sure|still|so what|what should i do)\b",
+    re.IGNORECASE,
+)
+_SHOULD_I_WALK_DRIVE_RE = re.compile(
+    r"\bshould\s+i\b.*\b(?:walk.*drive|drive.*walk)\b",
+    re.IGNORECASE,
+)
+_WALK_DRIVE_QUERY_RE = re.compile(
+    r"\b(walk\s+or\s+drive|drive\s+or\s+walk)\b",
+    re.IGNORECASE,
+)
+_PRECONDITION_CHECK_RE = re.compile(
+    r"\b(does\s+that\s+satisfy|does\s+this\s+satisfy|satisf(?:y|ies|ied)|meet(?:s|ing)?)\b.*\b(precondition|requirement)\b",
+    re.IGNORECASE,
+)
+_CONFUSION_RE = re.compile(
+    r"\b(what\??|wtf|no idea|don't understand|dont understand|confused|huh)\b",
+    re.IGNORECASE,
+)
+_CHOICE_COMPARISON_RE = re.compile(
+    r"\b(difference|same|equivalent|what difference|aren't|arent)\b",
+    re.IGNORECASE,
+)
+_CONSTRAINT_FUEL_FALSE_RE = re.compile(r"\b(out of fuel|no fuel|without fuel|fuel is empty|tank is empty)\b", re.IGNORECASE)
+_CONSTRAINT_FUEL_TRUE_RE = re.compile(r"\b(have fuel|with fuel|fuel available|tank has fuel|refueled|fuelled)\b", re.IGNORECASE)
+_DISTANCE_RE = re.compile(
+    r"\b(?P<val>\d+(?:\.\d+)?)\s*(?P<unit>km|kilometer|kilometers|kilometre|kilometres|m|meter|meters|metre|metres)\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_REENGAGE_RE = re.compile(
+    r"\b(back to|same decision|that decision|re-?engage|option\s*[123])\b",
+    re.IGNORECASE,
+)
+_CORRECTION_INTENT_RE = re.compile(
+    r"\b(i mean|i meant|no i meant|sorry i meant|rather than|not)\b",
+    re.IGNORECASE,
+)
+_DELEGATE_DECISION_RE = re.compile(
+    r"\b(you tell me|you decide|you choose|your call|pick for me|choose for me|idk|i dont know|i don't know|not sure)\b",
+    re.IGNORECASE,
+)
+_CLARIFIER_EXPLAIN_RE = re.compile(
+    r"\b(what do you mean|explain|which one|what are the options|options|huh|confused|walk\s+or\s+drive|drive\s+or\s+walk)\b",
+    re.IGNORECASE,
+)
+_RELAXED_DECISION_CONTEXT_RE = re.compile(
+    r"\b(back to|now|again|instead|away|distance|station|wash)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class StateReasoningResult:
+    handled: bool = False
+    fail_loud: bool = False
+    family: str = "other"
+    answer: str = ""
+    reason: str = ""
+    frame: Optional[Dict[str, Any]] = None
+
+
+def _has_strong_state_transition_signature(text: str) -> bool:
+    """Guardrail helper for state-solver routing.
+
+    Returns True only when explicit transfer/capacity/scheduling signatures are present.
+    """
+    t = " ".join((text or "").split())
+    if not t:
+        return False
+    if _SCHEMA_MARKER_RE.search(t):
+        return True
+    if any(
+        rx.search(t)
+        for rx in (
+            _FIRST_ADD_RE,
+            _FIRST_POUR_RE,
+            _DIRECT_TOTAL_CAP_RE,
+            _CONTAINER_CAPACITY_RE,
+            _CONTAINER_CAPACITY_NL_RE,
+            _SINGLE_CONTAINER_TRANSFER_RE,
+            _INTO_CONTAINER_RE,
+            _SPLIT_EQUAL_NL_RE,
+            _SPLIT_REMAINING_AFTER_OP_RE,
+            _SCHED_TASKS_RE,
+        )
+    ):
+        return True
+    if _BALANCE_START_STRONG_RE.search(t) and _OPERATION_MENTION_RE.search(t):
+        return True
+    if _NUM_RE.search(t) and _OPERATION_MENTION_RE.search(t) and (
+        _ASK_OVERFLOW_RE.search(t) or _ASK_REMAINING_RE.search(t)
+    ):
+        return True
+    return False
+
+
+def _looks_like_governance_state_context(text: str) -> bool:
+    """Detect policy/legal 'state authority' semantics that must not hit transfer solver."""
+    t = " ".join((text or "").split())
+    if not t:
+        return False
+    return bool(_GOVERNANCE_STATE_RE.search(t) and _GOVERNANCE_CUE_RE.search(t))
+
+
+def classify_query_family(query: str) -> str:
+    t = " ".join(str(query or "").split())
+    if not t:
+        return "other"
+    if _SCHEMA_MARKER_RE.search(t):
+        return "state_transition"
+    if _looks_like_governance_state_context(t) and not _has_strong_state_transition_signature(t):
+        return "other"
+    if (
+        _STATE_INTENT_RE.search(t)
+        and len(_NUM_RE.findall(t)) >= 2
+        and (_STATE_VERB_HINT_RE.search(t) or _ASK_OVERFLOW_RE.search(t) or _ASK_REMAINING_RE.search(t))
+    ):
+        return "state_transition"
+    if _is_constraint_decision_candidate(t):
+        return "constraint_decision"
+    return "other"
+
+
+def is_constraint_decision_query(query: str) -> bool:
+    """Shared high-precision detector for fresh constraint decision prompts."""
+    return _is_constraint_decision_candidate(query)
+
+
+def classify_constraint_turn(query: str, *, frame: Optional[Dict[str, Any]] = None) -> str:
+    """Classify turn role for constraint lane orchestration.
+
+    Returns one of:
+    - fresh_decision: new top-level decision turn (must bypass sticky follow-up lane)
+    - asset_shift: topic/entity moved to a different asset than active frame
+    - followup_or_other: may be a true follow-up or unrelated turn
+    """
+    t = " ".join(str(query or "").split())
+    if not t:
+        return "followup_or_other"
+    if _is_constraint_decision_candidate(t):
+        return "fresh_decision"
+    if _has_frame_asset_shift(frame, t):
+        return "asset_shift"
+    return "followup_or_other"
+
+
+def solve_state_transition_query(query: str) -> StateReasoningResult:
+    t = " ".join(str(query or "").split())
+    if not t:
+        return StateReasoningResult()
+
+    # Case 0: explicit normalized schema lane (strictly marker-gated).
+    schema = _solve_normalized_state_schema(t)
+    if schema.handled:
+        return schema
+
+    fam = classify_query_family(t)
+    if fam == "constraint_decision":
+        return _solve_constraint_decision_query(t)
+    if fam != "state_transition":
+        return StateReasoningResult(family=fam)
+
+    # Case A: single-container initial + add
+    m_add = _FIRST_ADD_RE.search(t)
+    if m_add:
+        cap = _as_float(m_add.group("cap"))
+        start = _as_float(m_add.group("start"))
+        delta = _as_float(m_add.group("delta"))
+        if cap is None or start is None or delta is None:
+            return _fail_loud("Missing values for capacity/addition state update.")
+        if _has_unparsed_operation_fragment(t, covered_spans=[(m_add.start(), m_add.end())]):
+            return _fail_loud(
+                "Detected additional operation(s) outside the supported single-step capacity-add parse."
+            )
+        total = start + delta
+        contained = min(cap, total)
+        overflow = max(0.0, total - cap)
+        if _ASK_OVERFLOW_RE.search(t):
+            ans = (
+                f"The cup is over capacity by {_fmt(overflow)} oz."
+                f"\nSource: Contextual"
+            )
+        else:
+            ans = (
+                f"Total directed volume is {_fmt(total)} oz. "
+                f"The cup capacity is {_fmt(cap)} oz, so the cup contains {_fmt(contained)} oz"
+                f" and {_fmt(overflow)} oz overflows."
+                f"\nSource: Contextual"
+            )
+        return StateReasoningResult(
+            handled=True,
+            family=fam,
+            answer=ans,
+            reason="capacity_add",
+            frame=_mk_container_state_frame(contained, cap, "oz"),
+        )
+
+    # Case A2: direct stated total vs cup capacity.
+    m_direct = _DIRECT_TOTAL_CAP_RE.search(t)
+    if m_direct:
+        total = _as_float(m_direct.group("total"))
+        cap = _as_float(m_direct.group("cap"))
+        if total is None or cap is None:
+            return _fail_loud("Missing direct total/capacity values.")
+        if _has_unparsed_operation_fragment(t, covered_spans=[(m_direct.start(), m_direct.end())]):
+            return _fail_loud(
+                "Detected additional operation(s) outside direct total-vs-capacity parsing."
+            )
+        contained = min(cap, max(0.0, total))
+        overflow = max(0.0, total - cap)
+        if _ASK_OVERFLOW_RE.search(t):
+            ans = f"The cup is over capacity by {_fmt(overflow)} oz.\nSource: Contextual"
+        else:
+            ans = (
+                f"Stated volume is {_fmt(total)} oz and cup capacity is {_fmt(cap)} oz. "
+                f"The cup can physically contain {_fmt(contained)} oz; {_fmt(overflow)} oz is overflow."
+                f"\nSource: Contextual"
+            )
+        return StateReasoningResult(
+            handled=True,
+            family=fam,
+            answer=ans,
+            reason="direct_total_capacity",
+            frame=_mk_container_state_frame(contained, cap, "oz"),
+        )
+
+    # Case A3: deterministic single-container transfer/update with pronoun/explicit cup target.
+    # Example: "I have a 16 ounce cup. I pour 20 ounces of water into it."
+    simple_container = _solve_single_container_transfer(t)
+    if simple_container.handled:
+        return simple_container
+
+    # Case A4: natural-language equal split/divide among N containers.
+    split_nl = _solve_nl_split_equal(t)
+    if split_nl.handled:
+        return split_nl
+
+    # Case B: pour-then-pour-everything chain
+    m1 = _FIRST_POUR_RE.search(t)
+    m2 = _SECOND_POUR_EVERYTHING_RE.search(t)
+    if m1 and m2:
+        inp = _as_float(m1.group("input"))
+        cap1 = _as_float(m1.group("cap1"))
+        cap2 = _as_float(m2.group("cap2"))
+        start2 = _as_float(m2.group("start2")) if m2.group("start2") is not None else 0.0
+        if inp is None or cap1 is None or cap2 is None or start2 is None:
+            return _fail_loud("Missing values for transfer-chain state update.")
+        if _has_unparsed_operation_fragment(
+            t,
+            covered_spans=[(m1.start(), m1.end()), (m2.start(), m2.end())],
+        ):
+            return _fail_loud(
+                "Detected additional operation(s) beyond the supported two-step transfer chain parse."
+            )
+
+        first_contained = min(cap1, inp)
+        first_overflow = max(0.0, inp - cap1)
+
+        transfer = first_contained
+        second_total = start2 + transfer
+        second_contained = min(cap2, second_total)
+        second_overflow = max(0.0, second_total - cap2)
+
+        if _ASK_OVERFLOW_RE.search(t) and not _ASK_FINAL_TARGET_RE.search(t):
+            ans = (
+                f"Step-2 overflow is {_fmt(second_overflow)} oz "
+                f"(total overflow across both steps is {_fmt(first_overflow + second_overflow)} oz)."
+                f"\nSource: Contextual"
+            )
+        else:
+            ans = (
+                f"Step 1: {_fmt(inp)} oz into {_fmt(cap1)} oz cup -> {_fmt(first_contained)} oz in cup, "
+                f"{_fmt(first_overflow)} oz overflow. "
+                f"Step 2: pour {_fmt(transfer)} oz into {_fmt(cap2)} oz cup"
+                f"{_prefill_suffix(start2)} -> {_fmt(second_contained)} oz in target cup, "
+                f"{_fmt(second_overflow)} oz overflow at step 2."
+                f"\nSource: Contextual"
+            )
+        return StateReasoningResult(
+            handled=True,
+            family=fam,
+            answer=ans,
+            reason="capacity_transfer_chain",
+            frame=_mk_container_state_frame(second_contained, cap2, "oz"),
+        )
+
+    # Case C: generic bounded/unbounded balance updates (inventory/queue/account-like).
+    generic = _solve_generic_balance_update(t)
+    if generic.handled:
+        return generic
+
+    # Case D: generic scheduling/resource-allocation (capacity per round/slot).
+    sched = _solve_generic_schedule_allocation(t)
+    if sched.handled:
+        return sched
+
+    # Strong state intent + numeric payload, but not parseable enough -> fail loud.
+    return _fail_loud(
+        "State-transition query detected but required variables were ambiguous. "
+        "Provide explicit capacities (if any), starting amount, and each add/remove transfer."
+    )
+
+
+def _fail_loud(msg: str) -> StateReasoningResult:
+    template = (
+        "Supported deterministic forms include explicit state/capacity phrasing "
+        "or normalized schema like: start=0, cap=16, unit=oz, ops=[+20], ask=overflow."
+    )
+    return StateReasoningResult(
+        handled=True,
+        fail_loud=True,
+        family="state_transition",
+        answer=f"Cannot verify this state update deterministically: {msg} {template}\nSource: Contextual",
+        reason="fail_loud_partial_parse",
+    )
+
+
+def _as_float(v: Optional[str]) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except Exception:
+        return None
+
+
+def _solve_single_container_transfer(text: str) -> StateReasoningResult:
+    m_cap = _CONTAINER_CAPACITY_RE.search(text) or _CONTAINER_CAPACITY_NL_RE.search(text)
+    if not m_cap:
+        return StateReasoningResult()
+    cap = _as_float(m_cap.group("cap"))
+    cap_unit = str(m_cap.group("cap_unit") or "")
+    if cap is None:
+        return StateReasoningResult()
+    cap_ml = _volume_to_ml(cap, cap_unit)
+    if cap_ml is None:
+        return StateReasoningResult()
+
+    ops = list(_SINGLE_CONTAINER_TRANSFER_RE.finditer(text))
+    ops.extend(_SINGLE_CONTAINER_FILL_RE.finditer(text))
+    ops.sort(key=lambda m: m.start())
+    if not ops:
+        return StateReasoningResult()
+    if len(ops) > 1:
+        return _fail_loud(
+            "Detected multiple single-container operations; provide explicit normalized steps."
+        )
+    op = ops[0]
+    delta = _as_float(op.group("delta"))
+    delta_unit = str(op.group("delta_unit") or "")
+    if delta is None:
+        return _fail_loud("Missing transfer amount for single-container parse.")
+    delta_ml = _volume_to_ml(delta, delta_unit)
+    if delta_ml is None:
+        return _fail_loud("Transfer amount unit is unsupported for single-container parse.")
+
+    start_ml = 0.0
+    m_start = _CONTAINER_START_RE.search(text)
+    if m_start:
+        # Ignore incidental "with <num><unit>" inside operation phrasing
+        # (for example: "fill it with 600ml"), which is transfer amount, not start state.
+        op_span = (op.start(), op.end())
+        start_span = (m_start.start(), m_start.end())
+        overlaps_op = (start_span[0] < op_span[1]) and (op_span[0] < start_span[1])
+        if not overlaps_op:
+            sv = _as_float(m_start.group("start"))
+            su = str(m_start.group("start_unit") or "")
+            if sv is not None:
+                start_conv = _volume_to_ml(sv, su)
+                if start_conv is not None:
+                    start_ml = start_conv
+
+    if _has_unparsed_operation_fragment(
+        text, covered_spans=[(m_cap.start(), m_cap.end()), (op.start(), op.end())]
+    ):
+        return _fail_loud(
+            "Detected additional operation(s) outside the supported single-container transfer parse."
+        )
+
+    total_ml = start_ml + delta_ml
+    contained_ml = min(cap_ml, max(0.0, total_ml))
+    overflow_ml = max(0.0, total_ml - cap_ml)
+    contained = _volume_from_ml(contained_ml, cap_unit)
+    overflow = _volume_from_ml(overflow_ml, cap_unit)
+    total = _volume_from_ml(total_ml, cap_unit)
+    cap_disp = _volume_from_ml(cap_ml, cap_unit)
+    unit_disp = _volume_unit_display(cap_unit)
+    if _ASK_OVERFLOW_RE.search(text):
+        ans = f"The cup is over capacity by {_fmt(overflow)} {unit_disp}.\nSource: Contextual"
+    else:
+        ans = (
+            f"Total directed volume is {_fmt(total)} {unit_disp}. "
+            f"The cup capacity is {_fmt(cap_disp)} {unit_disp}, so the cup contains {_fmt(contained)} {unit_disp}"
+            f" and {_fmt(overflow)} {unit_disp} overflows."
+            f"\nSource: Contextual"
+        )
+    return StateReasoningResult(
+        handled=True,
+        family="state_transition",
+        answer=ans,
+        reason="single_container_transfer",
+        frame={
+            "kind": "container_transfer_state",
+            "amount_ml": float(contained_ml),
+            "container_cap_ml": float(cap_ml),
+            "unit_hint": unit_disp,
+        },
+    )
+
+
+def _volume_to_ml(value: float, unit: str) -> Optional[float]:
+    u = re.sub(r"\s+", " ", (unit or "").strip().lower())
+    if u in {"ml", "milliliter", "milliliters", "millilitre", "millilitres"}:
+        return float(value)
+    if u in {"l", "liter", "liters", "litre", "litres"}:
+        return float(value) * 1000.0
+    if u in {"oz", "ounce", "ounces", "fluid ounce", "fluid ounces"}:
+        return float(value) * 29.5735295625
+    return None
+
+
+def _volume_from_ml(value_ml: float, unit: str) -> float:
+    u = re.sub(r"\s+", " ", (unit or "").strip().lower())
+    if u in {"ml", "milliliter", "milliliters", "millilitre", "millilitres"}:
+        return value_ml
+    if u in {"l", "liter", "liters", "litre", "litres"}:
+        return value_ml / 1000.0
+    if u in {"oz", "ounce", "ounces", "fluid ounce", "fluid ounces"}:
+        return value_ml / 29.5735295625
+    return value_ml
+
+
+def _volume_unit_display(unit: str) -> str:
+    u = re.sub(r"\s+", " ", (unit or "").strip().lower())
+    if u in {"ml", "milliliter", "milliliters", "millilitre", "millilitres"}:
+        return "ml"
+    if u in {"l", "liter", "liters", "litre", "litres"}:
+        return "L"
+    return "oz"
+
+
+def _is_volume_unit(unit: str) -> bool:
+    u = re.sub(r"\s+", " ", (unit or "").strip().lower())
+    return u in {
+        "ml", "milliliter", "milliliters", "millilitre", "millilitres",
+        "l", "liter", "liters", "litre", "litres",
+        "oz", "ounce", "ounces", "fluid ounce", "fluid ounces",
+    }
+
+
+def _parse_schema_scalar(token: str, *, default_unit: str = "") -> tuple[Optional[float], str]:
+    s = str(token or "").strip()
+    if not s:
+        return None, default_unit
+    if s.lower() == "none":
+        return None, default_unit
+    m = re.match(r"^\s*(?P<num>-?\d+(?:\.\d+)?)\s*(?P<unit>[A-Za-z]+)?\s*$", s)
+    if not m:
+        return None, default_unit
+    n = _as_float(m.group("num"))
+    if n is None:
+        return None, default_unit
+    u = str(m.group("unit") or default_unit or "").strip()
+    return n, u
+
+
+def _split_schema_ops(raw: str) -> list[str]:
+    s = str(raw or "").strip()
+    if not s:
+        return []
+    return [x.strip() for x in re.split(r"\s*,\s*", s) if x.strip()]
+
+
+def _solve_normalized_state_schema(text: str) -> StateReasoningResult:
+    if not _SCHEMA_MARKER_RE.search(text):
+        return StateReasoningResult()
+
+    m_start = _SCHEMA_START_RE.search(text)
+    m_ops = _SCHEMA_OPS_RE.search(text)
+    if (not m_start) or (not m_ops):
+        return _fail_loud("Schema markers detected but required keys are missing (need start and ops).")
+
+    unit = ""
+    m_unit = _SCHEMA_UNIT_RE.search(text)
+    if m_unit:
+        unit = str(m_unit.group("v") or "").strip()
+
+    start_val, start_unit = _parse_schema_scalar(m_start.group("v"), default_unit=unit)
+    if start_val is None:
+        return _fail_loud("Schema start value is invalid.")
+    unit = start_unit or unit
+
+    cap = None
+    m_cap = _SCHEMA_CAP_RE.search(text)
+    if m_cap:
+        cap_val, cap_unit = _parse_schema_scalar(m_cap.group("v"), default_unit=unit)
+        if m_cap.group("v").strip().lower() == "none":
+            cap = None
+        elif cap_val is None:
+            return _fail_loud("Schema cap value is invalid.")
+        else:
+            cap = cap_val
+            if cap_unit:
+                unit = cap_unit
+
+    ask = ""
+    m_ask = _SCHEMA_ASK_RE.search(text)
+    if m_ask:
+        ask = str(m_ask.group("v") or "").strip().lower()
+
+    # Normalize to ml for volume units; otherwise keep scalar.
+    is_vol = _is_volume_unit(unit)
+    if is_vol:
+        amount = _volume_to_ml(start_val, unit)
+        if amount is None:
+            return _fail_loud("Schema start unit is unsupported.")
+        if cap is not None:
+            cap_ml = _volume_to_ml(cap, unit)
+            if cap_ml is None:
+                return _fail_loud("Schema cap unit is unsupported.")
+            cap = cap_ml
+    else:
+        amount = start_val
+
+    ops = _split_schema_ops(m_ops.group("v"))
+    if not ops:
+        return _fail_loud("Schema ops list is empty.")
+
+    per_bucket = None
+    pieces: list[str] = []
+    for op in ops:
+        s = op.strip().lower()
+        if re.match(r"^[+-]\s*\d", s):
+            sign = -1.0 if s.startswith("-") else 1.0
+            qty_text = s[1:].strip()
+            qv, qu = _parse_schema_scalar(qty_text, default_unit=unit)
+            if qv is None:
+                return _fail_loud("Schema add/remove op has invalid numeric value.")
+            if is_vol:
+                q_ml = _volume_to_ml(qv, qu or unit)
+                if q_ml is None:
+                    return _fail_loud("Schema add/remove op unit is unsupported.")
+                amount += (sign * q_ml)
+                pieces.append(f"{'+' if sign > 0 else '-'}{_fmt(_volume_from_ml(q_ml, unit))}{_volume_unit_display(unit)}")
+            else:
+                amount += (sign * qv)
+                pieces.append(f"{'+' if sign > 0 else '-'}{_fmt(qv)}")
+            continue
+
+        m_split = re.match(r"^(split_equal|divide)\s*(?:[:=]|\s)\s*(\d+(?:\.\d+)?)$", s)
+        if m_split:
+            n = _as_float(m_split.group(2))
+            if n is None or n <= 0:
+                return _fail_loud("Schema split/divide op requires n > 0.")
+            per_bucket = amount / n
+            amount = per_bucket
+            pieces.append(f"{m_split.group(1)} {int(n) if abs(n-int(n))<1e-9 else _fmt(n)}")
+            continue
+
+        return _fail_loud("Unsupported schema operation. Supported: +n, -n, split_equal n, divide n.")
+
+    overflow = 0.0
+    contained = amount
+    if cap is not None:
+        contained = min(cap, max(0.0, amount))
+        overflow = max(0.0, amount - cap)
+
+    if is_vol:
+        unit_disp = _volume_unit_display(unit)
+        contained_disp = _volume_from_ml(contained, unit)
+        overflow_disp = _volume_from_ml(overflow, unit)
+        amount_disp = _volume_from_ml(amount, unit)
+        cap_disp = _volume_from_ml(cap, unit) if cap is not None else None
+        per_bucket_disp = _volume_from_ml(per_bucket, unit) if per_bucket is not None else None
+    else:
+        unit_disp = "units"
+        contained_disp = contained
+        overflow_disp = overflow
+        amount_disp = amount
+        cap_disp = cap
+        per_bucket_disp = per_bucket
+
+    if ask in {"overflow"}:
+        ans = f"Overflow is {_fmt(overflow_disp)} {unit_disp}.\nSource: Contextual"
+    elif ask in {"per_container", "per_cup", "each"} and per_bucket_disp is not None:
+        ans = (
+            f"Equal split amount is {_fmt(per_bucket_disp)} {unit_disp} per container."
+            f"\nSource: Contextual"
+        )
+    else:
+        if cap is None:
+            ans = (
+                f"Start processed with ops [{', '.join(pieces)}] -> final {_fmt(amount_disp)} {unit_disp}."
+                f"\nSource: Contextual"
+            )
+        else:
+            ans = (
+                f"Start processed with ops [{', '.join(pieces)}] -> raw {_fmt(amount_disp)} {unit_disp}. "
+                f"With capacity {_fmt(cap_disp)} {unit_disp}, contained is {_fmt(contained_disp)} {unit_disp} "
+                f"and overflow is {_fmt(overflow_disp)} {unit_disp}."
+                f"\nSource: Contextual"
+            )
+
+    frame: Dict[str, Any] = {}
+    if is_vol and cap is not None:
+        frame = {
+            "kind": "container_transfer_state",
+            "amount_ml": float(contained),
+            "container_cap_ml": float(cap),
+            "unit_hint": unit_disp,
+        }
+    return StateReasoningResult(
+        handled=True,
+        fail_loud=False,
+        family="state_transition",
+        answer=ans,
+        reason="normalized_schema_state_ops",
+        frame=frame,
+    )
+
+
+def _solve_nl_split_equal(text: str) -> StateReasoningResult:
+    m = _SPLIT_EQUAL_NL_RE.search(text)
+    if not m:
+        # Case B: derive "remaining" total from explicit start-minus-consumption phrasing.
+        # Example: "I have 150ml ... I drink 50ml ... divide the remaining ... into 4 cups."
+        has_split_remaining = bool(
+            re.search(r"\b(?:divide|split)\b", text, re.IGNORECASE)
+            and re.search(r"\b(?:remaining|rest)\b", text, re.IGNORECASE)
+        )
+        m_n = re.search(
+            r"(?:among|between|across|into)\s*(?P<n>\d+(?:\.\d+)?)\s*(?:new\s*)?(?:cups?|containers?|buckets?|bottles?)",
+            text,
+            re.IGNORECASE,
+        )
+        m_start = re.search(
+            r"(?:have|with|holding|contains?|currently\s+has|starts?\s+with|starting\s+with)\s*"
+            r"(?P<start>\d+(?:\.\d+)?)\s*"
+            r"(?P<start_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)?",
+            text,
+            re.IGNORECASE,
+        )
+        m_reduce = re.search(
+            r"(?:drink|drank|consume|consumed|remove|removed|use|used|spend|spent|withdraw|withdrew|take\s+out|took\s+out)\s*"
+            r"(?P<delta>\d+(?:\.\d+)?)\s*"
+            r"(?P<delta_unit>ml|milliliters?|millilitres?|l|liters?|litres?|oz|ounce|ounces|fluid\s*ounces?)?",
+            text,
+            re.IGNORECASE,
+        )
+        if not (has_split_remaining and m_n and m_start and m_reduce):
+            return StateReasoningResult()
+
+        start_v = _as_float(m_start.group("start"))
+        delta_v = _as_float(m_reduce.group("delta"))
+        n_v = _as_float(m_n.group("n"))
+        if start_v is None or delta_v is None or n_v is None or n_v <= 0:
+            return _fail_loud("Split/divide operation requires valid start, reduction, and container count.")
+
+        start_unit = str(m_start.group("start_unit") or "").strip()
+        delta_unit = str(m_reduce.group("delta_unit") or "").strip()
+        if start_unit and (not _is_volume_unit(start_unit)):
+            return _fail_loud("Split/divide start unit is unsupported.")
+        if delta_unit and (not _is_volume_unit(delta_unit)):
+            return _fail_loud("Split/divide reduction unit is unsupported.")
+        if start_unit and delta_unit and (_volume_unit_display(start_unit) != _volume_unit_display(delta_unit)):
+            # Mixed but convertible volume units are allowed; convert via ml.
+            pass
+
+        # Infer common unit from explicit mentions; default to ml if omitted.
+        unit = start_unit or delta_unit or "ml"
+        start_ml = _volume_to_ml(start_v, unit)
+        delta_ml = _volume_to_ml(delta_v, delta_unit or unit)
+        if start_ml is None or delta_ml is None:
+            return _fail_loud("Split/divide amount unit is unsupported.")
+
+        remaining_ml = start_ml - delta_ml
+        if remaining_ml < 0:
+            return _fail_loud("Split/divide remaining amount is negative after reductions.")
+
+        each_ml = remaining_ml / n_v
+        each_disp = _volume_from_ml(each_ml, unit)
+        udisp = _volume_unit_display(unit)
+        if _ASK_CAPACITY_PER_CUP_RE.search(text):
+            ans = (
+                f"Equal split amount is {_fmt(each_disp)} {udisp} per cup. "
+                f"So each cup must have at least {_fmt(each_disp)} {udisp} capacity to hold its share."
+                f"\nSource: Contextual"
+            )
+        else:
+            ans = f"Equal split amount is {_fmt(each_disp)} {udisp} per cup.\nSource: Contextual"
+        return StateReasoningResult(
+            handled=True,
+            fail_loud=False,
+            family="state_transition",
+            answer=ans,
+            reason="natural_language_split_equal_remaining_after_reduction",
+        )
+    total_raw = m.group("total1") or m.group("total2")
+    unit_raw = m.group("unit1") or m.group("unit2") or ""
+    n_raw = m.group("n1") or m.group("n2")
+    total_v = _as_float(total_raw)
+    n_v = _as_float(n_raw)
+    if total_v is None or n_v is None or n_v <= 0:
+        return _fail_loud("Split/divide operation requires valid total amount and container count.")
+
+    unit = str(unit_raw or "").strip()
+    if unit:
+        if not _is_volume_unit(unit):
+            return _fail_loud("Split/divide unit is unsupported.")
+        total_ml = _volume_to_ml(total_v, unit)
+        if total_ml is None:
+            return _fail_loud("Split/divide amount unit is unsupported.")
+        each_ml = total_ml / n_v
+        each_disp = _volume_from_ml(each_ml, unit)
+        udisp = _volume_unit_display(unit)
+        if _ASK_CAPACITY_PER_CUP_RE.search(text):
+            ans = (
+                f"Equal split amount is {_fmt(each_disp)} {udisp} per cup. "
+                f"So each cup must have at least {_fmt(each_disp)} {udisp} capacity to hold its share."
+                f"\nSource: Contextual"
+            )
+        else:
+            ans = f"Equal split amount is {_fmt(each_disp)} {udisp} per cup.\nSource: Contextual"
+    else:
+        each = total_v / n_v
+        if _ASK_CAPACITY_PER_CUP_RE.search(text):
+            ans = (
+                f"Equal split amount is {_fmt(each)} per cup. "
+                f"So each cup needs at least {_fmt(each)} capacity units for an exact fit."
+                f"\nSource: Contextual"
+            )
+        else:
+            ans = f"Equal split amount is {_fmt(each)} per cup.\nSource: Contextual"
+
+    return StateReasoningResult(
+        handled=True,
+        fail_loud=False,
+        family="state_transition",
+        answer=ans,
+        reason="natural_language_split_equal",
+    )
+
+
+def _mk_container_state_frame(amount: float, cap: float, unit: str) -> Dict[str, Any]:
+    amount_ml = _volume_to_ml(float(amount), unit)
+    cap_ml = _volume_to_ml(float(cap), unit)
+    return {
+        "kind": "container_transfer_state",
+        "amount_ml": float(amount_ml if amount_ml is not None else amount),
+        "container_cap_ml": float(cap_ml if cap_ml is not None else cap),
+        "unit_hint": _volume_unit_display(unit),
+    }
+
+
+def _is_state_transition_followup_candidate(query: str) -> bool:
+    t = " ".join((query or "").split()).lower()
+    if not t:
+        return False
+    if not re.search(r"\b(pour|transfer)\b", t):
+        return False
+    if not re.search(r"\b(contents|everything|that|it)\b", t):
+        return False
+    return bool(_INTO_CONTAINER_RE.search(t))
+
+
+def _is_state_transition_split_followup_candidate(query: str) -> bool:
+    t = " ".join((query or "").split()).lower()
+    if not t:
+        return False
+    if not re.search(r"\b(split|divide|division|equal(?:ly)?|evenly)\b", t):
+        return False
+    if not _FOLLOWUP_SPLIT_COUNT_RE.search(t):
+        return False
+    return bool(re.search(r"\b(that|those|it|contents?|whatever|remaining|other)\b", t))
+
+def _is_state_transition_split_reduction_followup_candidate(query: str) -> bool:
+    t = " ".join((query or "").split()).lower()
+    if not t:
+        return False
+    if not _FOLLOWUP_SPLIT_REDUCTION_RE.search(t):
+        return False
+    if not re.search(r"\b(cup|cups|container|containers|bucket|buckets|bottle|bottles)\b", t):
+        return False
+    return bool(_FOLLOWUP_LEFT_RE.search(t))
+
+def _parse_reduction_units_from_query(query: str) -> float:
+    t = " ".join((query or "").split()).lower()
+    if not t:
+        return 0.0
+    word_to_num = {
+        "one": 1.0,
+        "two": 2.0,
+        "three": 3.0,
+        "four": 4.0,
+        "five": 5.0,
+        "six": 6.0,
+        "seven": 7.0,
+        "eight": 8.0,
+        "nine": 9.0,
+        "ten": 10.0,
+    }
+    m_num = re.search(
+        r"\b(?:drink|drank|consume|consumed|remove|removed|use|used|spend|spent|withdraw|withdrew|take\s+out|took\s+out)\s+(\d+(?:\.\d+)?)\b",
+        t,
+        re.IGNORECASE,
+    )
+    if m_num:
+        v = _as_float(m_num.group(1))
+        if v is not None and v > 0:
+            return float(v)
+    m_word = re.search(
+        r"\b(?:drink|drank|consume|consumed|remove|removed|use|used|spend|spent|withdraw|withdrew|take\s+out|took\s+out)\s+(one|two|three|four|five|six|seven|eight|nine|ten)\b",
+        t,
+        re.IGNORECASE,
+    )
+    if m_word:
+        return float(word_to_num.get(str(m_word.group(1)).lower(), 0.0))
+    # Fallback for short referential phrasing like "drink one of the three cups".
+    if re.search(r"\bone\b", t):
+        return 1.0
+    return 0.0
+
+
+def solve_state_transition_followup(*, frame: Dict[str, Any], query: str) -> StateReasoningResult:
+    t = " ".join((query or "").split())
+    if not t or not isinstance(frame, dict):
+        return StateReasoningResult(family="state_transition")
+    if str(frame.get("kind") or "") != "container_transfer_state":
+        return StateReasoningResult(family="state_transition")
+    try:
+        carried_ml = float(frame.get("amount_ml"))
+    except Exception:
+        return StateReasoningResult(family="state_transition")
+    if carried_ml < 0:
+        return StateReasoningResult(family="state_transition")
+
+    if _is_state_transition_split_followup_candidate(t):
+        m_n = _FOLLOWUP_SPLIT_COUNT_RE.search(t)
+        n_raw = ""
+        if m_n:
+            n_raw = str(m_n.group("n") or m_n.group("n2") or "")
+        n_v = _as_float(n_raw) if n_raw else None
+        if n_v is None or n_v <= 0:
+            return _fail_loud("Follow-up split/divide requires a valid container count.")
+        unit_hint = str(frame.get("unit_hint") or "ml")
+        each_ml = carried_ml / n_v
+        each_disp = _volume_from_ml(each_ml, unit_hint)
+        unit_disp = _volume_unit_display(unit_hint)
+        ans = f"Equal split amount is {_fmt(each_disp)} {unit_disp} per cup.\nSource: Contextual"
+        out_frame = dict(frame)
+        out_frame["amount_ml"] = float(carried_ml)
+        out_frame["unit_hint"] = unit_disp
+        out_frame["split_count"] = float(n_v)
+        out_frame["split_each_ml"] = float(each_ml)
+        out_frame["split_total_ml"] = float(carried_ml)
+        return StateReasoningResult(
+            handled=True,
+            fail_loud=False,
+            family="state_transition",
+            answer=ans,
+            reason="state_transition_followup_split_equal",
+            frame=out_frame,
+        )
+
+    split_count = _as_float(str(frame.get("split_count") or ""))
+    split_each_ml = _as_float(str(frame.get("split_each_ml") or ""))
+    split_total_ml = _as_float(str(frame.get("split_total_ml") or ""))
+    if (
+        split_count is not None
+        and split_each_ml is not None
+        and split_total_ml is not None
+        and split_count > 0
+        and split_each_ml >= 0
+        and _is_state_transition_split_reduction_followup_candidate(t)
+    ):
+        reduced_units = _parse_reduction_units_from_query(t)
+        if reduced_units <= 0:
+            return _fail_loud("Follow-up reduction requires a valid number of consumed containers.")
+        remaining_units = max(0.0, split_count - reduced_units)
+        remaining_ml = max(0.0, remaining_units * split_each_ml)
+        unit_hint = str(frame.get("unit_hint") or "ml")
+        unit_disp = _volume_unit_display(unit_hint)
+        remaining_disp = _volume_from_ml(remaining_ml, unit_hint)
+        each_disp = _volume_from_ml(split_each_ml, unit_hint)
+        ans = (
+            f"After dividing, each cup holds {_fmt(each_disp)} {unit_disp}. "
+            f"Drinking {_fmt(reduced_units)} leaves {_fmt(remaining_disp)} {unit_disp} in the remaining cups."
+            f"\nSource: Contextual"
+        )
+        out_frame = dict(frame)
+        out_frame["amount_ml"] = float(remaining_ml)
+        out_frame["split_count"] = float(remaining_units)
+        out_frame["split_each_ml"] = float(split_each_ml)
+        out_frame["split_total_ml"] = float(remaining_ml)
+        return StateReasoningResult(
+            handled=True,
+            fail_loud=False,
+            family="state_transition",
+            answer=ans,
+            reason="state_transition_followup_split_reduction",
+            frame=out_frame,
+        )
+
+    if not _is_state_transition_followup_candidate(t):
+        return StateReasoningResult(family="state_transition")
+
+    into_matches = list(_INTO_CONTAINER_RE.finditer(t))
+    if not into_matches:
+        return _fail_loud("Follow-up transfer detected but no target container capacities were parsed.")
+
+    curr_ml = carried_ml
+    total_overflow_ml = 0.0
+    step_lines: list[str] = []
+    last_cap_ml = None
+    last_unit = "ml"
+    for idx, m in enumerate(into_matches, start=1):
+        cap_v = _as_float(m.group("cap"))
+        cap_u = str(m.group("unit") or "")
+        if cap_v is None:
+            return _fail_loud("Missing capacity value in follow-up transfer step.")
+        cap_ml = _volume_to_ml(cap_v, cap_u)
+        if cap_ml is None:
+            return _fail_loud("Unsupported capacity unit in follow-up transfer step.")
+        before_ml = curr_ml
+        curr_ml = min(cap_ml, max(0.0, before_ml))
+        step_overflow_ml = max(0.0, before_ml - cap_ml)
+        total_overflow_ml += step_overflow_ml
+        step_lines.append(
+            f"Step {idx}: into {_fmt(cap_v)} {_volume_unit_display(cap_u)} cup -> "
+            f"{_fmt(_volume_from_ml(curr_ml, cap_u))} {_volume_unit_display(cap_u)} contained, "
+            f"{_fmt(_volume_from_ml(step_overflow_ml, cap_u))} {_volume_unit_display(cap_u)} overflow."
+        )
+        last_cap_ml = cap_ml
+        last_unit = cap_u
+
+    final_val = _volume_from_ml(curr_ml, last_unit)
+    total_overflow_val = _volume_from_ml(total_overflow_ml, last_unit)
+    unit_disp = _volume_unit_display(last_unit)
+    answer = (
+        f"Starting from carried volume {_fmt(_volume_from_ml(carried_ml, last_unit))} {unit_disp}. "
+        + " ".join(step_lines)
+        + f" Final cup contains {_fmt(final_val)} {unit_disp}. "
+        + f"Total overflow across follow-up steps is {_fmt(total_overflow_val)} {unit_disp}."
+        + "\nSource: Contextual"
+    )
+    out_frame = {
+        "kind": "container_transfer_state",
+        "amount_ml": float(curr_ml),
+        "container_cap_ml": float(last_cap_ml if last_cap_ml is not None else frame.get("container_cap_ml", 0.0)),
+        "unit_hint": _volume_unit_display(last_unit),
+    }
+    return StateReasoningResult(
+        handled=True,
+        fail_loud=False,
+        family="state_transition",
+        answer=answer,
+        reason="state_transition_followup_transfer_chain",
+        frame=out_frame,
+    )
+
+
+def _distance_km(text: str) -> Optional[float]:
+    m = _DISTANCE_RE.search(text or "")
+    if not m:
+        return None
+    val = _as_float(m.group("val"))
+    if val is None:
+        return None
+    unit = (m.group("unit") or "").lower()
+    if unit.startswith("km") or unit.startswith("kilo"):
+        return val
+    return val / 1000.0
+
+
+def _yourself_first_distance_clause(km: float) -> str:
+    if km < 1.5:
+        return "walking is practical; driving is faster and lower-effort if you prefer"
+    if km < 5.0:
+        return "walking is doable but moderate effort; driving is the lower-effort option"
+    return "walking is possible but high-effort; driving is the practical low-effort option"
+
+
+def _is_explicit_reengage(query: str) -> bool:
+    q = (query or "").strip().lower()
+    if not q:
+        return False
+    if _EXPLICIT_REENGAGE_RE.search(q):
+        return True
+    toks = _normalize_text_tokens(q)
+    if toks & {"1", "2", "3"}:
+        return True
+    if {"walk", "drive"} <= toks:
+        return True
+    if {"move", "tow"} & toks:
+        return True
+    return False
+
+
+def _is_correction_intent(query: str) -> bool:
+    q = (query or "").strip().lower()
+    if not q:
+        return False
+    return bool(_CORRECTION_INTENT_RE.search(q))
+
+
+def _fmt(v: float) -> str:
+    if abs(v - int(v)) < 1e-9:
+        return str(int(v))
+    return f"{v:.2f}".rstrip("0").rstrip(".")
+
+
+def _prefill_suffix(start2: float) -> str:
+    if start2 <= 0:
+        return ""
+    return f" (already holding {_fmt(start2)} oz)"
+
+
+def _mask_spans(text: str, spans: list[tuple[int, int]]) -> str:
+    if not spans:
+        return text
+    out = text
+    for s, e in sorted(spans, key=lambda x: x[0], reverse=True):
+        s2 = max(0, int(s))
+        e2 = min(len(out), int(e))
+        if e2 <= s2:
+            continue
+        out = out[:s2] + (" " * (e2 - s2)) + out[e2:]
+    return out
+
+
+def _has_unparsed_operation_fragment(text: str, *, covered_spans: list[tuple[int, int]]) -> bool:
+    rem = _mask_spans(text, covered_spans)
+    return bool(_OPERATION_MENTION_RE.search(rem) and _NUM_RE.search(rem))
+
+
+def _has_operation_mention_mismatch(text: str, *, parsed_ops: list[tuple[int, int, float, str]]) -> bool:
+    mentions = [m.start() for m in _OPERATION_MENTION_RE.finditer(text)]
+    if not mentions:
+        return False
+    return len(mentions) > len(parsed_ops)
+
+
+def _extract_signed_ops(text: str) -> list[tuple[int, int, float, str]]:
+    rows: list[tuple[int, int, float, str]] = []
+    for m in _POS_VERB_NUM_RE.finditer(text):
+        n = _as_float(m.group("num"))
+        if n is not None:
+            rows.append((m.start(), +1, n, m.group("verb").lower()))
+    for m in _NEG_VERB_NUM_RE.finditer(text):
+        n = _as_float(m.group("num"))
+        if n is not None:
+            rows.append((m.start(), -1, n, m.group("verb").lower()))
+    for m in _POS_NUM_VERB_RE.finditer(text):
+        n = _as_float(m.group("num"))
+        if n is not None:
+            rows.append((m.start(), +1, n, m.group("verb").lower()))
+    for m in _NEG_NUM_VERB_RE.finditer(text):
+        n = _as_float(m.group("num"))
+        if n is not None:
+            rows.append((m.start(), -1, n, m.group("verb").lower()))
+    rows.sort(key=lambda r: r[0])
+    dedup: list[tuple[int, int, float, str]] = []
+    last_pos = -1
+    for row in rows:
+        if row[0] == last_pos:
+            continue
+        dedup.append(row)
+        last_pos = row[0]
+    return dedup
+
+
+def _solve_generic_balance_update(text: str) -> StateReasoningResult:
+    m_start = _BALANCE_START_STRONG_RE.search(text)
+    if not m_start:
+        m_start = _BALANCE_START_WEAK_RE.search(text)
+    if not m_start:
+        return StateReasoningResult()
+    start = _as_float(m_start.group("start"))
+    if start is None:
+        return StateReasoningResult()
+    ops = _extract_signed_ops(text)
+    if not ops:
+        return StateReasoningResult()
+    if _has_operation_mention_mismatch(text, parsed_ops=ops):
+        return _fail_loud(
+            "Some operation words were detected but could not be parsed into deterministic numeric updates."
+        )
+
+    cap = None
+    m_cap = _BALANCE_CAP_RE.search(text)
+    if m_cap:
+        cap = _as_float(m_cap.group("cap"))
+    if cap is None:
+        m_cap_oz = _CONTAINER_CAP_OZ_RE.search(text)
+        if m_cap_oz:
+            cap = _as_float(m_cap_oz.group("cap"))
+    container_oz_context = bool(_CONTAINER_OZ_CONTEXT_RE.search(text))
+    if container_oz_context and len(ops) > 1:
+        return _fail_loud(
+            "Container-capacity query appears multi-step; current generic parser only supports one deterministic container update without explicit step schema."
+        )
+
+    delta_total = 0.0
+    pieces: list[str] = []
+    for _, sign, n, verb in ops:
+        delta_total += (sign * n)
+        op_char = "+" if sign > 0 else "-"
+        pieces.append(f"{op_char}{_fmt(n)} ({verb})")
+
+    raw_final = start + delta_total
+    if cap is None:
+        if _ASK_OVERFLOW_RE.search(text):
+            return _fail_loud("Overflow requested but no capacity value was provided.")
+        ans = (
+            f"Start {_fmt(start)}; operations {', '.join(pieces)} -> final {_fmt(raw_final)}."
+            f"\nSource: Contextual"
+        )
+        return StateReasoningResult(handled=True, family="state_transition", answer=ans, reason="generic_balance_unbounded")
+
+    bounded_final = min(cap, max(0.0, raw_final))
+    overflow = max(0.0, raw_final - cap)
+    underflow = max(0.0, -raw_final)
+    if _ASK_OVERFLOW_RE.search(text):
+        ans = f"Over-capacity amount is {_fmt(overflow)}.\nSource: Contextual"
+    else:
+        parts = [
+            f"Start {_fmt(start)}; operations {', '.join(pieces)} -> raw {_fmt(raw_final)}.",
+            f"With capacity {_fmt(cap)}, contained amount is {_fmt(bounded_final)}.",
+        ]
+        if overflow > 0:
+            parts.append(f"Overflow is {_fmt(overflow)}.")
+        if underflow > 0:
+            parts.append(f"Requested removals exceeded available by {_fmt(underflow)} before bounding.")
+        ans = " ".join(parts) + "\nSource: Contextual"
+    return StateReasoningResult(handled=True, family="state_transition", answer=ans, reason="generic_balance_bounded")
+
+
+def _solve_generic_schedule_allocation(text: str) -> StateReasoningResult:
+    if not _SCHED_ASK_RE.search(text):
+        return StateReasoningResult()
+    m_tasks = _SCHED_TASKS_RE.search(text)
+    if not m_tasks:
+        return StateReasoningResult()
+    tasks = _as_float(m_tasks.group("n"))
+    if tasks is None or tasks <= 0:
+        return StateReasoningResult()
+
+    resources = 1.0
+    m_res = _SCHED_RESOURCE_RE.search(text)
+    if m_res:
+        rv = _as_float(m_res.group("n"))
+        if rv is not None and rv > 0:
+            resources = rv
+
+    per_resource = 1.0
+    m_per = _SCHED_PER_RESOURCE_RE.search(text)
+    if m_per:
+        pv = _as_float(m_per.group("n"))
+        if pv is not None and pv > 0:
+            per_resource = pv
+
+    capacity_per_round = resources * per_resource
+    if capacity_per_round <= 0:
+        return _fail_loud("Scheduling capacity per round could not be determined.")
+
+    rounds = int(math.ceil(tasks / capacity_per_round))
+    remainder = float(tasks - ((rounds - 1) * capacity_per_round)) if rounds > 1 else float(tasks)
+    ans = (
+        f"Total workload {_fmt(tasks)} with capacity {_fmt(capacity_per_round)} per round "
+        f"(resources={_fmt(resources)}, per-resource={_fmt(per_resource)}) requires {rounds} rounds. "
+        f"Final round load is {_fmt(remainder)}."
+        f"\nSource: Contextual"
+    )
+    return StateReasoningResult(handled=True, family="state_transition", answer=ans, reason="generic_schedule_allocation")
+
+
+def _is_constraint_decision_candidate(text: str) -> bool:
+    t = " ".join((text or "").split())
+    if not t:
+        return False
+    has_shorthand = bool(_DECISION_SHORTHAND_RE.search(t))
+    if not (_DECISION_INTENT_RE.search(t) or has_shorthand):
+        return False
+    if (not has_shorthand) and (not _DECISION_OR_RE.search(t)):
+        return False
+    if not (_OPT_WALK_RE.search(t) and _OPT_DRIVE_RE.search(t)):
+        return False
+    # High precision trigger: explicit task context requiring an asset at destination.
+    has_task_context = bool(
+        _ASSET_TASK_RE.search(t)
+        or _GENERIC_ASSET_ACTION_RE.search(t)
+        or _ASSET_NEEDS_WASH_RE.search(t)
+    )
+    if has_task_context:
+        return True
+    # Relaxed continuation for shorthand decision turns after entity/topic shifts:
+    # allow compact "back to car ... walk or drive" style prompts when they still
+    # include an explicit asset token and contextual cue (distance/back-to/etc).
+    if has_shorthand:
+        low = t.lower()
+        asset = _extract_explicit_asset_label(low, require_task_context=False)
+        if asset and (_RELAXED_DECISION_CONTEXT_RE.search(low) or _DISTANCE_RE.search(low)):
+            return True
+        return False
+    return False
+
+
+def _clean_asset_phrase(raw: str) -> str:
+    toks = [x for x in re.split(r"\s+", (raw or "").strip().lower()) if x]
+    cut_words = {"and", "or", "but"}
+    keep: list[str] = []
+    for tok in toks:
+        if tok in cut_words:
+            break
+        if tok in {"my", "the", "a", "an"}:
+            continue
+        keep.append(tok)
+        if len(keep) >= 4:
+            break
+    toks = keep
+    while toks and toks[-1] in {"to", "for", "at", "in", "on", "from", "with", "wash", "station"}:
+        toks.pop()
+    if not toks:
+        return "asset"
+    return " ".join(toks[:4])
+
+
+def _extract_asset_candidate(text: str) -> Optional[str]:
+    t = " ".join((text or "").split())
+    if not t:
+        return None
+    m = _GENERIC_ASSET_ACTION_RE.search(t)
+    if m and m.group("asset"):
+        v = _clean_asset_phrase(m.group("asset"))
+        if v and v != "asset":
+            return v
+    m2 = _ASSET_NEEDS_WASH_RE.search(t)
+    if m2 and m2.group("asset"):
+        v2 = _clean_asset_phrase(m2.group("asset"))
+        if v2 and v2 != "asset":
+            return v2
+    return None
+
+
+def _extract_explicit_asset_label(text: str, *, require_task_context: bool = True) -> Optional[str]:
+    t = " ".join((text or "").split()).lower()
+    if not t:
+        return None
+    generic = _extract_asset_candidate(t)
+    if generic:
+        v = _canonical_asset(generic)
+        if v and v != "asset":
+            return v
+    # Only treat bare asset tokens as explicit when task context is present,
+    # unless caller opts into relaxed mode for walk/drive entity-shift detection.
+    if require_task_context and (not _ASSET_TASK_RE.search(t)) and (not _GENERIC_ASSET_ACTION_RE.search(t)) and (not _ASSET_NEEDS_WASH_RE.search(t)):
+        return None
+    for asset in ("car", "train", "bus", "truck", "van", "tram", "boat", "ship", "motorcycle", "motorbike", "bike", "scooter"):
+        if re.search(rf"\b{re.escape(asset)}\b", t):
+            return _canonical_asset(asset)
+    return None
+
+
+def _has_frame_asset_shift(frame: Optional[Dict[str, Any]], text: str) -> bool:
+    if not isinstance(frame, dict):
+        return False
+    if str(frame.get("kind") or "") != "option_feasibility":
+        return False
+    frame_asset_raw = str(frame.get("asset") or "").strip().lower()
+    if not frame_asset_raw:
+        return False
+    low = " ".join((text or "").split()).lower()
+    has_walk_drive = bool(_OPT_WALK_RE.search(low) and _OPT_DRIVE_RE.search(low))
+    query_asset = _extract_explicit_asset_label(text, require_task_context=(not has_walk_drive))
+    if not query_asset:
+        return False
+    return _canonical_asset(frame_asset_raw) != _canonical_asset(query_asset)
+
+
+def _infer_asset_label(text: str) -> str:
+    explicit = _extract_explicit_asset_label(text, require_task_context=False)
+    if explicit:
+        return explicit
+    return "asset"
+
+
+def _canonical_asset(asset: str) -> str:
+    a = (asset or "").strip().lower()
+    aliases = {
+        "motorbike": "motorcycle",
+        "motor cycle": "motorcycle",
+        "motor-bike": "motorcycle",
+    }
+    return aliases.get(a, a)
+
+
+def _infer_destination_label(text: str) -> str:
+    t = " ".join((text or "").split()).lower()
+    for dest in ("car wash", "train wash", "wash", "mechanic", "garage", "dealership", "service center", "depot"):
+        if dest in t:
+            return dest.replace(" ", "_")
+    return "destination"
+
+
+def _is_drive_option_compatible(asset: str) -> bool:
+    a = _canonical_asset(asset)
+    # Keep this deliberately small and high-precision.
+    return a in {"car", "truck", "van", "bus", "motorcycle", "bike", "scooter"}
+
+
+def _asset_ref(asset: str) -> str:
+    a = _canonical_asset(asset)
+    if a in {"car", "truck", "van", "bus", "train", "tram", "boat", "ship", "motorcycle", "bike", "scooter"}:
+        return a
+    if _is_likely_animal(a):
+        return a
+    return "it"
+
+
+def _asset_noun(ref: str) -> str:
+    r = (ref or "").strip().lower()
+    return "it" if (not r or r == "it") else f"the {r}"
+
+
+def _operate_phrase(ref: str) -> str:
+    r = (ref or "").strip().lower()
+    return "operate it" if (not r or r == "it") else f"operate the {r}"
+
+
+def _is_likely_animal(asset: str) -> bool:
+    toks = _normalize_text_tokens(asset)
+    animals = {
+        "dog", "dogs", "cat", "cats", "horse", "horses", "cow", "cows",
+        "sheep", "goat", "goats", "pig", "pigs", "puppy", "puppies",
+        "kitten", "kittens", "pet", "pets",
+    }
+    return bool(toks & animals)
+
+
+def _infer_clarify_options(asset: str) -> list[str]:
+    a = _asset_ref(asset)
+    if a == "train":
+        return ["move the train to the destination", "tow/haul/transport it", "get yourself there first"]
+    if a in {"boat", "ship"}:
+        return [f"move the {a} to the destination", "tow/haul/transport it", "get yourself there first"]
+    if a in {"tram"}:
+        return ["move the tram to the destination", "tow/haul/transport it", "get yourself there first"]
+    if _is_likely_animal(a):
+        return [f"move the {a} to the destination", f"tow/haul/transport the {a}", "get yourself there first"]
+    if a == "it":
+        return ["move it to the destination", "tow/haul/transport it", "get yourself there first"]
+    return [f"move the {a} to the destination", f"tow/haul/transport the {a}", "get yourself there first"]
+
+
+def _default_clarifier_choice(frame: Dict[str, Any]) -> str:
+    asset = str(frame.get("asset") or "asset").strip() or "asset"
+    if _is_likely_animal(asset):
+        return "yourself_first_walk"
+    return "operate"
+
+
+def _normalize_text_tokens(text: str) -> set[str]:
+    t = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+    if not t:
+        return set()
+    return {x for x in t.split() if x}
+
+
+def _match_clarify_choice(query: str, options: list[str]) -> Optional[str]:
+    q = (query or "").strip().lower()
+    if not q:
+        return None
+    qt = _normalize_text_tokens(q)
+    opts_join = " ".join((options or [])).lower()
+    if {"walk", "drive"} <= qt:
+        return None
+
+    # Stage-aware precedence: if options explicitly include propulsion refinement,
+    # map user wording directly to operate/tow branches.
+    if "under its own power" in opts_join:
+        if {"under", "own", "power"} <= qt or "under its own power" in q:
+            return "operate"
+    if "external transport" in opts_join:
+        if {"external", "transport"} <= qt or "external transport" in q:
+            return "tow/transport"
+
+    # High-precision direct cues for current option families.
+    if {"walk"} & qt:
+        return "yourself_first_walk"
+    if {"drive", "driving"} & qt:
+        return "yourself_first_drive"
+    if {"self"} & qt:
+        return "yourself_first"
+    if {"myself"} & qt:
+        return "yourself_first"
+    if {"get", "there"} <= qt:
+        return "yourself_first"
+    if {"operate", "run", "pilot"} & qt:
+        return "operate"
+    if {"move", "moving"} & qt:
+        return "move"
+    if {"tow", "transport", "truck", "haul"} & qt:
+        return "tow/transport"
+    if {"external"} & qt:
+        return "tow/transport"
+    if ("first" in qt or "1" in qt) and len(options or []) >= 1:
+        return str(options[0]).strip()
+    if ("second" in qt or "2" in qt) and len(options or []) >= 2:
+        return str(options[1]).strip()
+    if ("third" in qt or "3" in qt) and len(options or []) >= 3:
+        return str(options[2]).strip()
+
+    # Fallback lexical overlap against provided options.
+    best = None
+    best_score = 0
+    for opt in options or []:
+        ot = _normalize_text_tokens(opt)
+        if not ot:
+            continue
+        score = len(qt & ot)
+        if score > best_score:
+            best_score = score
+            best = opt
+    if best_score >= 1:
+        return best
+    return None
+
+
+def _post_choice_action_hint(query: str) -> Optional[str]:
+    q = (query or "").strip().lower()
+    if not q:
+        return None
+    qt = _normalize_text_tokens(q)
+    # Keep ambiguous baseline phrasing in clarifier lane.
+    if {"walk", "drive"} <= qt:
+        return None
+    # Explicit transport/movement cues from hostile follow-ups.
+    if {"teleport", "teleportation", "warp", "portal", "beam"} & qt:
+        return "tow/transport"
+    if {"tow", "transport", "truck", "haul", "drag", "dragging", "trailer", "winch", "rope"} & qt:
+        return "tow/transport"
+    if {"under", "own", "power"} <= qt or {"self", "propelled"} <= qt:
+        return "operate"
+    if {"move", "moving", "relocate"} & qt:
+        return "move"
+    return None
+
+
+def _solve_constraint_decision_query(text: str) -> StateReasoningResult:
+    if not _is_constraint_decision_candidate(text):
+        return StateReasoningResult(family="constraint_decision")
+    asset = _infer_asset_label(text)
+    destination = _infer_destination_label(text)
+    frame: Dict[str, Any] = {
+        "kind": "option_feasibility",
+        "goal": "asset_at_destination",
+        "asset": asset,
+        "destination": destination,
+        "options": {
+            "walk": {"moves_asset": False, "requires": []},
+            "drive": {"moves_asset": True, "requires": ["fuel"]},
+        },
+        "constraints": {"fuel": "unknown"},
+    }
+    dist_km = _distance_km(text)
+    if dist_km is not None:
+        frame["distance_km"] = dist_km
+    # Compatibility gate: if the user asks walk/drive but "drive" is not a valid
+    # action for this asset in this decision family, ask a deterministic clarifier.
+    if not _is_drive_option_compatible(asset):
+        opts = _infer_clarify_options(asset)
+        answer = (
+            f"Quick check: did you mean {opts[0]}, {opts[1]}, or {opts[2]}? "
+            "Pick one and I'll solve it cleanly."
+            "\nSource: Contextual"
+        )
+        frame["needs_clarification"] = True
+        frame["clarify_options"] = opts
+        return StateReasoningResult(
+            handled=True,
+            fail_loud=True,
+            family="constraint_decision",
+            answer=answer,
+            reason="constraint_option_incompatible_requires_clarification",
+            frame=frame,
+        )
+
+    ref = _asset_ref(asset)
+    noun = _asset_noun(ref)
+    answer = (
+        f"Drive. The task requires the {ref} to be physically at the destination, "
+        f"and walking only moves you, not {noun}. "
+        "So the hard precondition is satisfied by driving."
+        "\nSource: Contextual"
+    )
+    return StateReasoningResult(
+        handled=True,
+        fail_loud=False,
+        family="constraint_decision",
+        answer=answer,
+        reason="constraint_precondition_transport",
+        frame=frame,
+    )
+
+
+def is_followup_consistency_query(query: str) -> bool:
+    t = " ".join((query or "").split())
+    if not t:
+        return False
+    return bool(_FOLLOWUP_QUERY_RE.search(t) or _CONSTRAINT_FUEL_FALSE_RE.search(t) or _CONSTRAINT_FUEL_TRUE_RE.search(t))
+
+
+def solve_constraint_followup(*, frame: Dict[str, Any], query: str) -> StateReasoningResult:
+    t = " ".join((query or "").split())
+    if not t or not isinstance(frame, dict):
+        return StateReasoningResult(family="constraint_decision")
+    if str(frame.get("kind") or "") != "option_feasibility":
+        return StateReasoningResult(family="constraint_decision")
+    turn_kind = classify_constraint_turn(t, frame=frame)
+    # Fresh top-level decision questions and explicit entity shifts must be
+    # treated as new turns and re-solved by the top-level decision solver.
+    if turn_kind in {"fresh_decision", "asset_shift"}:
+        return StateReasoningResult(family="constraint_decision")
+    # If a deterministic clarifier question is active, resolve direct user choice first.
+    needs_clarification = bool(frame.get("needs_clarification", False))
+    clarify_options = [str(x).strip() for x in (frame.get("clarify_options") or []) if str(x).strip()]
+    if needs_clarification and clarify_options:
+        # Comparison-intent questions must be explained, not auto-picked by ordinal words.
+        if _CHOICE_COMPARISON_RE.search(t):
+            opts = clarify_options[:3]
+            if len(opts) == 3:
+                asset = str(frame.get("asset") or "asset").strip() or "asset"
+                ref = _asset_ref(asset)
+                ans = (
+                    f"Good question. Option 1 means {('the ' + ref) if ref != 'it' else 'the asset'} moves to the destination under its own power. "
+                    "Option 2 means external movement (tow/haul/transport). "
+                    "If those are effectively the same in your situation, pick either 1 or 2 and I'll continue. "
+                    "If you only mean getting yourself there first, pick option 3."
+                    "\nSource: Contextual"
+                )
+                return StateReasoningResult(
+                    handled=True,
+                    fail_loud=True,
+                    family="constraint_decision",
+                    answer=ans,
+                    reason="clarification_explain_option_difference",
+                    frame=dict(frame),
+                )
+        choice = _match_clarify_choice(t, clarify_options)
+        if (not choice) and _DELEGATE_DECISION_RE.search(t):
+            choice = _default_clarifier_choice(frame)
+        if choice:
+            asset = str(frame.get("asset") or "asset").strip() or "asset"
+            ref = _asset_ref(asset)
+            noun = _asset_noun(ref)
+            c = choice.lower()
+            # Two-stage clarification for ambiguous "move <asset>" intents on heavy assets.
+            if c == "move" and ref in {"train", "tram", "boat", "ship"}:
+                ans = (
+                    f"Got it. Just to confirm, do you mean moving the {ref} under its own power, "
+                    "or moving it with external transport (tow/haul)?"
+                    "\nSource: Contextual"
+                )
+                out_frame = dict(frame)
+                out_frame["needs_clarification"] = True
+                out_frame["clarify_options"] = ["under its own power", "external transport (tow/haul)"]
+                out_frame["clarify_stage"] = "propulsion_mode"
+                return StateReasoningResult(
+                    handled=True,
+                    fail_loud=True,
+                    family="constraint_decision",
+                    answer=ans,
+                    reason="clarification_move_requires_propulsion_mode",
+                    frame=out_frame,
+                )
+
+            if "walk" in c:
+                ans = (
+                    f"If you mean getting yourself there first, walk is the practical choice for this short distance. "
+                    f"That gets you there, but {noun} stays where it is."
+                    "\nSource: Contextual"
+                )
+                reason = "clarification_choice_walk"
+            elif ("yourself_first" in c) or ("get yourself there first" in c):
+                d_km = frame.get("distance_km")
+                if isinstance(d_km, (int, float)):
+                    d_km_f = float(d_km)
+                    clause = _yourself_first_distance_clause(d_km_f)
+                    ans = (
+                        f"If you mean getting yourself there first, at about {_fmt(d_km_f)} km, {clause}. "
+                        f"That gets you there, but {noun} still needs a separate move/tow step."
+                        "\nSource: Contextual"
+                    )
+                    reason = "clarification_choice_yourself_first_distance_aware"
+                else:
+                    ans = (
+                        f"If you mean getting yourself there first, walk is usually the practical choice for this short distance. "
+                        f"That gets you there, but {noun} still needs a separate move/tow step."
+                        "\nSource: Contextual"
+                    )
+                    reason = "clarification_choice_yourself_first"
+            elif "yourself_first_drive" in c:
+                ans = (
+                    f"If you mean getting yourself there first, driving is possible, but for this short distance walking is usually the practical choice. "
+                    f"Either way, {noun} still needs a separate move/tow step."
+                    "\nSource: Contextual"
+                )
+                reason = "clarification_choice_yourself_drive"
+            elif ("tow" in c) or ("transport" in c) or ("truck" in c) or ("haul" in c):
+                ans = (
+                    f"Then transport it. That gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "clarification_choice_tow_transport"
+            else:
+                if _is_likely_animal(asset):
+                    subject = "it" if (not asset or asset == "asset") else f"the {asset}"
+                    ans = (
+                        f"Then let {subject} walk there with you. That gets {subject} to the destination."
+                        "\nSource: Contextual"
+                    )
+                    reason = "clarification_choice_operate_animal"
+                else:
+                    ans = (
+                        f"Then move it under its own power. That gets {noun} to the destination."
+                        "\nSource: Contextual"
+                    )
+                    reason = "clarification_choice_operate"
+
+            out_frame = dict(frame)
+            out_frame["needs_clarification"] = False
+            out_frame["selected_action"] = (
+                "yourself_first_drive"
+                if ("yourself_first_drive" in c)
+                else "yourself_first_walk"
+                if ("yourself_first" in c)
+                else "yourself_first_walk"
+                if ("walk" in c and "yourself" in c)
+                else "yourself_first_drive"
+                if ("drive" in c and "yourself" in c)
+                else "walk"
+                if "walk" in c
+                else "tow_transport"
+                if ("tow" in c or "transport" in c or "truck" in c or "haul" in c or "external" in c)
+                else "operate"
+            )
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=False,
+                family="constraint_decision",
+                answer=ans,
+                reason=reason,
+                frame=out_frame,
+            )
+
+        # Clarifier is active but user did not choose one of the options.
+        if _CONFUSION_RE.search(t):
+            opts = clarify_options[:3]
+            if len(opts) == 3:
+                ans = (
+                    f"No worries. I mean this:\n"
+                    f"1) {opts[0]}\n"
+                    f"2) {opts[1]}\n"
+                    f"3) {opts[2]}\n"
+                    "Pick one and I'll continue."
+                    "\nSource: Contextual"
+                )
+                return StateReasoningResult(
+                    handled=True,
+                    fail_loud=True,
+                    family="constraint_decision",
+                    answer=ans,
+                    reason="clarification_user_confused_rephrase",
+                    frame=dict(frame),
+                )
+
+        # Generic sane-bucket fallback:
+        # if user doesn't pick an option and isn't asking to explain options,
+        # treat as implicit delegation to avoid infinite clarification loops.
+        if not _CLARIFIER_EXPLAIN_RE.search(t):
+            choice = _default_clarifier_choice(frame)
+            out_frame = dict(frame)
+            out_frame["needs_clarification"] = False
+            out_frame["selected_action"] = (
+                "operate" if choice == "operate" else "yourself_first_walk"
+            )
+            asset = str(frame.get("asset") or "asset").strip() or "asset"
+            ref = _asset_ref(asset)
+            noun = _asset_noun(ref)
+            if choice == "operate":
+                ans = (
+                    f"I'll pick the practical default: move it under its own power. "
+                    f"That gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "clarification_implicit_delegate_default_operate"
+            else:
+                ans = (
+                    f"I'll pick the practical default: get yourself there first (walk). "
+                    f"That gets you there, but {noun} still needs a separate move/tow step."
+                    "\nSource: Contextual"
+                )
+                reason = "clarification_implicit_delegate_default_yourself_first"
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=False,
+                family="constraint_decision",
+                answer=ans,
+                reason=reason,
+                frame=out_frame,
+            )
+        opts = clarify_options[:3]
+        repeat_count = int(frame.get("clarifier_repeat_count", 0) or 0)
+        if repeat_count >= 1:
+            # Guardrail: avoid repeating the same clarifier endlessly.
+            choice = _default_clarifier_choice(frame)
+            out_frame = dict(frame)
+            out_frame["needs_clarification"] = False
+            out_frame["clarifier_repeat_count"] = repeat_count + 1
+            out_frame["selected_action"] = "operate" if choice == "operate" else "yourself_first_walk"
+            asset = str(frame.get("asset") or "asset").strip() or "asset"
+            ref = _asset_ref(asset)
+            noun = _asset_noun(ref)
+            if choice == "operate":
+                ans = (
+                    f"Got it. I'll choose the practical default: move it under its own power. "
+                    f"That gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "clarification_repeat_default_operate"
+            else:
+                ans = (
+                    f"Got it. I'll choose the practical default: get yourself there first (walk). "
+                    f"That gets you there, but {noun} still needs a separate move/tow step."
+                    "\nSource: Contextual"
+                )
+                reason = "clarification_repeat_default_yourself_first"
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=False,
+                family="constraint_decision",
+                answer=ans,
+                reason=reason,
+                frame=out_frame,
+            )
+        if len(opts) == 3:
+            ans = (
+                f"Quick check: did you mean {opts[0]}, {opts[1]}, or {opts[2]}? "
+                "Pick one and I'll solve it cleanly."
+                "\nSource: Contextual"
+            )
+            out_frame = dict(frame)
+            out_frame["clarifier_repeat_count"] = repeat_count + 1
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=True,
+                family="constraint_decision",
+                answer=ans,
+                reason="clarification_still_required",
+                frame=out_frame,
+            )
+
+    # Intent-gate for post-choice conversational follow-ups: keep deterministic guidance
+    # without forcing the model path for simple "what if/how/should I..." continuations.
+    selected_action = str(frame.get("selected_action") or "").strip().lower()
+    if selected_action:
+        low = t.lower()
+        tok = _normalize_text_tokens(low)
+        lane_disengaged = bool(frame.get("decision_lane_disengaged", False))
+        # Idempotent delegate handling for post-choice turns (e.g., regenerate "you choose"/"idk").
+        if _DELEGATE_DECISION_RE.search(t):
+            asset = str(frame.get("asset") or "asset").strip() or "asset"
+            ref = _asset_ref(asset)
+            noun = _asset_noun(ref)
+            frame_dist_km = frame.get("distance_km")
+            frame_dist_km = float(frame_dist_km) if isinstance(frame_dist_km, (int, float)) else None
+            if selected_action in {"yourself_first_walk", "yourself_first_drive", "walk"}:
+                if frame_dist_km is not None:
+                    clause = _yourself_first_distance_clause(frame_dist_km)
+                    ans = (
+                        f"Still the same answer: get yourself there first. At about {_fmt(frame_dist_km)} km, {clause}. "
+                        f"{noun.capitalize()} still needs a separate move/tow step."
+                        "\nSource: Contextual"
+                    )
+                else:
+                    ans = (
+                        f"Still the same answer: get yourself there first. For this short distance, walking is usually the practical choice. "
+                        f"{noun.capitalize()} still needs a separate move/tow step."
+                        "\nSource: Contextual"
+                    )
+                reason = "post_choice_delegate_replay_yourself_first"
+            elif selected_action == "tow_transport":
+                ans = (
+                    f"Still the same answer: transport it. That gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "post_choice_delegate_replay_tow_transport"
+            else:
+                ans = (
+                    f"Still the same answer: move it under its own power. That gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "post_choice_delegate_replay_operate"
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=False,
+                family="constraint_decision",
+                answer=ans,
+                reason=reason,
+                frame=dict(frame),
+            )
+
+        # Explicit action reselection after a prior choice should stay deterministic
+        # (for example: "I pick move"), not fall through to model small-talk.
+        if re.search(r"\b(i\s+pick|i\s+choose|pick|choose)\b", low):
+            asset = str(frame.get("asset") or "asset").strip() or "asset"
+            options = _infer_clarify_options(asset)
+            picked = _match_clarify_choice(low, options)
+            if picked:
+                reselection_frame = dict(frame)
+                reselection_frame["needs_clarification"] = True
+                reselection_frame["clarify_options"] = options
+                reselection_frame["decision_lane_disengaged"] = False
+                reselection_frame.pop("selected_action", None)
+                return solve_constraint_followup(frame=reselection_frame, query=picked)
+
+        if lane_disengaged and _is_correction_intent(t) and not _is_explicit_reengage(t):
+            out_frame = dict(frame)
+            out_frame["decision_lane_disengaged"] = True
+            return StateReasoningResult(
+                handled=False,
+                fail_loud=False,
+                family="constraint_decision",
+                answer="",
+                reason="decision_lane_disengaged_correction_passthrough",
+                frame=out_frame,
+            )
+        if lane_disengaged and not _is_explicit_reengage(t):
+            out_frame = dict(frame)
+            out_frame["decision_lane_disengaged"] = True
+            return StateReasoningResult(
+                handled=False,
+                fail_loud=False,
+                family="constraint_decision",
+                answer="",
+                reason="decision_lane_disengaged",
+                frame=out_frame,
+            )
+        if lane_disengaged and _is_explicit_reengage(t):
+            frame = dict(frame)
+            frame["decision_lane_disengaged"] = False
+        asset = str(frame.get("asset") or "asset").strip() or "asset"
+        ref = _asset_ref(asset)
+        noun = _asset_noun(ref)
+        frame_dist_km = frame.get("distance_km")
+        frame_dist_km = float(frame_dist_km) if isinstance(frame_dist_km, (int, float)) else None
+
+        # Keep deterministic lane for explicit action-method reselections after a prior choice.
+        post_choice_hint = _post_choice_action_hint(low)
+        if post_choice_hint:
+            reselection_frame = dict(frame)
+            reselection_frame["needs_clarification"] = True
+            reselection_frame["clarify_options"] = _infer_clarify_options(asset)
+            reselection_frame["decision_lane_disengaged"] = False
+            reselection_frame.pop("selected_action", None)
+            return solve_constraint_followup(frame=reselection_frame, query=post_choice_hint)
+
+        # Deterministic yes/no on "does that satisfy the precondition?" style checks.
+        if _PRECONDITION_CHECK_RE.search(low):
+            if selected_action in {"yourself_first_walk", "yourself_first_drive", "walk"}:
+                ans = (
+                    f"Not by itself. Getting yourself there first does not move {noun} to the destination, "
+                    "so it does not satisfy the original hard precondition."
+                    "\nSource: Contextual"
+                )
+                reason = "post_choice_precondition_check_yourself_first"
+            elif selected_action == "tow_transport":
+                ans = (
+                    f"Yes. Transporting it satisfies the precondition because it gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "post_choice_precondition_check_tow_transport"
+            else:
+                ans = (
+                    f"Yes. Moving it under its own power satisfies the precondition because it gets {noun} to the destination."
+                    "\nSource: Contextual"
+                )
+                reason = "post_choice_precondition_check_operate"
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=False,
+                family="constraint_decision",
+                answer=ans,
+                reason=reason,
+                frame=dict(frame),
+            )
+
+        # Deterministic distance refinement for "get yourself there first" branch.
+        if selected_action in {"yourself_first_walk", "yourself_first_drive", "walk"} and not (({"self"} & tok) or ({"myself"} & tok)):
+            km = _distance_km(low)
+            if km is not None:
+                clause = _yourself_first_distance_clause(km)
+                ans = (
+                    f"At about {_fmt(km)} km, {clause}. "
+                    f"Either way, {noun} still needs a separate move/tow step."
+                    "\nSource: Contextual"
+                )
+                return StateReasoningResult(
+                    handled=True,
+                    fail_loud=False,
+                    family="constraint_decision",
+                    answer=ans,
+                    reason="post_choice_distance_refine_yourself_first",
+                    frame=dict(frame),
+                )
+
+        # Out-of-scope conversational follow-up: disengage deterministic lane and defer to model.
+        if not (
+            bool(_DISTANCE_RE.search(low))
+            or bool(_FOLLOWUP_QUERY_RE.search(low))
+            or bool(_CONSTRAINT_FUEL_FALSE_RE.search(low) or _CONSTRAINT_FUEL_TRUE_RE.search(low))
+            or bool(_SHOULD_I_WALK_DRIVE_RE.search(low) or _WALK_DRIVE_QUERY_RE.search(low))
+            or bool(({"self"} & tok) or ({"myself"} & tok))
+        ):
+            out_frame = dict(frame)
+            out_frame["decision_lane_disengaged"] = True
+            return StateReasoningResult(
+                handled=False,
+                fail_loud=False,
+                family="constraint_decision",
+                answer="",
+                reason="decision_lane_disengage_out_of_scope",
+                frame=out_frame,
+            )
+
+        if ({"self"} & tok or {"myself"} & tok):
+            if selected_action in {"yourself_first_walk", "yourself_first_drive", "walk"}:
+                if frame_dist_km is not None and frame_dist_km >= 1.0:
+                    ans = (
+                        f"Still the same answer: get yourself there first. At about {_fmt(frame_dist_km)} km, driving is usually the practical low-effort choice. "
+                        f"{noun.capitalize()} still needs a separate move/tow step."
+                        "\nSource: Contextual"
+                    )
+                else:
+                    ans = (
+                        f"Still the same answer: get yourself there first. For this short distance, walking is usually the practical choice. "
+                        f"{noun.capitalize()} still needs a separate move/tow step."
+                        "\nSource: Contextual"
+                    )
+                return StateReasoningResult(
+                    handled=True,
+                    fail_loud=False,
+                    family="constraint_decision",
+                    answer=ans,
+                    reason="post_choice_self_myself_normalized",
+                    frame=dict(frame),
+                )
+        if _SHOULD_I_WALK_DRIVE_RE.search(low) or _WALK_DRIVE_QUERY_RE.search(low):
+            asset = str(frame.get("asset") or "asset").strip() or "asset"
+            ref = _asset_ref(asset)
+            action_label = {
+                "walk": "walk there first",
+                "yourself_first_walk": "get yourself there first (walk)",
+                "yourself_first_drive": "get yourself there first (drive)",
+                "operate": _operate_phrase(ref),
+                "tow_transport": "transport it",
+            }.get(selected_action, selected_action)
+            ans = (
+                f"You've already selected an action: {action_label}. "
+                "Use that path unless your constraints changed."
+                "\nSource: Contextual"
+            )
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=False,
+                family="constraint_decision",
+                answer=ans,
+                reason="post_choice_restate_action",
+                frame=dict(frame),
+            )
+        if ("what if" in low) and re.search(r"\b(rain|raining|storm|weather|wet|snow|ice)\b", low):
+            action_label = {
+                "walk": "walk-first",
+                "yourself_first_walk": "get-yourself-there-first (walk)",
+                "yourself_first_drive": "get-yourself-there-first (drive)",
+                "operate": "operate",
+                "tow_transport": "tow/transport",
+            }.get(selected_action, selected_action)
+            ans = (
+                f"Weather can change safety/comfort, but it doesn't change the selected action path ({action_label}) by itself. "
+                "If constraints changed materially, say what changed and I'll re-evaluate."
+                "\nSource: Contextual"
+            )
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=False,
+                family="constraint_decision",
+                answer=ans,
+                reason="post_choice_weather_gate",
+                frame=dict(frame),
+            )
+        if low.startswith("how do i"):
+            ans = (
+                "That's a practical how-to question rather than a walk/drive decision step. "
+                "If you want, ask for a practical checklist with assumptions and constraints."
+                "\nSource: Contextual"
+            )
+            return StateReasoningResult(
+                handled=True,
+                fail_loud=False,
+                family="constraint_decision",
+                answer=ans,
+                reason="post_choice_howto_gate",
+                frame=dict(frame),
+            )
+
+    if not is_followup_consistency_query(t):
+        return StateReasoningResult(family="constraint_decision")
+    asset = str(frame.get("asset") or "asset").strip() or "asset"
+    ref = _asset_ref(asset)
+    noun = _asset_noun(ref)
+
+    constraints = dict(frame.get("constraints") or {})
+    if _CONSTRAINT_FUEL_FALSE_RE.search(t):
+        constraints["fuel"] = False
+    elif _CONSTRAINT_FUEL_TRUE_RE.search(t):
+        constraints["fuel"] = True
+
+    options = dict(frame.get("options") or {})
+    walk = dict(options.get("walk") or {})
+    drive = dict(options.get("drive") or {})
+
+    walk_feasible = bool(walk.get("moves_asset", False))
+    drive_requires = [str(x).strip().lower() for x in (drive.get("requires") or []) if str(x).strip()]
+    drive_feasible = bool(drive.get("moves_asset", False))
+    for req in drive_requires:
+        v = constraints.get(req, "unknown")
+        if v is False:
+            drive_feasible = False
+        elif v == "unknown":
+            drive_feasible = False
+
+    if drive_feasible and not walk_feasible:
+        ans = (
+            f"Drive. The hard precondition is still that the {ref} must be at the destination, "
+            f"and walking does not move {noun}."
+            "\nSource: Contextual"
+        )
+        reason = "followup_drive_still_feasible"
+        fail_loud = False
+    elif (not drive_feasible) and walk_feasible:
+        ans = (
+            "Walk is feasible for reaching the destination yourself, but it still does not satisfy "
+            f"the original hard precondition of moving {noun} there."
+            "\nSource: Contextual"
+        )
+        reason = "followup_walk_only_person"
+        fail_loud = False
+    elif (not drive_feasible) and (not walk_feasible):
+        ans = (
+            "Neither option satisfies the hard precondition. "
+            f"Driving is infeasible under current constraints, and walking does not move {noun}. "
+            "You need a new feasible action (for example, add fuel or towing) before proceeding."
+            "\nSource: Contextual"
+        )
+        reason = "followup_none_feasible"
+        fail_loud = True
+    else:
+        ans = (
+            "Both options appear feasible under current constraints, but only options that move the asset "
+            "satisfy the original hard precondition."
+            "\nSource: Contextual"
+        )
+        reason = "followup_multiple_feasible"
+        fail_loud = False
+
+    out_frame = dict(frame)
+    out_frame["constraints"] = constraints
+    return StateReasoningResult(
+        handled=True,
+        fail_loud=fail_loud,
+        family="constraint_decision",
+        answer=ans,
+        reason=reason,
+        frame=out_frame,
+    )

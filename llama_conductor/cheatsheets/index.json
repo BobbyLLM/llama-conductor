@@ -1,0 +1,31 @@
+{
+  "generated_at_utc": "2026-04-17T03:31:38.569327+00:00",
+  "entry_count": 152,
+  "topic_count": 6,
+  "topics": [
+    {
+      "topic": "bjj_movement",
+      "term_count": 1
+    },
+    {
+      "topic": "glossary",
+      "term_count": 44
+    },
+    {
+      "topic": "hardware",
+      "term_count": 14
+    },
+    {
+      "topic": "idioms",
+      "term_count": 0
+    },
+    {
+      "topic": "models",
+      "term_count": 9
+    },
+    {
+      "topic": "pop_culture",
+      "term_count": 39
+    }
+  ]
+}
