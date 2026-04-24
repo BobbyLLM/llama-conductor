@@ -132,10 +132,11 @@ def run_raw(
     *,
     vodka: Any,
     call_model: Callable[..., str],
+    state: Any = None,
     facts_block: Optional[str] = "",
     constraints_block: Optional[str] = "",
     thinker_role: str = "thinker",
-    max_tokens: int = 256,
+    max_tokens: int = 768,
     temperature: float = 0.2,
     top_p: float = 0.9,
 ) -> str:
@@ -234,6 +235,11 @@ def run_raw(
         temperature=temperature,
         top_p=top_p,
     )
+    try:
+        if state is not None:
+            setattr(state, "turn_model_finish_reason", str(getattr(answer, "finish_reason", "stop") or "stop"))
+    except Exception:
+        pass
 
     return (answer or "").strip()
 

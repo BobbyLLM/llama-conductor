@@ -119,6 +119,7 @@ def _choose_short_fallback(
                 key = f"{getattr(state, 'session_id', '')}|{turn}|invite"
                 iidx = int(hashlib.sha256(key.encode("utf-8", errors="ignore")).hexdigest()[:8], 16) % len(invite_opts)
                 cand = f"{base} {invite_opts[iidx]}"
+                setattr(state, "invite_emitter", "kaioken_guards")
             elif last_short == base.lower():
                 cand = f"{base} Again."
         setattr(state, "kaioken_last_short_fallback", base)

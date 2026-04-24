@@ -1237,7 +1237,7 @@ def finalize_chat_response(
         slot_fragment = _extract_clarification_slot_fragment(str(user_text or ""))
         strip_fallback = f"{base_fallback} {slot_fragment}".strip() if slot_fragment else base_fallback
     elif not retrieval_exempt:
-        strip_fallback = "I hear you." if distress_turn else "I hear you."
+        strip_fallback = "Could you restate that more directly?" if distress_turn else "Could you restate that more directly?"
     if not deterministic_output_locked and not retrieval_exempt:
         text = strip_behavior_announcement_sentences_fn(text, strip_fallback)
 
@@ -1769,6 +1769,7 @@ def finalize_chat_response(
             text = _apply_opener_dedup_swap(text=text, state=state)
 
     source_override_snapshot = str(getattr(state, "turn_footer_source_override", "") or "")
+    setattr(state, "turn_footer_source_override_snapshot", source_override_snapshot)
     source_url_snapshot = str(getattr(state, "turn_source_url_override", "") or "")
     text = apply_deterministic_footer_fn(
         text=text,

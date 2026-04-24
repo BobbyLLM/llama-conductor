@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, Iterable
 
 
-def make_openai_response(text: str) -> Dict[str, Any]:
+def make_openai_response(text: str, finish_reason: str = "stop") -> Dict[str, Any]:
     """Create OpenAI-compatible response format."""
     return {
         "id": f"chatcmpl-{int(time.time())}",
@@ -17,7 +17,7 @@ def make_openai_response(text: str) -> Dict[str, Any]:
             {
                 "index": 0,
                 "message": {"role": "assistant", "content": text},
-                "finish_reason": "stop",
+                "finish_reason": finish_reason or "stop",
             }
         ],
         "usage": {
@@ -28,7 +28,11 @@ def make_openai_response(text: str) -> Dict[str, Any]:
     }
 
 
-def wrap_text_as_sse(text: str, keepalive_interval: float = 15.0) -> Iterable[str]:
+def wrap_text_as_sse(
+    text: str,
+    keepalive_interval: float = 15.0,
+    finish_reason: str = "stop",
+) -> Iterable[str]:
     """
     Wrap fully-generated text as SSE chunks with periodic keepalive pings.
     Note: this is pseudo-streaming; model generation is already complete.
@@ -72,17 +76,21 @@ def wrap_text_as_sse(text: str, keepalive_interval: float = 15.0) -> Iterable[st
         "created": int(time.time()),
         "model": "moa-router",
         "choices": [
-            {
-                "index": 0,
-                "delta": {},
-                "finish_reason": "stop",
-            }
-        ],
-    }
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": finish_reason or "stop",
+                }
+            ],
+        }
     yield f"data: {json.dumps(final_chunk)}\n\n"
     yield "data: [DONE]\n\n"
 
 
-def stream_sse(text: str, keepalive_interval: float = 15.0) -> Iterable[str]:
+def stream_sse(
+    text: str,
+    keepalive_interval: float = 15.0,
+    finish_reason: str = "stop",
+) -> Iterable[str]:
     """Backward-compatible alias for pseudo-stream wrapper."""
-    return wrap_text_as_sse(text=text, keepalive_interval=keepalive_interval)
+    return wrap_text_as_sse(text=text, keepalive_interval=keepalive_interval, finish_reason=finish_reason)

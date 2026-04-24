@@ -2671,6 +2671,7 @@ def _finalize_chat_response(
         if bool(getattr(state, "kaioken_enabled", False))
         else _SERIOUS_TASK_FORWARD_FALLBACK
     )
+    finish_reason_snapshot = str(getattr(state, "turn_model_finish_reason", "") or "stop")
     return _chat_finalize_response(
         text=text,
         user_text=user_text,
@@ -2689,8 +2690,13 @@ def _finalize_chat_response(
         scratchpad_lock_miss=scratchpad_lock_miss,
         scratchpad_lock_miss_indices=scratchpad_lock_miss_indices,
         serious_task_forward_fallback=selected_task_forward_fallback,
-        make_stream_response=lambda t: StreamingResponse(_stream_sse(t), media_type="text/event-stream"),
-        make_json_response=lambda t: JSONResponse(_make_openai_response(t)),
+        make_stream_response=lambda t, _fr=finish_reason_snapshot: StreamingResponse(
+            _stream_sse(t, finish_reason=_fr),
+            media_type="text/event-stream",
+        ),
+        make_json_response=lambda t, _fr=finish_reason_snapshot: JSONResponse(
+            _make_openai_response(t, finish_reason=_fr)
+        ),
         sanitize_scratchpad_grounded_output_fn=_pp_sanitize_scratchpad_grounded_output,
         append_scratchpad_provenance_fn=_pp_append_scratchpad_provenance,
         apply_scratchpad_strict_policy_fn=_pp_apply_scratchpad_strict_policy,
@@ -4020,11 +4026,14 @@ async def v1_chat_completions(req: Request):
     state.turn_footer_confidence_override = ""
     state.turn_source_url_override = ""
     state.turn_retrieval_track = ""
+    state.turn_model_finish_reason = ""
     state.turn_cheatsheet_hit = False
     state.turn_playful_override = False
     state.turn_local_knowledge_line = ""
     state.turn_cheatsheets_warning_line = ""
     state.turn_cheatsheets_warning_key = ""
+    state.invite_emitter = ""
+    state.turn_footer_source_override_snapshot = ""
     if _CHEATSHEETS_STARTUP_MESSAGE:
         state.turn_cheatsheets_warning_line = _CHEATSHEETS_STARTUP_MESSAGE
         state.turn_cheatsheets_warning_key = hashlib.sha1(
@@ -4426,15 +4435,15 @@ async def v1_chat_completions(req: Request):
                 f"User query: {user_text}\n"
                 f"Locked scratch context (for awareness only):\n{locked_context}"
             )
-            priors_answer = str(
-                call_model_prompt(
-                    role="thinker",
-                    prompt=priors_prompt,
-                    max_tokens=120,
-                    temperature=0.2,
-                    top_p=0.9,
-                ) or ""
-            ).strip()
+            priors_result = call_model_prompt(
+                role="thinker",
+                prompt=priors_prompt,
+                max_tokens=120,
+                temperature=0.2,
+                top_p=0.9,
+            )
+            priors_answer = str(priors_result or "").strip()
+            state.turn_model_finish_reason = str(getattr(priors_result, "finish_reason", "") or "stop")
         except Exception:
             priors_answer = ""
         priors_low = str(priors_answer or "").strip().lower()
@@ -4934,10 +4943,17 @@ async def v1_chat_completions(req: Request):
                 "fr_semantic_drift_detected": bool(getattr(state, "fr_semantic_drift_detected", False)),
                 "fr_semantic_drift_reason": str(getattr(state, "fr_semantic_drift_reason", "none") or "none"),
                 "fr_semantic_drift_entities_missing": list(getattr(state, "fr_semantic_drift_entities_missing", []) or []),
+                "kaioken_priority_lane": str(getattr(state, "kaioken_priority_lane", "") or ""),
+                "turn_footer_source_override": str(
+                    getattr(state, "turn_footer_source_override_snapshot", "")
+                    or getattr(state, "turn_footer_source_override", "")
+                    or ""
+                ),
                 "kaioken_hint_applied": bool(kaioken_hint),
                 "kaioken_guard_applied": bool(kaioken_guard_state.get("applied", False)),
                 "kaioken_literal_followup": bool(kaioken_literal_followup),
                 "kaioken_mode": str(getattr(state, "kaioken_mode", "log_only") or "log_only"),
+                "invite_emitter": str(getattr(state, "invite_emitter", "") or ""),
             },
         )
         if state_solver_used and state_solver_answer:
@@ -5146,8 +5162,15 @@ async def v1_chat_completions(req: Request):
                     outcome={
                         "stage": "correction_bind",
                         "kaioken_macro": str(getattr(state, "turn_kaioken_macro", "") or ""),
+                        "kaioken_priority_lane": str(getattr(state, "kaioken_priority_lane", "") or ""),
+                        "turn_footer_source_override": str(
+                            getattr(state, "turn_footer_source_override_snapshot", "")
+                            or getattr(state, "turn_footer_source_override", "")
+                            or ""
+                        ),
                         "feral_register_detected": bool(getattr(state, "turn_feral_register_detected", False)),
                         "distress_hint_score": int(getattr(state, "turn_distress_hint_score", 0) or 0),
+                        "invite_emitter": str(getattr(state, "invite_emitter", "") or ""),
                         "empathy_override_applied": bool(getattr(state, "turn_empathy_override_applied", False)),
                         "correction_signal_strength": (
                             "structural"
@@ -5267,8 +5290,15 @@ async def v1_chat_completions(req: Request):
         outcome={
             "stage": "serious",
             "kaioken_macro": str(getattr(state, "turn_kaioken_macro", "") or ""),
+            "kaioken_priority_lane": str(getattr(state, "kaioken_priority_lane", "") or ""),
+            "turn_footer_source_override": str(
+                getattr(state, "turn_footer_source_override_snapshot", "")
+                or getattr(state, "turn_footer_source_override", "")
+                or ""
+            ),
             "feral_register_detected": bool(getattr(state, "turn_feral_register_detected", False)),
             "distress_hint_score": int(getattr(state, "turn_distress_hint_score", 0) or 0),
+            "invite_emitter": str(getattr(state, "invite_emitter", "") or ""),
             "empathy_override_applied": bool(getattr(state, "turn_empathy_override_applied", False)),
             "kaioken_hint_applied": bool(kaioken_hint),
             "kaioken_guard_applied": bool(kaioken_guard_applied),
@@ -5379,6 +5409,13 @@ async def v1_chat_completions(req: Request):
         outcome={
             "stage": "serious_post_finalize",
             "kaioken_macro": str(getattr(state, "turn_kaioken_macro", "") or ""),
+            "kaioken_priority_lane": str(getattr(state, "kaioken_priority_lane", "") or ""),
+            "turn_footer_source_override": str(
+                getattr(state, "turn_footer_source_override_snapshot", "")
+                or getattr(state, "turn_footer_source_override", "")
+                or ""
+            ),
+            "invite_emitter": str(getattr(state, "invite_emitter", "") or ""),
             "serious_guard_evaluated": bool(getattr(state, "serious_guard_evaluated", False)),
             "serious_guard_trigger_condition": str(getattr(state, "serious_guard_trigger_condition", "") or ""),
             "serious_guard_failure_type": str(getattr(state, "serious_guard_failure_type", "") or ""),

@@ -108,6 +108,7 @@ class SessionState:
     kaioken_turn_counter: int = 0
     kaioken_enabled: bool = field(default_factory=lambda: bool(cfg_get("kaioken.enabled", True)))
     kaioken_mode: str = field(default_factory=lambda: str(cfg_get("kaioken.mode", "log_only") or "log_only"))
+    invite_emitter: str = ""
     # KAIOKEN topic lifecycle (closed/open/active thread hints).
     kaioken_active_topic: str = ""
     kaioken_open_topics: List[str] = field(default_factory=list)
@@ -126,6 +127,7 @@ class SessionState:
 
     # Per-turn provenance overrides (set by retrieval lanes, consumed in finalize).
     turn_footer_source_override: str = ""
+    turn_footer_source_override_snapshot: str = ""
     turn_footer_confidence_override: str = ""
     turn_source_url_override: str = ""
     turn_retrieval_track: str = ""

@@ -350,6 +350,7 @@ def _apply_output_guard(
                 key = f"{getattr(state, 'session_id', '')}|{getattr(state, 'kaioken_turn_counter', 0)}|noact_invite"
                 idx = int(hashlib.sha256(key.encode("utf-8", errors="ignore")).hexdigest()[:8], 16) % len(invites)
                 body = f"{body.rstrip()} {invites[idx]}".strip()
+                setattr(state, "invite_emitter", "kaioken_routing")
                 if prefix:
                     out = f"{prefix}\n\n{body}".strip()
                 else:

@@ -90,7 +90,10 @@ def strip_in_body_confidence_source_claims(text: str) -> str:
     return "\n".join(collapsed).strip()
 
 
-def strip_behavior_announcement_sentences(text: str, fallback_text: str = "I hear you.") -> str:
+def strip_behavior_announcement_sentences(
+    text: str,
+    fallback_text: str = "Could you restate that more directly?",
+) -> str:
     t = (text or "").strip()
     if not t:
         return t
@@ -122,7 +125,7 @@ def strip_behavior_announcement_sentences(text: str, fallback_text: str = "I hea
     if cleaned and body_kept_count > 0:
         return cleaned
     footer_lines = [ln for ln in out_lines if (ln or "").strip().lower().startswith(("confidence:", "source:", "sources:", "profile:"))]
-    fb = str(fallback_text or "I hear you.").strip() or "I hear you."
+    fb = str(fallback_text or "Could you restate that more directly?").strip() or "Could you restate that more directly?"
     if footer_lines:
         return fb + "\n\n" + "\n".join(footer_lines)
     return fb

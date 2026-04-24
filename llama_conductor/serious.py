@@ -306,6 +306,7 @@ def run_serious(
     *,
     vodka: Any,
     call_model: Callable[..., str],
+    state: Any = None,
     facts_block: Optional[str] = "",
     constraints_block: Optional[str] = "",
     thinker_role: str = "thinker",
@@ -387,6 +388,11 @@ def run_serious(
             temperature=temperature,
             top_p=top_p,
         )
+        try:
+            if state is not None:
+                setattr(state, "turn_model_finish_reason", str(getattr(answer, "finish_reason", "stop") or "stop"))
+        except Exception:
+            pass
         return _ensure_confidence_line(answer, default_conf="medium", default_source="Model")
 
     # 4) Build CONTEXT block (trimmed+expanded), if enabled
@@ -439,6 +445,11 @@ def run_serious(
         temperature=temperature,
         top_p=top_p,
     )
+    try:
+        if state is not None:
+            setattr(state, "turn_model_finish_reason", str(getattr(answer, "finish_reason", "stop") or "stop"))
+    except Exception:
+        pass
 
     # 8) Enforce confidence line if missing
     # Default source heuristic: FACTS => Docs, else CONTEXT => Contextual, else Model.

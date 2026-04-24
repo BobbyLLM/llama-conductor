@@ -69,7 +69,7 @@ def _clean_paragraph(text: str, *, correction_style: str) -> str:
             out = rx.sub("", out)
     out = re.sub(r"\s+", " ", out).strip()
     if correction_style == "direct" and len(out) < 12 and raw:
-        return "I hear you. Let's stay with what you said and keep this direct."
+        return "Could you restate that more directly?"
     return out
 
 
@@ -291,4 +291,4 @@ def rewrite_response_style(
         return "Noted.\n\n" + "\n".join(preserved)
 
     # Absolute fallback for pathological cases.
-    return "I hear you. Let's stay with what you said and keep this direct."
+    return "Could you restate that more directly?"
