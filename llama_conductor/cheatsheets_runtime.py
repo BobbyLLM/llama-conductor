@@ -22,6 +22,8 @@ import requests
 from urllib.parse import quote as _url_quote, unquote as _url_unquote
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from .kaioken_classify import _is_clarification_prompt, _user_explicitly_requests_advice
+
 
 _QUESTION_FRAMING_RE = re.compile(
     r"\b(what(?:'s|\s+is)|define|explain|tell me about|how does\b.+\bwork|meaning of|definition of)\b|\?",
@@ -768,6 +770,8 @@ def _is_short_factual_interrogative_with_subject_target(raw_text: str) -> bool:
     raw = str(raw_text or "").strip()
     if not raw:
         return False
+    if _user_explicitly_requests_advice(raw):
+        return False
     first_clause = raw.split("?")[0].strip() if "?" in raw else raw
     token_count = len(re.findall(r"[A-Za-z0-9']+", first_clause))
     if token_count < 2 or token_count > 14:
@@ -972,13 +976,21 @@ def _needs_web_retrieval(*, user_text: str, q_framing: bool, state: Any = None) 
     return False
 
 
-def _has_explicit_fact_signal(*, user_text: str, q_framing: bool, quote_source_intent: bool) -> bool:
+def _has_explicit_fact_signal(
+    *,
+    user_text: str,
+    q_framing: bool,
+    quote_source_intent: bool,
+    advice_request: bool = False,
+) -> bool:
     """High-precision fact-seeking detector used to allow retrieval on casual/personal turns."""
     raw = str(user_text or "").strip()
     if not raw:
         return False
     if quote_source_intent:
         return True
+    if advice_request:
+        return False
     if _definition_query_term(raw):
         return True
     if _STRICT_LOOKUP_RE.match(raw):
@@ -2852,18 +2864,31 @@ def resolve_cheatsheets_turn(
     showtimes_intent = _is_showtimes_intent(user_text)
     order_status_no_context = _is_order_status_query(user_text) and (not _has_order_context(user_text))
     factual_guard_intent = bool(quote_source_intent or who_won_intent or who_is_current_intent)
-    auto_retrieval_allowed = not (macro_l == "casual" and (not factual_guard_intent))
+    clarification_turn = _is_clarification_prompt(user_text)
+    clarification_override = bool(
+        quote_source_intent
+        or who_won_intent
+        or who_is_current_intent
+        or _is_bare_wh_named_entity_prompt(user_text)
+        or _STRICT_LOOKUP_RE.match(str(user_text or ""))
+        or _QUOTED_TERM_RE.search(str(user_text or ""))
+    )
+    explicit_fact_signal = _has_explicit_fact_signal(
+        user_text=user_text,
+        q_framing=q_framing,
+        quote_source_intent=quote_source_intent,
+        advice_request=_user_explicitly_requests_advice(user_text),
+    )
+    auto_retrieval_allowed = not (
+        (macro_l == "casual" and not explicit_fact_signal)
+        or (clarification_turn and not clarification_override)
+    )
     needs_web_initial = (
         _needs_web_retrieval(user_text=user_text, q_framing=q_framing, state=state)
         if auto_retrieval_allowed
         else False
     )
     needs_web = bool(needs_web_initial)
-    explicit_fact_signal = _has_explicit_fact_signal(
-        user_text=user_text,
-        q_framing=q_framing,
-        quote_source_intent=quote_source_intent,
-    )
     if factual_guard_intent:
         explicit_fact_signal = True
         needs_web = True

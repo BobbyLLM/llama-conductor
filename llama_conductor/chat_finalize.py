@@ -8,6 +8,8 @@ import functools
 import os
 from typing import Any, Callable, List, Optional
 
+from .codex_runtime import codex_retreat_scope
+from .kaioken import _semantic_emotional_repeat_risk
 from .cheatsheets_runtime import _STRICT_LOOKUP_RE
 
 _EMOTIONAL_TURN_RE = re.compile(
@@ -28,6 +30,7 @@ _CLARIFICATION_TURN_RE = re.compile(
     r"^\s*(?:"
     r"(?:sorry[,?.!]*\s*)?(?:um+|uh+)?[.\s]*what\??|"
     r"(?:what do you mean|what are you saying|lost me)\??|"
+    r"(?:no\s+i\s+mean\s+)?(?:what do you mean)(?:\s+by\s+[^?]{1,120})?\??|"
     r"what(?:'s| is)\s+[^?]{1,160}\??|"
     r"(?:keeping|staying)\s+what\s+direct\??|"
     r"what(?:'s| is)\s+direct\??"
@@ -98,6 +101,28 @@ _VENT_OPENER_RE = re.compile(
     r"\b(hell of a day|rough day|vent|venting|long day|fucking day|hard day)\b",
     re.IGNORECASE,
 )
+_BANTER_GREETING_ECHO_RE = re.compile(
+    r"^\s*(?:"
+    r"hey(?:\s+there)?|hi(?:\s+there)?|hello|yo|sup|hiya|"
+    r"how(?:'s| is)\s+it\s+(?:hanging|going)|"
+    r"what(?:'s| is)\s+up"
+    r")\b",
+    re.IGNORECASE,
+)
+_BANTER_BACKSPIN_MARKERS = {
+    "back",
+    "mate",
+    "bro",
+    "lol",
+    "lmao",
+    "haha",
+    "sure",
+    "yeah",
+    "right",
+    "same",
+    "likewise",
+    "anyway",
+}
 _DISTRESS_VENT_PROBE_PHRASES = (
     "What's going on?",
     "Talk to me - what happened?",
@@ -327,7 +352,7 @@ def _extract_clarification_slot_fragment(user_text: str) -> str:
     if re.fullmatch(r"(?:sorry[,?.!]*\s*)?(?:um+|uh+)?\s*lost me\??", norm):
         return "Lost me too."
     if re.fullmatch(r"(?:what do you mean|what are you saying)\??", norm):
-        return "Same page check."
+        return ""
 
     sig = re.sub(r"[^\w\s]", " ", norm)
     sig = re.sub(r"\s+", " ", sig).strip()
@@ -976,6 +1001,8 @@ def _apply_user_parrot_guard(text: str, user_text: str, state: Any) -> str:
     if not body:
         return raw
 
+    opener_like = bool(_BANTER_GREETING_ECHO_RE.search(str(user_text or "")))
+
     def _join_with_footer(new_body: str) -> str:
         parts = [str(new_body or "").strip()]
         if footer_lines:
@@ -1015,6 +1042,38 @@ def _apply_user_parrot_guard(text: str, user_text: str, state: Any) -> str:
                 cut_idx += 1
             stripped = str(body[cut_idx:] or "").lstrip()
             body = stripped if stripped else "Go on."
+
+    # Short opener echo: when the model starts by replaying the user's opener
+    # and then adds a light banter backspin, trim the echoed opener phrase.
+    if len(u_toks) >= 3 and len(b_toks) >= 3 and all(b_toks[i] == u_toks[i] for i in range(3)):
+        first_split = re.split(r"(?<=[.!?])\s+", body, maxsplit=1)
+        first_sentence = str(first_split[0] or "").strip() if first_split else ""
+        if first_sentence:
+            first_tokens = re.findall(r"[a-z0-9]+", first_sentence.lower())
+            if first_tokens and len(first_tokens) <= 12:
+                low = first_sentence.lower()
+                has_backspin = any(t in _BANTER_BACKSPIN_MARKERS for t in first_tokens[3:])
+                if has_backspin and _token_overlap_ratio(first_sentence, user_text) >= 0.50:
+                    stripped_body = first_split[1].lstrip() if len(first_split) > 1 else ""
+                    body = stripped_body if stripped_body else "What's up?"
+
+    # Greeting / opener echo: short banter replies can mirror the opener
+    # without literally repeating it. Strip the mirrored opener if the user
+    # message is clearly a greeting-like banter turn and the first sentence of
+    # the response mostly reuses the opener tokens.
+    if opener_like:
+        first_split = re.split(r"(?<=[.!?])\s+", body, maxsplit=1)
+        first_sentence = str(first_split[0] or "").strip() if first_split else ""
+        if first_sentence:
+            first_tokens = re.findall(r"[a-z0-9]+", first_sentence.lower())
+            user_tokens = re.findall(r"[a-z0-9]+", str(user_text or "").lower())
+            user_content_tokens = [t for t in user_tokens if t not in _STOPWORDS and len(t) >= 3]
+            first_content_tokens = [t for t in first_tokens if t not in _STOPWORDS and len(t) >= 3]
+            if first_content_tokens and user_content_tokens:
+                content_overlap = _token_overlap_ratio(first_sentence, " ".join(user_content_tokens)) >= 0.45
+                if len(first_tokens) <= 16 and content_overlap:
+                    stripped_body = first_split[1].lstrip() if len(first_split) > 1 else ""
+                    body = stripped_body if stripped_body else "What's up?"
 
     # Threshold A: leading-echo strip on first sentence.
     # Use punctuation+whitespace splitting so abbreviations like "U.S." are not
@@ -1208,6 +1267,48 @@ def finalize_chat_response(
         except Exception:
             pass
 
+    emotional_continuity_label = str(getattr(state, "turn_emotional_continuity_label", "") or "").strip().lower()
+    emotional_continuity_active = emotional_continuity_label in {"reflective_sadness", "sadness_clarification", "emotional_clarification"}
+    emotional_repeat_risk = 0
+    if emotional_continuity_active and _semantic_emotional_repeat_risk is not None:
+        try:
+            emotional_repeat_risk = int(
+                _semantic_emotional_repeat_risk(
+                    str(user_text or ""),
+                    str(getattr(state, "last_assistant_text", "") or ""),
+                    str(text or ""),
+                    emotional_continuity_label,
+                )
+            )
+        except Exception:
+            emotional_repeat_risk = 0
+    try:
+        setattr(state, "turn_emotional_repeat_risk", int(max(0, emotional_repeat_risk)))
+    except Exception:
+        pass
+
+    allow_emotional_style_rewrite = bool(
+        emotional_continuity_active
+        and emotional_repeat_risk > 0
+        and rewrite_response_style_fn is not None
+        and mode in ("raw", "casual")
+    )
+    if allow_emotional_style_rewrite and rewrite_response_style_fn is not None:
+        try:
+            text = rewrite_response_style_fn(
+                text,
+                enabled=bool(getattr(state, "profile_enabled", False)),
+                correction_style=str(
+                    getattr(getattr(state, "interaction_profile", None), "correction_style", "neutral")
+                ),
+                user_text=user_text,
+                sensitive_context=False,
+                sensitive_override=bool(sensitive_override_once),
+                blocked_nicknames=sorted(getattr(state, "profile_blocked_nicknames", set())),
+            )
+        except Exception:
+            pass
+
     if mode in ("fun", "fun_rewrite"):
         text = strip_in_body_confidence_source_claims_fn(text)
 
@@ -1224,13 +1325,18 @@ def finalize_chat_response(
     if clarify_turn and retrieval_exempt:
         clarify_turn = False
     distress_turn = bool(_EMOTIONAL_TURN_RE.search(str(user_text or "")))
+    clarify_user_hostile = False
     if clarify_turn:
         macro = str(getattr(state, "turn_kaioken_macro", "") or "").strip().lower()
         prof = getattr(state, "interaction_profile", None)
         correction_style = str(getattr(prof, "correction_style", "neutral") or "neutral").strip().lower()
         snark = str(getattr(prof, "snark_tolerance", "low") or "low").strip().lower()
         is_feral_profile = bool(correction_style == "direct" and snark in {"medium", "high"})
-        if is_feral_profile:
+        clarify_user_hostile = bool(
+            _FRICTION_AT_MODEL_RE.search(str(user_text or ""))
+            or _SERIOUS_CONTEMPTUOUS_RE.search(str(user_text or ""))
+        )
+        if is_feral_profile and clarify_user_hostile:
             base_fallback = random.choice(_CLARIFICATION_FALLBACK_PHRASES_FERAL)
         else:
             base_fallback = random.choice(_CLARIFICATION_FALLBACK_PHRASES_SERIOUS)
@@ -1238,7 +1344,7 @@ def finalize_chat_response(
         strip_fallback = f"{base_fallback} {slot_fragment}".strip() if slot_fragment else base_fallback
     elif not retrieval_exempt:
         strip_fallback = "Could you restate that more directly?" if distress_turn else "Could you restate that more directly?"
-    if not deterministic_output_locked and not retrieval_exempt:
+    if not deterministic_output_locked and not retrieval_exempt and not (clarify_turn and not clarify_user_hostile):
         text = strip_behavior_announcement_sentences_fn(text, strip_fallback)
 
     if mode in ("fun", "fun_rewrite") and (not deterministic_output_locked):
@@ -1560,12 +1666,61 @@ def finalize_chat_response(
         except Exception:
             pass
 
+    if mode == "serious" and (not deterministic_output_locked) and bool(getattr(state, "correction_bind_active", False)):
+        try:
+            prior_claim = str(getattr(state, "correction_target_sentence", "") or "").strip()
+            if not prior_claim:
+                prior_claim = str(getattr(state, "last_assistant_text", "") or "").strip()
+            retreat_scope, _retreat_flagged = codex_retreat_scope(
+                prior_claim=prior_claim,
+                corrected_answer=str(text or ""),
+                user_text=str(user_text or ""),
+            )
+            retreat_scope = str(retreat_scope or "evaded").strip().lower()
+            if retreat_scope not in {"full", "partial", "none", "evaded"}:
+                retreat_scope = "evaded"
+            answer_low = str(text or "").lower()
+            if retreat_scope in {"none", "partial"}:
+                explicit_retraction = any(
+                    marker in answer_low
+                    for marker in (
+                        "i stand corrected",
+                        "my initial explanation was",
+                        "i was wrong to imply",
+                        "i was wrong to say",
+                        "that was factually incorrect",
+                        "that was incorrect",
+                    )
+                )
+                preservation_marker = any(
+                    marker in answer_low
+                    for marker in (
+                        "core idea",
+                        "core mechanism",
+                        "still",
+                        "however",
+                        "stands",
+                        "remains",
+                    )
+                )
+                if explicit_retraction and not preservation_marker:
+                    retreat_scope = "full"
+            state.retreat_scope = retreat_scope
+            state.correction_retreat_detected = bool(retreat_scope in {"partial", "none", "evaded"})
+            state.core_claim_persists = bool(retreat_scope in {"partial", "none", "evaded"})
+        except Exception:
+            state.retreat_scope = "evaded"
+            state.correction_retreat_detected = True
+            state.core_claim_persists = True
+
     if mode == "serious" and (not deterministic_output_locked):
         try:
             prev_body = normalize_signature_text_fn(
                 strip_footer_lines_for_scan_fn(str(getattr(state, "last_assistant_text", "") or ""))
             )
             cur_body = normalize_signature_text_fn(strip_footer_lines_for_scan_fn(str(text or "")))
+            emotional_continuity_label = str(getattr(state, "turn_emotional_continuity_label", "") or "").strip().lower()
+            emotional_continuity_active = emotional_continuity_label in {"reflective_sadness", "sadness_clarification", "emotional_clarification"}
             lexical_followup_turn = _is_lexical_followup_turn(str(user_text or ""))
             if prev_body and cur_body:
                 if _repeat_guard_trips(
@@ -1595,12 +1750,31 @@ def finalize_chat_response(
                     if _feral_user_hostile:
                         text = random.choice(_FERAL_WEAK_PLACEHOLDER_FALLBACK_PHRASES)
                         state.serious_guard_action_taken = "FERAL_FALLBACK"
+                    elif emotional_continuity_active:
+                        # Emotional continuation turns should keep the model's
+                        # own contextual answer rather than swapping in a canned
+                        # recovery phrase.
+                        state.serious_guard_action_taken = "SERIOUS_WEAK_PLACEHOLDER_PRESERVE_CONTEXT"
+                    elif clarify_turn and clarify_user_hostile:
+                        # Continuation-style clarifications should keep the model's
+                        # own contextual answer rather than swapping in a canned
+                        # repair phrase.
+                        state.serious_guard_action_taken = "SERIOUS_WEAK_PLACEHOLDER_PRESERVE_CONTEXT"
                     else:
                         text = random.choice(_CLARIFICATION_FALLBACK_PHRASES_SERIOUS)
                         state.serious_guard_action_taken = "SERIOUS_WEAK_PLACEHOLDER_FALLBACK"
                 else:
-                    text = random.choice(_CLARIFICATION_FALLBACK_PHRASES_SERIOUS)
-                    state.serious_guard_action_taken = "SERIOUS_WEAK_PLACEHOLDER_FALLBACK"
+                    if emotional_continuity_active:
+                        # Same idea here: let emotional continuation stand instead
+                        # of replacing it with a generic recovery bank.
+                        state.serious_guard_action_taken = "SERIOUS_WEAK_PLACEHOLDER_PRESERVE_CONTEXT"
+                    elif clarify_turn and clarify_user_hostile:
+                        # Same idea here: let the generated clarification stand
+                        # instead of replacing it with a generic recovery bank.
+                        state.serious_guard_action_taken = "SERIOUS_WEAK_PLACEHOLDER_PRESERVE_CONTEXT"
+                    else:
+                        text = random.choice(_CLARIFICATION_FALLBACK_PHRASES_SERIOUS)
+                        state.serious_guard_action_taken = "SERIOUS_WEAK_PLACEHOLDER_FALLBACK"
         except Exception:
             pass
 

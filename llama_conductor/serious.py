@@ -451,12 +451,14 @@ def run_serious(
     except Exception:
         pass
 
+    answer = str(answer or "").strip()
+
     # 8) Enforce confidence line if missing
     # Default source heuristic: FACTS => Docs, else CONTEXT => Contextual, else Model.
     default_source = "Docs" if fb else ("Contextual" if context_block else "Model")
     
     # LAYER 3: If model response mentions "contradiction" or "impossible", force confidence to LOW
-    answer_lower = (answer or "").lower()
+    answer_lower = answer.lower()
     if "contradiction" in answer_lower or "impossible" in answer_lower or "mutually exclusive" in answer_lower:
         default_conf = "low"
     else:

@@ -96,6 +96,11 @@ class SessionState:
     # Last conversational turn snapshots (for correction-binding when clients send short history).
     last_user_text: str = ""
     last_assistant_text: str = ""
+    correction_intent_detected: bool = False
+    correction_bind_active: bool = False
+    correction_target_sentence: str = ""
+    correction_target_sentence_index: int = -1
+    correction_target_sentence_hash: str = ""
 
     # Scratchpad grounding controls (session-ephemeral).
     # Modes: "strict" (facts-only), "assisted" (facts-first synthesis allowed).
@@ -145,6 +150,9 @@ class SessionState:
     turn_feral_register_detected: bool = False
     turn_distress_hint_score: int = 0
     turn_empathy_override_applied: bool = False
+    clarification_continuity_hits: int = 0
+    turn_emotional_continuity_label: str = "neutral"
+    turn_emotional_repeat_risk: int = 0
     # FUN single-pass telemetry (turn-local; emitted via kaioken outcome).
     fun_single_pass_enabled: bool = False
     fun_model_calls_count: int = 0

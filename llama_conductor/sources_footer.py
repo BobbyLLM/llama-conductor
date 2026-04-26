@@ -9,6 +9,7 @@ Goals:
 from __future__ import annotations
 
 import re
+from typing import Any, Tuple
 
 
 _CONF_RE = re.compile(
@@ -58,6 +59,24 @@ _SIMPLE_SOURCE_LINE_RE = re.compile(
     r"^\s*Source:\s*(Model|Docs|User|Contextual|Mixed|Scratchpad|Cheatsheets|Define|Wiki|Web|Codex)\s*$",
     re.IGNORECASE,
 )
+
+_VERIFIED_CITATION_LANES = {
+    "Docs",
+    "Scratchpad",
+    "Cheatsheets",
+    "Wiki",
+    "Web",
+    "Codex",
+    "Mixed",
+}
+
+
+def citation_provenance_for_source(source: str) -> Tuple[str, str]:
+    """Return lightweight provenance metadata for verified source-bearing turns."""
+    src = str(source or "").strip().title()
+    if src in _VERIFIED_CITATION_LANES:
+        return (src, "verified")
+    return ("", "")
 
 
 def _strip_confidence_lines(text: str) -> str:
@@ -170,6 +189,7 @@ def normalize_sources_footer(
     locked_fact_lines: int = 0,
     source_override: str = "",
     confidence_override: str = "",
+    state: Any | None = None,
 ) -> str:
     """Normalize confidence footer deterministically for non-Mentats outputs."""
     t = (text or "").strip()
@@ -248,6 +268,14 @@ def normalize_sources_footer(
         conf = "unverified"
     elif override_conf in {"unverified", "low", "medium", "med", "high", "top"}:
         conf = "medium" if override_conf == "med" else override_conf
+
+    if state is not None:
+        try:
+            citation_lane, citation_verification_result = citation_provenance_for_source(source)
+            setattr(state, "citation_source_lane", citation_lane)
+            setattr(state, "citation_verification_result", citation_verification_result)
+        except Exception:
+            pass
 
     base = _strip_confidence_lines(t)
     base = _INLINE_TRUNC_SOURCE_TAIL_RE.sub("", base).rstrip()

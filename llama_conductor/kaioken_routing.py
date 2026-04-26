@@ -65,6 +65,8 @@ class KaiokenRoutingDeps:
     is_literal_followup_turn: Callable[..., bool]
     is_clarification_prompt: Callable[[str], bool]
     is_continuation_prompt: Callable[[str], bool]
+    clarification_continuity_hits: Callable[[str, str], int] | None
+    emotional_repeat_risk: Callable[[str, str, str, str], int] | None
     open_topics_for_clarify: Callable[[SessionState, str], list[str]]
     remember_recent_concrete_nouns: Callable[[SessionState, str], None]
     advice_about_disclosed_distress_topic: Callable[[SessionState, str, str], tuple[bool, str]]
@@ -123,6 +125,8 @@ def _apply_output_guard(
     _is_literal_followup_turn = deps.is_literal_followup_turn
     _is_clarification_prompt = deps.is_clarification_prompt
     _is_continuation_prompt = deps.is_continuation_prompt
+    _clarification_continuity_hits = deps.clarification_continuity_hits
+    _emotional_repeat_risk = deps.emotional_repeat_risk
     _open_topics_for_clarify = deps.open_topics_for_clarify
     _remember_recent_concrete_nouns = deps.remember_recent_concrete_nouns
     _advice_about_disclosed_distress_topic = deps.advice_about_disclosed_distress_topic
@@ -194,6 +198,31 @@ def _apply_output_guard(
         or bool(_STRICT_LOOKUP_RE.match(clarified_text))
     )
     if _is_clarification_prompt(user_text) and not retrieval_exempt:
+        clarify_user_hostile = bool(
+            re.search(r"\b(tone deaf|you were|your tone|you misread|you misunderstood|rude|abrupt|gaslighting|non sequitur)\b",
+                      str(user_text or ""),
+                      flags=re.IGNORECASE)
+        )
+        if not clarify_user_hostile:
+            prior_assistant_text = str(getattr(state, "last_assistant_text", "") or "").strip()
+            clarify_semantic_hits = 0
+            try:
+                if _clarification_continuity_hits is not None:
+                    clarify_semantic_hits = int(
+                        _clarification_continuity_hits(str(user_text or ""), prior_assistant_text)
+                    )
+            except Exception:
+                clarify_semantic_hits = 0
+            try:
+                setattr(state, "clarification_continuity_hits", int(max(0, clarify_semantic_hits)))
+            except Exception:
+                pass
+            preserved = str(body or "").strip()
+            if preserved and clarify_semantic_hits > 0:
+                if prefix:
+                    preserved = f"{prefix}\n\n{preserved}".strip()
+                _remember_recent_assistant_body(state, preserved)
+                return preserved
         opts = _open_topics_for_clarify(state, user_text)
         if len(opts) >= 2:
             repair = f"Lost the thread - were you asking about {opts[0]} or {opts[1]}?"
@@ -543,6 +572,13 @@ def _apply_output_guard(
         if is_high_distress_lane
         else ""
     )
+    emotional_continuity_rules = (
+        "- Emotional continuity turn: stay on the same feeling, loss, or sadness thread.\n"
+        "- If the user is clarifying sadness or nostalgia, explain that statement directly rather than switching into generic advice.\n"
+        "- Preserve the user's emotional premise unless they explicitly shift topics.\n"
+        if emotional_continuity_active
+        else ""
+    )
     closed_topic_clause = (
         "- Do not resurface resolved topics unless user explicitly reopens them: "
         + ", ".join(sorted(blocked_closed_topics)[:4]) + ".\n"
@@ -566,6 +602,7 @@ def _apply_output_guard(
         "- If humor is present, engage lightly without explaining the joke.\n\n"
         f"{closed_topic_clause}"
         f"{high_lane_rules}"
+        f"{emotional_continuity_rules}"
         f"{disclosed_topic_clause}"
         f"{literal_clause}"
         f"USER:\n{str(user_text or '').strip()}\n\n"
@@ -604,6 +641,29 @@ def _apply_output_guard(
         or (explicit_advice_for_disclosed_topic and disclosed_topic and disclosed_topic not in rewritten.lower())
         or _is_narrative_ownership_bleed(state, rewritten)
     )
+    emotional_continuity_label = str(getattr(state, "turn_emotional_continuity_label", "neutral") or "neutral").strip().lower()
+    emotional_continuity_active = emotional_continuity_label in {"reflective_sadness", "sadness_clarification", "emotional_clarification"}
+    emotional_continuity_repeat_risk = 0
+    if emotional_continuity_active and _emotional_repeat_risk is not None:
+        try:
+            emotional_continuity_repeat_risk = int(
+                _emotional_repeat_risk(
+                    str(user_text or ""),
+                    str(getattr(state, "last_assistant_text", "") or ""),
+                    str(body or ""),
+                    emotional_continuity_label,
+                )
+            )
+        except Exception:
+            emotional_continuity_repeat_risk = 0
+    try:
+        setattr(state, "turn_emotional_repeat_risk", int(max(0, emotional_continuity_repeat_risk)))
+    except Exception:
+        pass
+    emotional_clarification_tighten = bool(
+        emotional_continuity_label == "sadness_clarification"
+        and int(emotional_continuity_repeat_risk or 0) > 0
+    )
 
     def _guard_fallback(prior_text: str) -> str:
         if explicit_advice_for_anchor:
@@ -638,6 +698,42 @@ def _apply_output_guard(
                 draft_text=body,
                 topic=disclosed_topic,
             ) or body
+        if _is_continuation_prompt(user_text):
+            preserved = str(body or "").strip()
+            if preserved:
+                return preserved
+        if emotional_continuity_active:
+            if emotional_clarification_tighten:
+                tightened_prompt = (
+                    "Rewrite the draft so it answers the user's emotional clarification more directly.\n"
+                    "- Keep the same emotional thread.\n"
+                    "- Do not repeat the prior explanation verbatim.\n"
+                    "- Make it shorter and clearer than the draft.\n"
+                    "- Do not add advice unless the user asked for advice.\n"
+                    "- Do not switch to a new topic.\n\n"
+                    f"USER:\n{str(user_text or '').strip()}\n\n"
+                    f"PRIOR ASSISTANT:\n{prior_text}\n\n"
+                    f"DRAFT:\n{body}\n\n"
+                    "Return only the rewritten answer body."
+                )
+                try:
+                    tightened = str(
+                        call_model_fn(
+                            role="thinker",
+                            prompt=tightened_prompt,
+                            max_tokens=170,
+                            temperature=0.0,
+                            top_p=1.0,
+                        )
+                        or ""
+                    ).strip()
+                except Exception:
+                    tightened = ""
+                if tightened:
+                    return tightened
+            preserved = str(body or "").strip()
+            if preserved:
+                return preserved
         return _choose_short_fallback(state, prior_text=prior_text)
 
     if is_literal_followup and literal_anchor and literal_anchor not in rewritten.lower():

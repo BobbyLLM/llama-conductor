@@ -15,6 +15,45 @@ _PROFILE_FOOTER_FRAGMENT_RE = re.compile(
     r"Profile:\s*[^|\n]{1,40}\|\s*Sarc:\s*[^|\n]{1,20}\|\s*Snark:\s*[^|\n]{1,20}",
     re.IGNORECASE,
 )
+_BARE_URL_LINE_RE = re.compile(r"^\s*https?://\S+\s*$", re.IGNORECASE)
+_SEE_URL_LINE_RE = re.compile(r"^\s*See:\s*https?://\S+\s*$", re.IGNORECASE)
+_VERIFIED_CITATION_LANES = {
+    "Docs",
+    "Scratchpad",
+    "Cheatsheets",
+    "Wiki",
+    "Web",
+    "Codex",
+    "Mixed",
+}
+
+
+def _strip_unverified_citation_lines(text: str, *, verified_lane: bool) -> str:
+    if verified_lane:
+        return text
+    t = (text or "").strip()
+    if not t:
+        return ""
+    kept: List[str] = []
+    for ln in t.splitlines():
+        s = (ln or "").strip()
+        if not s:
+            kept.append("")
+            continue
+        if _BARE_URL_LINE_RE.match(s) or _SEE_URL_LINE_RE.match(s):
+            continue
+        kept.append(ln)
+    out: List[str] = []
+    blank_run = 0
+    for ln in kept:
+        if not (ln or "").strip():
+            blank_run += 1
+            if blank_run > 2:
+                continue
+        else:
+            blank_run = 0
+        out.append(ln)
+    return "\n".join(out).strip()
 
 
 def quote_query_tokens(text: str) -> set[str]:
@@ -1012,7 +1051,11 @@ def apply_deterministic_footer(
             locked_fact_lines=int(getattr(state, "locked_last_fact_lines", 0) or 0),
             source_override=source_override,
             confidence_override=confidence_override,
+            state=state,
         )
+        citation_lane = str(getattr(state, "citation_source_lane", "") or "").strip().title()
+        verified_citation_lane = citation_lane in _VERIFIED_CITATION_LANES
+        out = _strip_unverified_citation_lines(out, verified_lane=verified_citation_lane)
         setattr(state, "turn_footer_source_override", "")
         setattr(state, "turn_footer_confidence_override", "")
         setattr(state, "turn_source_url_override", "")

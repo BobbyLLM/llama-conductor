@@ -258,10 +258,16 @@ try:
     from .kaioken import (  # type: ignore
         append_kaioken_telemetry as _kaioken_append_telemetry,
         classify_register as _kaioken_classify_register,
+        _semantic_clarification_continuity_hits as _kaioken_clarification_continuity_hits,
+        _semantic_emotional_continuity_label as _kaioken_emotional_continuity_label,
+        _semantic_emotional_repeat_risk as _kaioken_emotional_repeat_risk,
     )
 except Exception:
     _kaioken_append_telemetry = None  # type: ignore
     _kaioken_classify_register = None  # type: ignore
+    _kaioken_clarification_continuity_hits = None  # type: ignore
+    _kaioken_emotional_continuity_label = None  # type: ignore
+    _kaioken_emotional_repeat_risk = None  # type: ignore
 try:
     from .state_reasoning import (  # type: ignore
         classify_constraint_turn,
@@ -791,6 +797,19 @@ def _emit_kaioken_telemetry(
         enabled = bool(getattr(state, "kaioken_enabled", bool(cfg_get("kaioken.enabled", True))))
         mode = str(getattr(state, "kaioken_mode", str(cfg_get("kaioken.mode", "log_only") or "log_only")) or "log_only").strip().lower()
         state.kaioken_turn_counter = int(getattr(state, "kaioken_turn_counter", 0) or 0) + 1
+        extra_payload = dict(outcome or {})
+        extra_payload.setdefault(
+            "clarification_continuity_hits",
+            int(getattr(state, "clarification_continuity_hits", 0) or 0),
+        )
+        extra_payload.setdefault(
+            "emotional_continuity_label",
+            str(getattr(state, "turn_emotional_continuity_label", "neutral") or "neutral"),
+        )
+        extra_payload.setdefault(
+            "emotional_continuity_repeat_risk",
+            int(getattr(state, "turn_emotional_repeat_risk", 0) or 0),
+        )
         _kaioken_append_telemetry(
             session_id=session_id,
             turn_index=state.kaioken_turn_counter,
@@ -800,7 +819,7 @@ def _emit_kaioken_telemetry(
             mode=mode,
             log_all_routes=bool(cfg_get("kaioken.log_all_routes", True)),
             session_hash_salt=str(cfg_get("kaioken.session_hash_salt", "kaioken-v1") or "kaioken-v1"),
-            extra=dict(outcome or {}),
+            extra=extra_payload,
         )
     except Exception:
         # Never alter runtime behavior because of telemetry failure.
@@ -1969,6 +1988,116 @@ def _sentence_split_for_guard(text: str) -> list[str]:
     return [p.strip() for p in re.split(r"(?<=[.!?])\s+", t) if p and str(p).strip()]
 
 
+_CORRECTION_CLAIM_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "be",
+    "but",
+    "for",
+    "from",
+    "have",
+    "i",
+    "if",
+    "in",
+    "is",
+    "it",
+    "me",
+    "my",
+    "not",
+    "of",
+    "on",
+    "or",
+    "rather",
+    "the",
+    "than",
+    "that",
+    "this",
+    "to",
+    "we",
+    "with",
+    "you",
+    "your",
+}
+
+
+def _tokenize_for_correction_claim(text: str) -> set[str]:
+    out: set[str] = set()
+    for tok in re.findall(r"[a-z0-9][a-z0-9\-']{1,}", str(text or "").lower()):
+        tok = tok.strip("'-")
+        if tok and tok not in _CORRECTION_CLAIM_STOPWORDS:
+            out.add(tok)
+    return out
+
+
+def _pick_correction_target_sentence(
+    *,
+    prior_answer: str,
+    user_text: str,
+    recent_user_nouns: Optional[List[str]] = None,
+    recent_thread_tokens: Optional[List[str]] = None,
+) -> tuple[str, int, str]:
+    sentences = _sentence_split_for_guard(prior_answer)
+    if not sentences:
+        return "", -1, ""
+    user_surface = " ".join(
+        [
+            str(user_text or "").strip(),
+            " ".join(str(x or "").strip() for x in (recent_user_nouns or [])),
+            " ".join(str(x or "").strip() for x in (recent_thread_tokens or [])),
+        ]
+    ).strip()
+    surface_toks = _tokenize_for_correction_claim(user_surface)
+    best_idx = 1
+    best_sentence = sentences[0]
+    best_score = -1
+    for idx, sentence in enumerate(sentences, 1):
+        sent_toks = _tokenize_for_correction_claim(sentence)
+        if not sent_toks:
+            score = 0
+        else:
+            score = len(surface_toks & sent_toks)
+            if not score and idx == 1:
+                # Prefer the lead sentence when nothing else discriminates.
+                score = 0
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+            best_sentence = sentence
+    return best_sentence, best_idx, short_hash(best_sentence)
+
+
+def _correction_trace_fields(state: SessionState) -> Dict[str, Any]:
+    return {
+        "correction_intent_detected": bool(getattr(state, "correction_intent_detected", False)),
+        "correction_bind_active": bool(getattr(state, "correction_bind_active", False)),
+        "correction_target_sentence": safe_preview(
+            str(getattr(state, "correction_target_sentence", "") or ""),
+            max_len=220,
+        ),
+        "correction_target_sentence_index": int(getattr(state, "correction_target_sentence_index", -1) or -1),
+        "correction_target_sentence_hash": str(getattr(state, "correction_target_sentence_hash", "") or ""),
+        "retreat_scope": str(getattr(state, "retreat_scope", "") or ""),
+        "core_claim_persists": bool(getattr(state, "core_claim_persists", False)),
+        "correction_retreat_detected": bool(getattr(state, "correction_retreat_detected", False)),
+    }
+
+
+def _clarification_trace_fields(state: SessionState) -> Dict[str, Any]:
+    return {
+        "clarification_continuity_hits": int(getattr(state, "clarification_continuity_hits", 0) or 0),
+    }
+
+
+def _emotional_trace_fields(state: SessionState) -> Dict[str, Any]:
+    return {
+        "emotional_continuity_label": str(getattr(state, "turn_emotional_continuity_label", "neutral") or "neutral"),
+        "emotional_continuity_repeat_risk": int(getattr(state, "turn_emotional_repeat_risk", 0) or 0),
+    }
+
+
 def _first_clause_for_anchor_parse(text: str) -> str:
     return _kl_first_clause_for_anchor_parse(text)
 
@@ -2241,6 +2370,8 @@ _KAIOKEN_ROUTING_DEPS = _KaiokenRoutingDeps(
     is_literal_followup_turn=_is_literal_followup_turn,
     is_clarification_prompt=_is_clarification_prompt,
     is_continuation_prompt=_is_continuation_prompt,
+    clarification_continuity_hits=_kaioken_clarification_continuity_hits,
+    emotional_repeat_risk=_kaioken_emotional_repeat_risk,
     open_topics_for_clarify=_open_topics_for_clarify,
     remember_recent_concrete_nouns=_remember_recent_concrete_nouns,
     advice_about_disclosed_distress_topic=_advice_about_disclosed_distress_topic,
@@ -3490,6 +3621,10 @@ async def v1_chat_completions(req: Request):
     if not user_text_raw and request_has_images:
         user_text_raw = "[image]"
 
+    raw_cmd = str(user_text_raw or "").strip().lower()
+    if raw_cmd.startswith(">>web"):
+        state.turn_web_retrieval_verified = True
+
     title_json = _stage_openwebui_title_bypass(user_text_raw=user_text_raw)
     if title_json is not None:
         return JSONResponse(_make_openai_response(title_json))
@@ -3919,6 +4054,13 @@ async def v1_chat_completions(req: Request):
     turn_feral_register_detected = False
     turn_distress_hint_score = 0
     turn_empathy_override_applied = False
+    turn_emotional_continuity_label = "neutral"
+    turn_emotional_repeat_risk = 0
+    state.correction_intent_detected = False
+    state.correction_bind_active = False
+    state.correction_target_sentence = ""
+    state.correction_target_sentence_index = -1
+    state.correction_target_sentence_hash = ""
     state.fr_semantic_drift_detected = False
     state.fr_semantic_drift_reason = "none"
     state.fr_semantic_drift_entities_missing = []
@@ -3980,11 +4122,30 @@ async def v1_chat_completions(req: Request):
     state.turn_kaioken_macro = turn_macro_norm
     state.turn_feral_register_detected = bool(turn_feral_register_detected)
     state.turn_distress_hint_score = int(turn_distress_hint_score or 0)
-    state.turn_empathy_override_applied = bool(turn_empathy_override_applied)
     prior_macro_norm = str(getattr(state, "last_turn_kaioken_macro", "") or "").strip().lower()
     if prior_macro_norm and turn_macro_norm and prior_macro_norm != turn_macro_norm:
         _scrub_retrieval_context_on_macro_transition(state)
     state.last_turn_kaioken_macro = turn_macro_norm
+    try:
+        if _kaioken_emotional_continuity_label is not None:
+            turn_emotional_continuity_label = str(
+                _kaioken_emotional_continuity_label(
+                    str(user_text or ""),
+                    str(getattr(state, "last_assistant_text", "") or ""),
+                    str(getattr(state, "last_user_text", "") or ""),
+                )
+                or "neutral"
+            ).strip().lower() or "neutral"
+            if turn_emotional_continuity_label in {"reflective_sadness", "emotional_clarification"}:
+                turn_empathy_override_applied = True
+    except Exception:
+        turn_emotional_continuity_label = "neutral"
+    try:
+        setattr(state, "turn_emotional_repeat_risk", int(turn_emotional_repeat_risk or 0))
+    except Exception:
+        pass
+    state.turn_emotional_continuity_label = str(turn_emotional_continuity_label or "neutral")
+    state.turn_empathy_override_applied = bool(turn_empathy_override_applied)
 
     # Codex retrieval state is resolved before filesystem SUMM facts so
     # Codex healthy hits can suppress the older raw SUMM lane for this turn.
@@ -4027,6 +4188,7 @@ async def v1_chat_completions(req: Request):
     state.turn_source_url_override = ""
     state.turn_retrieval_track = ""
     state.turn_model_finish_reason = ""
+    state.turn_web_retrieval_verified = False
     state.turn_cheatsheet_hit = False
     state.turn_playful_override = False
     state.turn_local_knowledge_line = ""
@@ -4081,6 +4243,11 @@ async def v1_chat_completions(req: Request):
         if (_resolve_cheatsheets_turn is not None) and _CHEATSHEETS_RUNTIME_ENABLED and (not scratch_lane_locked):
             macro = turn_macro
             subsignals = set(turn_subsignals)
+            def _verified_web_lookup(query: str) -> Any:
+                state.turn_web_retrieval_verified = True
+                if _sidecar_web_evidence is None:
+                    return False, {}, "web lookup unavailable"
+                return _sidecar_web_evidence(query)
             cheat = _resolve_cheatsheets_turn(
                 user_text=str(user_text or ""),
                 macro=macro,
@@ -4094,7 +4261,7 @@ async def v1_chat_completions(req: Request):
                 prior_user_text=str(getattr(state, "last_user_text", "") or ""),
                 track_b_enabled=bool(cfg_get("cheatsheets.track_b.enabled", False)),
                 wiki_lookup_fn=_sidecar_wiki_query,
-                web_lookup_fn=_sidecar_web_evidence,
+                web_lookup_fn=_verified_web_lookup,
                 define_lookup_fn=_sidecar_define_query,
                 quote_source_intent=quote_source_intent_now,
                 who_won_intent=who_won_intent_now,
@@ -4882,6 +5049,181 @@ async def v1_chat_completions(req: Request):
             _, validated = codex_validate_answer(t, _src, _usr, strict=_strict)
             return validated
 
+    # Preempt the raw/serious split for real correction turns so raw-default
+    # sessions still get the correction-retreat path.
+    try:
+        prior_answer_for_struct = str(getattr(state, "last_assistant_text", "") or "").strip() or _last_assistant_text(history_text_only)
+        recent_nouns_for_struct = [
+            str(x or "").strip().lower()
+            for x in list(getattr(state, "kaioken_recent_user_nouns", []) or [])
+            if str(x or "").strip()
+        ]
+        recent_thread_tokens_for_struct: list[str] = []
+        try:
+            threads = _get_kaioken_threads(state)
+            active_tid = str(getattr(state, "kaioken_active_thread_id", "") or "").strip()
+            active_meta = threads.get(active_tid) if active_tid else None
+            if isinstance(active_meta, dict):
+                recent_thread_tokens_for_struct = sorted(_thread_tokens(active_meta))
+        except Exception:
+            recent_thread_tokens_for_struct = []
+
+        structural_corr = _evaluate_structural_correction_intent(
+            user_text=user_text,
+            prior_assistant_text=prior_answer_for_struct,
+            recent_user_nouns=recent_nouns_for_struct,
+            recent_thread_tokens=recent_thread_tokens_for_struct,
+        )
+        correction_bind_structural = bool(structural_corr.get("is_structural", False))
+        correction_bind_regex_fallback = bool(
+            _is_correction_intent_query(user_text) and not _is_explicit_reengage_query(user_text)
+        )
+        correction_bind = bool(correction_bind_structural or correction_bind_regex_fallback)
+        if correction_bind:
+            target_sentence, target_idx, target_hash = _pick_correction_target_sentence(
+                prior_answer=prior_answer_for_struct,
+                user_text=user_text,
+                recent_user_nouns=recent_nouns_for_struct,
+                recent_thread_tokens=recent_thread_tokens_for_struct,
+            )
+            state.correction_intent_detected = True
+            state.correction_target_sentence = str(target_sentence or "")
+            state.correction_target_sentence_index = int(target_idx or -1)
+            state.correction_target_sentence_hash = str(target_hash or "")
+
+            low = str(user_text or "").lower()
+            is_definitional_turn = bool(_DEFINITIONAL_QUERY_RE.search(str(user_text or "")))
+            new_v, unit_v, _old_v = _extract_numeric_correction(user_text)
+            has_numeric_rest = bool(new_v and unit_v)
+            has_i_meant = bool(
+                re.search(r"\b(i meant|no i meant|sorry i meant)\b", low, flags=re.IGNORECASE)
+            )
+            has_contradiction_target = bool(
+                re.search(
+                    r"\bnot\b[^\n]{0,96}\b(?:but|rather than|instead of)\b|\b(?:rather than|instead of)\b",
+                    low,
+                    flags=re.IGNORECASE,
+                )
+            )
+            has_explicit_rest = bool(has_i_meant and has_contradiction_target)
+            has_not_but_rest = bool(re.search(r"\bnot\b[^\n]{0,64}\bbut\b", low, flags=re.IGNORECASE))
+            lexical_strong = bool(has_numeric_rest or has_explicit_rest or has_not_but_rest)
+            correction_is_strong = bool(correction_bind_structural or lexical_strong)
+            skip_correction_bind = False
+            if correction_bind_structural:
+                try:
+                    if _kaioken_classify_register is not None:
+                        cls_cur = _kaioken_classify_register(str(user_text or ""))
+                        macro_cur = str(getattr(cls_cur, "macro", "") or "").strip().lower()
+                        conf_label = str(getattr(cls_cur, "confidence", "low") or "low").strip().lower()
+                        conf_medium_or_higher = conf_label in {"high", "medium", "med"}
+                        if macro_cur == "working" and (not conf_medium_or_higher):
+                            skip_correction_bind = True
+                except Exception:
+                    pass
+            if is_definitional_turn:
+                skip_correction_bind = True
+            if not correction_is_strong:
+                try:
+                    if _kaioken_classify_register is not None:
+                        cls_cur = _kaioken_classify_register(str(user_text or ""))
+                        macro_cur = str(getattr(cls_cur, "macro", "") or "").strip().lower()
+                        macro_personal = macro_cur == "personal"
+                        macro_casual = macro_cur == "casual"
+                        conf_label = str(getattr(cls_cur, "confidence", "low") or "low").strip().lower()
+                    else:
+                        macro_personal = False
+                        macro_casual = False
+                        conf_label = "low"
+                except Exception:
+                    macro_personal = False
+                    macro_casual = False
+                    conf_label = "low"
+                prior_distress_carry = bool(
+                    bool(getattr(state, "kaioken_short_fallback_distress_lane", False))
+                    or bool(set(getattr(state, "kaioken_distress_topics", set()) or set()))
+                )
+                conf_medium_or_higher = conf_label in {"high", "medium", "med"}
+                skip_correction_bind = bool(
+                    skip_correction_bind
+                    or macro_personal
+                    or macro_casual
+                    or (not conf_medium_or_higher)
+                    or prior_distress_carry
+                )
+            state.correction_bind_active = bool(correction_bind and not skip_correction_bind)
+            if correction_bind and not skip_correction_bind and str(fun_mode_effective or "").strip().lower() == "raw":
+                fun_mode_effective = "serious"
+            if correction_bind and not skip_correction_bind:
+                correction_resp = _maybe_handle_correction_bind(
+                    state=state,
+                    user_text=user_text,
+                    history_text_only=history_text_only,
+                    query_family=query_family,
+                    lock_active=lock_active,
+                    scratchpad_grounded=scratchpad_grounded,
+                    scratchpad_quotes=scratchpad_quotes,
+                    facts_block=facts_block,
+                    stream=stream,
+                    sensitive_override_once=sensitive_override_once,
+                    cfg_get=cfg_get,
+                    call_model_messages=call_model_messages,
+                    is_correction_intent_query=_is_correction_intent_query,
+                    is_explicit_reengage_query=_is_explicit_reengage_query,
+                    extract_numeric_correction=_extract_numeric_correction,
+                    resolve_old_from_prior_answer=_resolve_old_from_prior_answer,
+                    fallback_contextual_correction=_fallback_contextual_correction,
+                    strip_got_it_prefix=_strip_got_it_prefix,
+                    last_assistant_text=_last_assistant_text,
+                    last_user_text_before=_last_user_text_before,
+                    last_user_text=_last_user_text,
+                    last_non_correction_user_text=_last_non_correction_user_text,
+                    to_km=_to_km,
+                    maybe_apply_consistency_verifier=(
+                        lambda **kw: _maybe_apply_consistency_verifier(
+                            **kw,
+                            call_model_messages_fn=call_model_messages,
+                        )
+                    ),
+                    finalize_chat_response=_finalize_chat_response,
+                    correction_bind_active=correction_bind,
+                )
+                if correction_resp is not None:
+                    _emit_kaioken_telemetry(
+                        state=state,
+                        session_id=session_id,
+                        user_text=user_text_raw,
+                        route_class="model_chat",
+                        outcome={
+                            "stage": "correction_bind",
+                            "kaioken_macro": str(getattr(state, "turn_kaioken_macro", "") or ""),
+                            "kaioken_priority_lane": str(getattr(state, "kaioken_priority_lane", "") or ""),
+                            "turn_footer_source_override": str(
+                                getattr(state, "turn_footer_source_override_snapshot", "")
+                                or getattr(state, "turn_footer_source_override", "")
+                                or ""
+                            ),
+                            "feral_register_detected": bool(getattr(state, "turn_feral_register_detected", False)),
+                            "distress_hint_score": int(getattr(state, "turn_distress_hint_score", 0) or 0),
+                            "invite_emitter": str(getattr(state, "invite_emitter", "") or ""),
+                            "empathy_override_applied": bool(getattr(state, "turn_empathy_override_applied", False)),
+                            **_correction_trace_fields(state),
+                            **_clarification_trace_fields(state),
+                            **_emotional_trace_fields(state),
+                            "correction_signal_strength": (
+                                "structural"
+                                if correction_bind_structural
+                                else ("strong" if correction_is_strong else "ambiguous")
+                            ),
+                            "correction_structural_prior_claim": bool(structural_corr.get("prior_claim_exists", False)),
+                            "correction_structural_references_prior": bool(structural_corr.get("references_prior", False)),
+                            "correction_structural_replacement_payload": bool(structural_corr.get("has_replacement_payload", False)),
+                        },
+                    )
+                    return correction_resp
+    except Exception:
+        pass
+
     mode_resp = await _maybe_handle_fun_fr_raw(
         fun_mode=fun_mode_effective,
         state=state,
@@ -4923,6 +5265,50 @@ async def v1_chat_completions(req: Request):
         codex_grounding_fn=_codex_grounding_fn,
     )
     if mode_resp is not None:
+        try:
+            repeat_risk = 0
+            emotional_label = str(getattr(state, "turn_emotional_continuity_label", "neutral") or "neutral").strip().lower()
+            if _kaioken_emotional_repeat_risk is not None and emotional_label in {"sadness_clarification", "emotional_clarification", "reflective_sadness"}:
+                repeat_risk = int(
+                    _kaioken_emotional_repeat_risk(
+                        str(user_text or ""),
+                        str(getattr(state, "last_assistant_text", "") or ""),
+                        str(mode_resp or ""),
+                        emotional_label,
+                    )
+                )
+            try:
+                existing_repeat = int(getattr(state, "turn_emotional_repeat_risk", 0) or 0)
+            except Exception:
+                existing_repeat = 0
+            state.turn_emotional_repeat_risk = int(max(0, existing_repeat, repeat_risk))
+            if emotional_label == "sadness_clarification" and repeat_risk > 0:
+                tighten_prompt = (
+                    "Rewrite the response so it answers the user's emotional clarification more directly.\n"
+                    "- Keep the same emotional thread.\n"
+                    "- Do not repeat the prior explanation verbatim.\n"
+                    "- Make it shorter and clearer.\n"
+                    "- Do not add new advice.\n"
+                    "- Do not switch topics.\n\n"
+                    f"USER:\n{str(user_text or '').strip()}\n\n"
+                    f"PRIOR ASSISTANT:\n{str(getattr(state, 'last_assistant_text', '') or '').strip()}\n\n"
+                    f"DRAFT:\n{str(mode_resp or '').strip()}\n\n"
+                    "Return only the rewritten answer body."
+                )
+                tightened_resp = str(
+                    call_model_prompt(
+                        role="thinker",
+                        prompt=tighten_prompt,
+                        max_tokens=170,
+                        temperature=0.0,
+                        top_p=1.0,
+                    )
+                    or ""
+                ).strip()
+                if tightened_resp:
+                    mode_resp = tightened_resp
+        except Exception:
+            pass
         _emit_kaioken_telemetry(
             state=state,
             session_id=session_id,
@@ -4954,6 +5340,9 @@ async def v1_chat_completions(req: Request):
                 "kaioken_literal_followup": bool(kaioken_literal_followup),
                 "kaioken_mode": str(getattr(state, "kaioken_mode", "log_only") or "log_only"),
                 "invite_emitter": str(getattr(state, "invite_emitter", "") or ""),
+                **_correction_trace_fields(state),
+                **_clarification_trace_fields(state),
+                **_emotional_trace_fields(state),
             },
         )
         if state_solver_used and state_solver_answer:
@@ -5052,9 +5441,19 @@ async def v1_chat_completions(req: Request):
             _is_correction_intent_query(user_text) and not _is_explicit_reengage_query(user_text)
         )
         correction_bind = bool(correction_bind_structural or correction_bind_regex_fallback)
+        state.correction_intent_detected = bool(correction_bind)
         correction_is_strong = False
         skip_correction_bind = False
         if correction_bind:
+            target_sentence, target_idx, target_hash = _pick_correction_target_sentence(
+                prior_answer=prior_answer_for_struct,
+                user_text=user_text,
+                recent_user_nouns=recent_nouns_for_struct,
+                recent_thread_tokens=recent_thread_tokens_for_struct,
+            )
+            state.correction_target_sentence = str(target_sentence or "")
+            state.correction_target_sentence_index = int(target_idx or -1)
+            state.correction_target_sentence_hash = str(target_hash or "")
             if editorial_instruction_anchor_active:
                 # One-turn instruction-intent anchor: editorial turns with explicit
                 # pasted/file wrapper must not be hijacked into correction-bind.
@@ -5119,6 +5518,7 @@ async def v1_chat_completions(req: Request):
                     or (not conf_medium_or_higher)
                     or prior_distress_carry
                 )
+        state.correction_bind_active = bool(correction_bind and not skip_correction_bind)
         if correction_bind and not skip_correction_bind:
             correction_resp = _maybe_handle_correction_bind(
                 state=state,
@@ -5172,6 +5572,7 @@ async def v1_chat_completions(req: Request):
                         "distress_hint_score": int(getattr(state, "turn_distress_hint_score", 0) or 0),
                         "invite_emitter": str(getattr(state, "invite_emitter", "") or ""),
                         "empathy_override_applied": bool(getattr(state, "turn_empathy_override_applied", False)),
+                        **_correction_trace_fields(state),
                         "correction_signal_strength": (
                             "structural"
                             if correction_bind_structural
@@ -5282,6 +5683,13 @@ async def v1_chat_completions(req: Request):
         state.deterministic_last_frame = {}
         state.deterministic_last_query_norm = ""
 
+    if str(getattr(state, "turn_footer_source_override", "") or "").strip().title() == "Web" and not bool(
+        getattr(state, "turn_web_retrieval_verified", False)
+    ):
+        state.turn_footer_source_override = "Model"
+        state.turn_footer_confidence_override = "unverified"
+        state.turn_source_url_override = ""
+
     _emit_kaioken_telemetry(
         state=state,
         session_id=session_id,
@@ -5290,24 +5698,30 @@ async def v1_chat_completions(req: Request):
         outcome={
             "stage": "serious",
             "kaioken_macro": str(getattr(state, "turn_kaioken_macro", "") or ""),
-            "kaioken_priority_lane": str(getattr(state, "kaioken_priority_lane", "") or ""),
-            "turn_footer_source_override": str(
-                getattr(state, "turn_footer_source_override_snapshot", "")
-                or getattr(state, "turn_footer_source_override", "")
-                or ""
-            ),
-            "feral_register_detected": bool(getattr(state, "turn_feral_register_detected", False)),
-            "distress_hint_score": int(getattr(state, "turn_distress_hint_score", 0) or 0),
-            "invite_emitter": str(getattr(state, "invite_emitter", "") or ""),
-            "empathy_override_applied": bool(getattr(state, "turn_empathy_override_applied", False)),
-            "kaioken_hint_applied": bool(kaioken_hint),
-            "kaioken_guard_applied": bool(kaioken_guard_applied),
-            "kaioken_literal_followup": bool(kaioken_literal_followup),
-            "kaioken_mode": str(getattr(state, "kaioken_mode", "log_only") or "log_only"),
-            "serious_guard_evaluated": bool(getattr(state, "serious_guard_evaluated", False)),
-            "serious_guard_trigger_condition": str(getattr(state, "serious_guard_trigger_condition", "") or ""),
-            "serious_guard_failure_type": str(getattr(state, "serious_guard_failure_type", "") or ""),
-            "serious_guard_offending_clause": str(getattr(state, "serious_guard_offending_clause", "") or "")[:80],
+                "kaioken_priority_lane": str(getattr(state, "kaioken_priority_lane", "") or ""),
+                "turn_footer_source_override": str(
+                    getattr(state, "turn_footer_source_override_snapshot", "")
+                    or getattr(state, "turn_footer_source_override", "")
+                    or ""
+                ),
+                "feral_register_detected": bool(getattr(state, "turn_feral_register_detected", False)),
+                "distress_hint_score": int(getattr(state, "turn_distress_hint_score", 0) or 0),
+                        "invite_emitter": str(getattr(state, "invite_emitter", "") or ""),
+                        "empathy_override_applied": bool(getattr(state, "turn_empathy_override_applied", False)),
+                        **_correction_trace_fields(state),
+                        **_clarification_trace_fields(state),
+                        **_emotional_trace_fields(state),
+                        "kaioken_hint_applied": bool(kaioken_hint),
+                        "kaioken_guard_applied": bool(kaioken_guard_applied),
+                        "kaioken_literal_followup": bool(kaioken_literal_followup),
+                "kaioken_mode": str(getattr(state, "kaioken_mode", "log_only") or "log_only"),
+                "serious_guard_evaluated": bool(getattr(state, "serious_guard_evaluated", False)),
+                **_correction_trace_fields(state),
+                **_clarification_trace_fields(state),
+                **_emotional_trace_fields(state),
+                "serious_guard_trigger_condition": str(getattr(state, "serious_guard_trigger_condition", "") or ""),
+                "serious_guard_failure_type": str(getattr(state, "serious_guard_failure_type", "") or ""),
+                "serious_guard_offending_clause": str(getattr(state, "serious_guard_offending_clause", "") or "")[:80],
             "serious_guard_action_taken": str(getattr(state, "serious_guard_action_taken", "NONE") or "NONE"),
             "serious_hostile_overreach_evaluated": bool(getattr(state, "serious_hostile_overreach_evaluated", False)),
             "serious_hostile_overreach_result": getattr(state, "serious_hostile_overreach_result", None),
@@ -5416,6 +5830,7 @@ async def v1_chat_completions(req: Request):
                 or ""
             ),
             "invite_emitter": str(getattr(state, "invite_emitter", "") or ""),
+            **_correction_trace_fields(state),
             "serious_guard_evaluated": bool(getattr(state, "serious_guard_evaluated", False)),
             "serious_guard_trigger_condition": str(getattr(state, "serious_guard_trigger_condition", "") or ""),
             "serious_guard_failure_type": str(getattr(state, "serious_guard_failure_type", "") or ""),

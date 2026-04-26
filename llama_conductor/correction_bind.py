@@ -54,8 +54,6 @@ def maybe_handle_correction_bind(
         if lane_disengaged:
             return None
 
-        prev_user_turn = str(getattr(state, "last_user_text", "") or "").strip()
-        include_ack = not is_correction_intent_query(prev_user_turn)
         prior_answer = str(getattr(state, "last_assistant_text", "") or "").strip() or last_assistant_text(history_text_only)
         state_last_user = str(getattr(state, "last_user_text", "") or "").strip()
         if state_last_user and not is_correction_intent_query(state_last_user):
@@ -94,11 +92,11 @@ def maybe_handle_correction_bind(
             )
             if new_v and unit_v and prior_user:
                 fb = fallback_contextual_correction(
-                    prior_user=prior_user,
-                    new=new_v,
+                    user_text=prior_user,
+                    query_family=query_family,
+                    old_val=old_v,
+                    new_val=new_v,
                     unit=unit_v,
-                    old=old_v,
-                    include_ack=include_ack,
                 ).strip()
                 if fb:
                     _apply_correction_distance_to_frame(new_v, unit_v)
@@ -124,6 +122,7 @@ def maybe_handle_correction_bind(
                 {
                     "role": "system",
                     "content": (
+                        "The prior claim has been corrected. Re-evaluate the conclusion using the corrected premise only. Keep the same comparison criteria as before unless the user explicitly changed them. Do not preserve the earlier claim by switching to a different criterion. If the original conclusion no longer follows, restate it correctly and apply the correction directly.\n"
                         "Revise the immediately previous assistant answer using the user's correction.\n"
                         "Output the revised answer only.\n"
                         "Rules:\n"
@@ -158,17 +157,14 @@ def maybe_handle_correction_bind(
                     prior_answer=prior_answer,
                 )
                 fb = fallback_contextual_correction(
-                    prior_user=prior_user,
-                    new=new_v,
+                    user_text=prior_user,
+                    query_family=query_family,
+                    old_val=old_v,
+                    new_val=new_v,
                     unit=unit_v,
-                    old=old_v,
-                    include_ack=include_ack,
                 ).strip()
                 if fb:
                     corrected = fb
-
-            if corrected and not include_ack:
-                corrected = strip_got_it_prefix(corrected)
             if corrected:
                 corrected = maybe_apply_consistency_verifier(
                     user_text=user_text,
@@ -177,6 +173,7 @@ def maybe_handle_correction_bind(
                     lock_active=lock_active,
                     state_solver_used=False,
                     prior_user_text=str(getattr(state, "last_user_text", "") or "").strip(),
+                    call_model_messages_fn=call_model_messages,
                 )
                 new_v, unit_v, _ = extract_numeric_correction(user_text)
                 if new_v and unit_v:

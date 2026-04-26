@@ -12,6 +12,7 @@ _KAIOKEN_CLARIFY_RE = re.compile(
     r"^\s*(?:"
     r"(?:sorry[,?.!]*\s*)?(?:um+|uh+)?[.\s]*what\??|"
     r"(?:sorry[,?.!]*\s*)?(?:what are you saying|what do you mean|lost me)\??|"
+    r"(?:no\s+i\s+mean\s+)?(?:what do you mean)(?:\s+by\s+[^?]{1,120})?\??|"
     r"(?:sorry[,?.!]*\s*)?what(?:'s| is)\s+[^?]{1,160}\??|"
     r"(?:keeping|staying)\s+what\s+direct\??|"
     r"what(?:'s| is)\s+direct\??"

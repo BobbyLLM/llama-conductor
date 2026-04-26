@@ -16,6 +16,8 @@ _E5_CANDIDATE_K = 3
 # TinyBERT entailment threshold
 _TINYBERT_THRESHOLD = 4.0
 
+_RETREAT_SCOPE_VALUES = {"full", "partial", "none", "evaded"}
+
 
 def _split_sentences(text: str) -> list[str]:
     return [
@@ -31,6 +33,101 @@ def _user_content_tokens(user_text: str) -> frozenset[str]:
         for w in str(user_text or "").split()
         if w.lower().strip("?.!,") not in _STOPWORDS
     )
+
+
+def _tokenize_for_retreat(text: str) -> list[str]:
+    return [
+        tok
+        for tok in re.findall(r"[a-z0-9][a-z0-9\-']{1,}", str(text or "").lower())
+        if tok not in _STOPWORDS
+    ]
+
+
+def _split_retreat_sentences(text: str) -> list[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", str(text or "").strip()) if s and str(s).strip()]
+
+
+def codex_retreat_scope(
+    prior_claim: str,
+    corrected_answer: str,
+    user_text: str = "",
+    e5_candidate_k: int = _E5_CANDIDATE_K,
+    tinybert_threshold: float = _TINYBERT_THRESHOLD,
+) -> tuple[str, list[str]]:
+    """Detect whether a correction actually retracts a challenged claim.
+
+    Returns:
+      scope, flagged_sentences
+    where scope is one of: full, partial, none, evaded.
+    """
+    from .rag import get_embed_model, get_rerank_model
+
+    claim = str(prior_claim or "").strip()
+    answer = str(corrected_answer or "").strip()
+    if not claim or not answer:
+        return "evaded", []
+
+    claim_sents = _split_retreat_sentences(claim)
+    answer_sents = _split_retreat_sentences(answer)
+    if not claim_sents or not answer_sents:
+        return "evaded", []
+
+    user_tokens = _user_content_tokens(user_text)
+    embed_model = get_embed_model()
+    rerank_model = get_rerank_model()
+    if rerank_model is None:
+        return "evaded", []
+
+    claim_embeddings = embed_model.encode(
+        [f"passage: {s}" for s in claim_sents],
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+    )
+    answer_embeddings = embed_model.encode(
+        [f"passage: {s}" for s in answer_sents],
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+    )
+
+    matched_claim_indices: set[int] = set()
+    preserved_claim_indices: set[int] = set()
+    contradicted_claim_indices: set[int] = set()
+    flagged: list[str] = []
+
+    for a_idx, a_sent in enumerate(answer_sents):
+        a_tokens = set(_tokenize_for_retreat(a_sent))
+        if user_tokens and len(a_tokens & user_tokens) / max(len(a_tokens), 1) > 0.75:
+            continue
+        sent_embedding = answer_embeddings[a_idx]
+        cosine_scores = claim_embeddings @ sent_embedding
+        top_k_indices = list(reversed(cosine_scores.argsort()[-e5_candidate_k:]))
+        candidates = [claim_sents[i] for i in top_k_indices]
+        pairs = [(a_sent, candidate) for candidate in candidates]
+        try:
+            scores = rerank_model.predict(pairs)
+        except Exception:
+            continue
+        if not scores:
+            continue
+        best_pos = int(max(range(len(scores)), key=lambda i: scores[i]))
+        best_score = float(scores[best_pos])
+        claim_idx = int(top_k_indices[best_pos])
+        matched_claim_indices.add(claim_idx)
+        if best_score < tinybert_threshold:
+            preserved_claim_indices.add(claim_idx)
+            flagged.append(a_sent)
+            continue
+        contradicted_claim_indices.add(claim_idx)
+
+    if not matched_claim_indices:
+        return "evaded", flagged
+    if contradicted_claim_indices and not preserved_claim_indices:
+        return "full", flagged
+    if contradicted_claim_indices and preserved_claim_indices:
+        return "partial", flagged
+    if preserved_claim_indices:
+        return "none", flagged
+    return "evaded", flagged
 
 
 def codex_answer_is_grounded(
