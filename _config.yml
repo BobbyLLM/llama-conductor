@@ -1,0 +1,42 @@
+﻿title: llama-conductor blog
+description: deterministic routing, grounded reasoning, and operator notes
+url: "https://bobbyllm.github.io"
+baseurl: "/llama-conductor"
+markdown: kramdown
+kramdown:
+  input: GFM
+permalink: pretty
+defaults:
+  - scope:
+      path: "blog/meme-test.md"
+    values:
+      layout: default
+      title: "Mom, can we get ChatGPT? Mom: we have ChatGPT at home"
+      permalink: /blog/meme-test/
+  - scope:
+      path: "blog/SCP.md"
+    values:
+      layout: default
+      title: "SCP-LLM-121"
+      permalink: /blog/scp-llm-121/
+
+  - scope:
+      path: "blog/claude_in_a_can_1.md"
+    values:
+      layout: default
+      title: "I'd like to show you my...ass"
+      permalink: /blog/claude-in-a-can-1/
+
+  - scope:
+      path: "blog/i-hate-yaml.md"
+    values:
+      layout: default
+      title: "I hate YAML."
+      permalink: /blog/i-hate-yaml/
+
+  - scope:
+      path: "blog/No-dessert-till-after-dinner.md"
+    values:
+      layout: default
+      title: "No dessert till after dinner"
+      permalink: /blog/no-dessert-till-after-dinner/

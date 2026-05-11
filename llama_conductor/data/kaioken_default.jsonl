@@ -1,0 +1,8 @@
+{"id": "opener_casual_001", "slot": "opener", "macro_register": "casual", "text": "Yeah, alright.", "enabled": true, "priority": 10, "speech_act": "", "forbidden_contexts": [], "cooldown_turns": 6}
+{"id": "opener_personal_001", "slot": "opener", "macro_register": "personal", "text": "That sounds like a rough stretch.", "enabled": true, "priority": 20, "speech_act": "", "forbidden_contexts": [], "cooldown_turns": 6}
+{"id": "anchor_working_001", "slot": "anchor_line", "macro_register": "working", "text": "Right, let's pin down the actual claim.", "enabled": true, "priority": 10, "speech_act": "", "forbidden_contexts": [], "cooldown_turns": 6}
+{"id": "anchor_any_001", "slot": "anchor_line", "macro_register": "any", "text": "Back to the question at hand.", "enabled": true, "priority": 30, "speech_act": "", "forbidden_contexts": [], "cooldown_turns": 6}
+{"id": "boundary_working_001", "slot": "boundary_line", "macro_register": "working", "text": "Hold up, let's separate the signal from the noise.", "enabled": true, "priority": 10, "speech_act": "", "forbidden_contexts": [], "cooldown_turns": 6}
+{"id": "boundary_casual_001", "slot": "boundary_line", "macro_register": "casual", "text": "Alright, keep it moving.", "enabled": true, "priority": 20, "speech_act": "", "forbidden_contexts": [], "cooldown_turns": 6}
+{"id": "repair_personal_001", "slot": "repair_ack", "macro_register": "personal", "text": "Fair. I hear you, and I'll correct course.", "enabled": true, "priority": 10, "speech_act": "", "forbidden_contexts": [], "cooldown_turns": 6}
+{"id": "closer_any_001", "slot": "closer", "macro_register": "any", "text": "Alright, that's the clean version.", "enabled": true, "priority": 10, "speech_act": "", "forbidden_contexts": [], "cooldown_turns": 6}

@@ -1,0 +1,19 @@
+﻿.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.tmp
+.tmp_*
+.sandbox_profile/
+.venv/
+venv/
+build/
+dist/
+PUBLIC REFACTORS/
+TEST_ARTIFACTS_VALIDATION/
+total_recall/
+codeberg_pages.log
+launch_up_stderr.log
