@@ -1,12 +1,19 @@
-Llama-conductor is now archived and is evolving into picoGURU (see below). 
+# llama-conductor
 
-This Github repositiory exists only for discovery only
+> **STATUS:** Archived
+>
+> Llama-conductor is now archived and is evolving into picoGURU.
 
-If you wish the access / install the original llama-conductor, you may find it here
+**This GitHub repository exists only for discovery.**
 
-Canonical repository: https://codeberg.org/BobbyLLM/llama-conductor
+---
 
-Else, please visit 
+## Original llama-conductor
+If you wish to access or install the original llama-conductor, you may find it here:
 
-picoGURU: https://codeberg.org/BobbyLLM/picoGURU
+**https://codeberg.org/BobbyLLM/llama-conductor**
 
+## picoGURU
+Else, please visit picoGURU (wip):
+
+**https://codeberg.org/BobbyLLM/picoGURU**
